@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>帳場（ちょうば）デモ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@600;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#F7F4EC;--panel:#fff;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;--gold:#A8842F;--gold2:#c8a26a;--shu:#C0402C;--ok:#2f7d5b;--nav-h:60px}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:#EDE8DA;font-family:'Zen Kaku Gothic New',sans-serif;color:var(--text)}
+.wrap{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);border-left:1px solid var(--line);border-right:1px solid var(--line);padding-bottom:calc(var(--nav-h) + 30px);position:relative}
+header{padding:15px 16px 12px;background:#FFFDF8;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+header h1{font-family:'Shippori Mincho',serif;font-size:20px;letter-spacing:.34em;margin:0;display:inline}
+header .tag{font-size:10px;color:#fff;background:var(--gold);border-radius:5px;padding:2px 7px;margin-left:8px;letter-spacing:.05em;vertical-align:2px}
+header .desk{font-size:11px;color:var(--muted);margin-top:5px}
+header .desk .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:5px}
+.view{display:none;padding:14px 13px}
+.view.on{display:block}
+.sec{display:flex;align-items:center;gap:9px;margin:4px 2px 12px}
+.sec .bar{width:3px;height:15px;background:var(--gold);border-radius:2px}
+.sec span{font-family:'Shippori Mincho',serif;font-size:14px;letter-spacing:.2em;color:var(--gold)}
+.sec .rule{flex:1;height:1px;background:var(--line)}
+.sec .hint{font-size:10.5px;color:var(--muted);letter-spacing:0}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px;margin-bottom:11px;box-shadow:0 2px 7px rgba(90,70,40,.045)}
+.chd{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.rk{width:20px;height:20px;border-radius:6px;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.rk.S{background:var(--shu)}.rk.A{background:var(--gold)}.rk.B{background:#6f7d6a}
+.code{font-family:'Shippori Mincho',serif;font-size:15px;font-weight:600}
+.pill{font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px;margin-left:auto}
+.pill.now{background:#fbe9e6;color:var(--shu)}
+.pill.rally{background:#eef1e9;color:#5f7a52}
+.pill.batch{background:#f3ecda;color:var(--gold)}
+.pill.angry{background:#f6d7d2;color:#a5342a}
+.msg{font-size:14px;line-height:1.65;background:#fbf9f4;border:1px solid #efe9dd;border-radius:10px;padding:9px 11px;color:#4a453c}
+.msg .who{font-size:10.5px;color:var(--muted);margin-bottom:3px}
+.btn{border:none;border-radius:10px;padding:11px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.btn.full{width:100%;margin-top:9px}
+.btn.gold{background:var(--gold);color:#fff}
+.btn.go{background:var(--ok);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--gold);color:var(--gold)}
+.btn.done{background:#b8b1a3;color:#fff}
+.draft{background:#fbf9f4;border:1px solid #efe9dd;border-radius:11px;padding:10px 11px;margin-top:9px}
+.draft .tone{font-size:10px;color:var(--gold);font-weight:700;letter-spacing:.06em;margin-bottom:4px}
+.draft .dt{font-size:14px;line-height:1.6}
+.draft .dt em{font-style:normal;background:#f6e9cf;border-radius:3px;padding:0 2px}
+.draft .dt b{font-weight:600;background:#d7ead9;border-radius:3px;padding:0 2px}
+.empty{text-align:center;color:var(--muted);font-size:12.5px;padding:22px 8px}
+/* announce */
+.modes{display:flex;gap:8px;margin-bottom:11px}
+.mode{flex:1;text-align:center;border:1.4px solid var(--line);background:#fff;border-radius:12px;padding:10px 6px;cursor:pointer;font-weight:700;font-size:13px}
+.mode small{display:block;font-weight:500;font-size:10px;color:var(--muted);margin-top:2px}
+.mode.on{background:var(--gold);border-color:var(--gold);color:#fff}
+.mode.on small{color:rgba(255,255,255,.85)}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{border:1.4px solid var(--line);background:#f3ecda;border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;cursor:pointer;user-select:none}
+.chip.on{background:var(--gold);border-color:var(--gold);color:#fff}
+.chip.rS.on{background:var(--shu);border-color:var(--shu)}
+.chip.rB.on{background:#6f7d6a;border-color:#6f7d6a}
+.chip.smart{border-style:dashed}
+.chip.smart.on{background:var(--shu);border-color:var(--shu)}
+.prow{display:flex;align-items:center;gap:8px;padding:7px 6px;font-size:12.5px;border-radius:9px;cursor:pointer}
+.prow .ck{width:19px;height:19px;border-radius:6px;border:1.6px solid var(--ok);background:var(--ok);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.prow.off{opacity:.5}.prow.off .ck{background:#fff;border-color:#cfc7b8;color:transparent}.prow.off .nm{text-decoration:line-through}
+.prow .nm{font-weight:600}.prow .meta{margin-left:auto;color:var(--muted);font-size:11px}
+.tg{font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:4px}
+.in{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 10px;font-size:13.5px;font-family:inherit;background:#fbf9f4}
+.lbl{font-size:11px;color:var(--muted);font-weight:600;margin:9px 2px 5px}
+.two{display:flex;gap:8px}.two>div{flex:1}
+.why{margin-left:auto;font-size:10.5px;color:var(--gold2);font-weight:600}
+.legend{display:flex;gap:13px;justify-content:center;font-size:10px;color:var(--muted);margin:2px 0 9px}
+.legend i{font-style:normal;padding:1px 6px;border-radius:4px}.legend .l1{background:#f6e9cf}.legend .l2{background:#d7ead9}
+.rowline{display:flex;justify-content:space-between;align-items:center;padding:10px 2px;border-bottom:1px solid var(--line);font-size:13px}
+.rowline:last-child{border-bottom:none}
+.note{font-size:11.5px;color:var(--muted);line-height:1.7;margin-top:8px}
+/* nav */
+nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFDF8;border-top:1px solid var(--line);display:flex;z-index:30}
+nav button{flex:1;background:none;border:none;padding:8px 0 8px;font-size:10px;color:var(--muted);letter-spacing:.01em;font-family:inherit;cursor:pointer;position:relative}
+nav button.on{color:var(--gold);font-weight:700}
+nav .ico{display:flex;justify-content:center;align-items:center;height:23px;margin-bottom:3px}
+nav .ico svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+nav button.on .ico svg{stroke-width:2}
+nav .nbadge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);color:#fff;font-size:9px;font-weight:700;border-radius:9px;min-width:16px;height:16px;line-height:16px;text-align:center;padding:0 3px;display:none}
+@keyframes slidein{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
+.card.newmsg{animation:slidein .35s ease}
+.newtag{font-size:9px;font-weight:700;color:#fff;background:var(--shu);border-radius:5px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+.toast{position:fixed;bottom:calc(var(--nav-h) + 16px);left:50%;transform:translateX(-50%);background:rgba(43,40,35,.93);color:#fff;border-radius:9px;padding:10px 16px;font-size:12.5px;z-index:50;opacity:0;transition:.25s;pointer-events:none;white-space:nowrap}
+.toast.on{opacity:1}
+.season{background:#f3ecda;border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:11.5px;color:#6b5f4c;margin-bottom:11px}
+.banner{background:#f3ecda;border:1px dashed var(--gold2);border-radius:10px;padding:9px 11px;font-size:11px;color:#6b5f4c;line-height:1.6;margin-bottom:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>帳場</h1><span class="tag">デモ</span>
+    <div class="desk"><span class="dot"></span>あなたの秘書として稼働中 — 送信は必ずご本人の指で</div>
+  </header>
+
+  <!-- 受信箱 -->
+  <section class="view on" id="v-inbox">
+    <div class="sec"><span class="bar"></span><span>受信箱</span><span class="rule"></span><span class="hint">届いたLINEを仕分け → 下書き</span></div>
+    <div id="inbox"></div>
+    <div class="note">帳場は相手の様子で「即対応／ラリー（連投は待つ）／まとめ（夜に一括）」に自動で仕分けます。下書きはあなたの文体で作成。<b>送るのは必ずご自身の指で。</b></div>
+  </section>
+
+  <!-- アナウンス -->
+  <section class="view" id="v-announce">
+    <div class="sec"><span class="bar"></span><span>アナウンス</span><span class="rule"></span><span class="hint">グループへ一人ずつ違う下書き</span></div>
+    <div class="season">☀️ 今日は真夏（梅雨明け頃）／季節と来店記録を各文に自動反映</div>
+    <div class="modes">
+      <div class="mode on" data-mode="greeting">営業のきっかけ<small>選んだ相手へ一声</small></div>
+      <div class="mode" data-mode="thanks">来店お礼<small>直近の来店客へ</small></div>
+    </div>
+    <div class="card">
+      <div class="lbl" style="margin-top:0">① ランクで選ぶ</div>
+      <div class="chips" id="a-ranks">
+        <div class="chip rS" data-r="S">S</div><div class="chip rA" data-r="A">A</div><div class="chip rB" data-r="B">B</div>
+      </div>
+    </div>
+    <div class="card">
+      <div style="display:flex;align-items:center"><div class="lbl" style="margin:0">選択中のあて先</div><span class="why" id="a-count" style="color:var(--gold)">0人</span></div>
+      <div class="note" style="margin:3px 0 6px">名前をタップで、その人を送る／外すを個別に切替。</div>
+      <div id="a-preview"><div class="empty">上で選ぶと対象が出ます</div></div>
+    </div>
+    <div class="card">
+      <div class="lbl" style="margin-top:0">② タグで絞る（任意）</div>
+      <div class="chips" id="a-tags">
+        <div class="chip" data-t="VIP">VIP</div><div class="chip" data-t="常連">常連</div>
+        <div class="chip" data-t="誕生日近い">誕生日近い</div><div class="chip smart" data-t="ご無沙汰">⏳ ご無沙汰</div>
+      </div>
+      <div class="note">タグは<b>話す内容</b>も決めます（誕生日→お祝い、ご無沙汰→近況報告）。事実がある時だけ触れます。</div>
+    </div>
+    <div class="card">
+      <div class="lbl" style="margin-top:0">③ 送りたい趣旨（1回だけ）</div>
+      <input class="in" id="a-tmpl" value="今日お店に来てほしい">
+    </div>
+    <button class="btn gold full" id="a-gen" style="padding:15px">一括生成する</button>
+  </section>
+
+  <!-- 顧客カード -->
+  <section class="view" id="v-customers">
+    <div class="sec"><span class="bar"></span><span>顧客カード</span><span class="rule"></span><span class="hint">アナウンスの材料になります</span></div>
+    <div class="banner">タグ「VIP／常連」は手動。「ご無沙汰・直近来店・誕生日近い」は帳場が<b>来店記録・来店周期・誕生日から自動</b>で付けます。</div>
+    <div id="cust"></div>
+  </section>
+
+  <!-- 実績 -->
+  <section class="view" id="v-events">
+    <div class="sec"><span class="bar"></span><span>実績</span><span class="rule"></span><span class="hint">返信操作から自動で記録</span></div>
+    <div class="card" id="events"></div>
+    <div class="note">来店・同伴などは返信操作から自動で残ります（手入力ゼロ）。お店を移るときに持ち出せる「検証済み実績書」の出力は次フェーズ予定。</div>
+  </section>
+
+  <!-- 設定 -->
+  <section class="view" id="v-settings">
+    <div class="sec"><span class="bar"></span><span>設定</span><span class="rule"></span></div>
+    <div class="card">
+      <div class="rowline"><span>文体プロファイル</span><span style="color:var(--ok);font-weight:700">学習済み（実例16件）</span></div>
+      <div class="rowline"><span>AI下書き</span><span style="color:var(--ok);font-weight:700">オン</span></div>
+      <div class="rowline"><span>送信</span><span style="color:var(--muted)">手動のみ（自動送信なし）</span></div>
+    </div>
+    <button class="btn ghost full" onclick="toast('デモではトーク履歴の取り込みは無効です')">LINEトーク履歴を取り込む</button>
+    <div class="note">履歴(.txt)を取り込むと、登場する相手が顧客として自動登録され、各人の文体まで学習します（本番機能）。</div>
+  </section>
+</div>
+
+<nav id="nav"></nav>
+<div class="toast" id="toast"></div>
+
+<script>
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+let T;
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('on');clearTimeout(T);T=setTimeout(()=>t.classList.remove('on'),1700);}
+
+/* ---- nav ---- */
+const ICONS={
+ inbox:'<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+ announce:'<path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+ customers:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+ events:'<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/>',
+ settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'
+};
+const TABS=[['inbox','受信箱'],['announce','アナウンス'],['customers','顧客カード'],['events','実績'],['settings','設定']];
+$('#nav').innerHTML=TABS.map(([k,l],i)=>`<button data-v="${k}" class="${i===0?'on':''}"><span class="ico"><svg viewBox="0 0 24 24">${ICONS[k]}</svg></span>${l}${k==='inbox'?'<span class="nbadge" id="ibadge"></span>':''}</button>`).join('');
+$$('#nav button').forEach(b=>b.onclick=()=>{
+  $$('#nav button').forEach(x=>x.classList.toggle('on',x===b));
+  $$('.view').forEach(v=>v.classList.remove('on'));
+  $('#v-'+b.dataset.v).classList.add('on');
+  if(b.dataset.v==='inbox'){unread=0;updateBadge();renderInbox(0);}
+  window.scrollTo(0,0);
+});
+
+/* ---- 受信箱（開くとLINEがどんどん流れ込む）---- */
+const INBOX_POOL=[
+ {code:'T.会長',rank:'S',cat:'now',label:'即対応',text:'今週どこか空いてる日ある？久しぶりに顔出したいな',
+  drafts:[{tone:'丁寧',t:'会長、ぜひ！今週は木曜が私ゆっくりお話しできます。よかったらお席お取りしますね。'},{tone:'軽め',t:'わ、嬉しいです。金曜も空いてますよ〜。会長のお好きな日で合わせます。'}]},
+ {code:'R.監督',rank:'S',cat:'now',label:'即対応',text:'急で悪いんだけど、今夜って空いてる？',
+  drafts:[{tone:'丁寧',t:'監督、もちろんです！お待ちしてます。何時ごろになりそうですか？'},{tone:'甘め',t:'嬉しい、空けときますね。監督のお席用意して待ってます。'}]},
+ {code:'K.専務',rank:'A',cat:'rally',label:'ラリー',text:'今日ほんと暑いね　もう夏バテしそう　水分とってる？',
+  drafts:[{tone:'共感',t:'ほんと溶けそうですよね…専務も無理しないでくださいね。ちゃんと水分とってます！'},{tone:'軽め',t:'夏バテ注意ですね〜。涼みに来てください、冷たいの用意しときます。'}]},
+ {code:'N.課長',rank:'A',cat:'now',label:'即対応',text:'来週あたり同伴お願いできる？ご飯行こう',
+  drafts:[{tone:'丁寧',t:'嬉しいです、ぜひ！来週なら火曜か木曜が空いてます。どちらがよさそうですか？'},{tone:'軽め',t:'やった、行きましょう！お店の前で待ち合わせでも大丈夫ですよ〜。'}]},
+ {code:'M.先生',rank:'A',cat:'rally',label:'ラリー',text:'元気にしてる？　最近どうー？',
+  drafts:[{tone:'軽め',t:'元気ですよ〜！先生こそお変わりないですか？また近いうちに会いたいです。'},{tone:'共感',t:'ちょっと夏バテ気味ですが元気です。先生の顔見たら回復しそう。'}]},
+ {code:'Y.社長',rank:'B',cat:'batch',label:'まとめ',text:'この前は楽しかった、ありがとう。また近いうちに寄るね',
+  drafts:[{tone:'お礼',t:'こちらこそありがとうございました！また社長にお会いできるの楽しみにしてます。'},{tone:'丁寧',t:'嬉しいお言葉ありがとうございます。近いうちにぜひ、お待ちしてますね。'}]},
+ {code:'I.社長',rank:'A',cat:'now',label:'即対応',text:'今度ボトル入れようと思ってるんだけど、何がいいかな',
+  drafts:[{tone:'丁寧',t:'嬉しい！社長ならシャンパンお似合いです。ご予算に合わせておすすめ選んでおきますね。'},{tone:'軽め',t:'わ、ありがとうございます！お好みうかがって、とっておき用意します〜。'}]},
+ {code:'O.専務',rank:'A',cat:'batch',label:'まとめ',text:'ゴルフの写真送るね　この前のスコア最高だった',
+  drafts:[{tone:'軽め',t:'すごい！さすが専務です。今度お店でその話、じっくり聞かせてくださいね。'},{tone:'共感',t:'ナイスショット！写真ありがとうございます。次いらしたらお祝いしましょう。'}]},
+ {code:'F.教授',rank:'B',cat:'rally',label:'ラリー',text:'暑いねえ　水分とってる？無理しないでね',
+  drafts:[{tone:'共感',t:'お気遣いありがとうございます。教授も夏バテしないでくださいね、涼みに来てください。'},{tone:'軽め',t:'とってますよ〜！教授こそ無理しないで。冷たいの用意して待ってます。'}]},
+ {code:'W.先生',rank:'B',cat:'now',label:'即対応',text:'今週金曜、席取れる？二人で行きたい',
+  drafts:[{tone:'丁寧',t:'金曜ですね、お取りできます！お二人でお待ちしてます。何時ごろがよいですか？'},{tone:'軽め',t:'もちろんです〜。金曜空けときますね、楽しみにしてます。'}]},
+ {code:'S.部長',rank:'B',cat:'batch',label:'まとめ',text:'ごぶさた。落ち着いたらまた行くよ',
+  drafts:[{tone:'丁寧',t:'お久しぶりです！ご連絡嬉しいです。落ち着いたらぜひ、お待ちしてますね。'},{tone:'軽め',t:'わ、部長お久しぶり！いつでも待ってます、顔見せてくださいね。'}]},
+ {code:'D.部長',rank:'B',cat:'rally',label:'ラリー',text:'久しぶり！元気にしてた？',
+  drafts:[{tone:'軽め',t:'お久しぶりです！元気ですよ〜。部長もお変わりないですか？また会いたいです。'},{tone:'丁寧',t:'ご無沙汰しております、お元気でしたか？近いうちにぜひお会いしたいです。'}]},
+ {code:'C.会長',rank:'S',cat:'now',label:'即対応',text:'週末どこか予約取れる？連れて行きたい人がいてさ',
+  drafts:[{tone:'丁寧',t:'会長、ぜひ！週末なら土曜が空いてます。何名様でしょう？お席お取りしますね。'},{tone:'軽め',t:'嬉しい、お待ちしてます〜。人数だけ教えてくれたら準備しときます。'}]},
+ {code:'J.専務',rank:'A',cat:'batch',label:'まとめ',text:'今日はありがとう、また来週寄るわ',
+  drafts:[{tone:'お礼',t:'こちらこそありがとうございました！来週お待ちしてますね、楽しみにしてます。'},{tone:'軽め',t:'専務ありがとう〜！また来週、顔見せてください。'}]},
+ {code:'Q.監督',rank:'S',cat:'now',label:'即対応',text:'今夜遅めでも大丈夫？10時くらいから行けそう',
+  drafts:[{tone:'丁寧',t:'もちろんです、監督。10時からお席用意してお待ちしてます。'},{tone:'甘め',t:'大丈夫ですよ〜。遅い時間でもゆっくりしていってくださいね。'}]},
+ {code:'L.先生',rank:'B',cat:'rally',label:'ラリー',text:'最近顔見てないな　元気にしてる？',
+  drafts:[{tone:'軽め',t:'元気ですよ〜！先生こそお久しぶり。近いうちに顔見せてくださいね。'},{tone:'共感',t:'ちょっと寂しかったです。先生も元気そうで安心、また会いたいです。'}]},
+ {code:'E.社長',rank:'A',cat:'now',label:'即対応',text:'来週の水曜、同伴お願いできるかな',
+  drafts:[{tone:'丁寧',t:'水曜ですね、ぜひ！お店の前で待ち合わせでも大丈夫ですか？楽しみにしてます。'},{tone:'軽め',t:'やった、行きましょう〜。時間決まったら教えてくださいね。'}]},
+ {code:'U.社長',rank:'B',cat:'batch',label:'まとめ',text:'昨日はごちそうさま、楽しかったよ',
+  drafts:[{tone:'お礼',t:'こちらこそ楽しい時間でした！また社長にお会いできるの楽しみにしてます。'},{tone:'軽め',t:'ありがとうございます〜！また近いうちに、涼みに来てくださいね。'}]},
+ {code:'K.専務',rank:'A',cat:'angry',label:'不機嫌・即対応',text:'この前約束したのに連絡くれないんだね　もういいけど',
+  drafts:[{tone:'謝罪',t:'ごめんなさい、バタバタしていて…。専務を後回しにしたわけじゃないんです。埋め合わせさせてください。'},{tone:'甘め',t:'すねさせちゃいましたね…ごめんなさい。近いうちに必ず、ゆっくりお会いしたいです。'}]},
+ {code:'S.部長',rank:'B',cat:'angry',label:'不機嫌・即対応',text:'既読ついてるのに返事ないと寂しいよ',
+  drafts:[{tone:'謝罪',t:'ごめんなさい、気づくの遅くなりました。部長からの連絡、いつも嬉しいんです。'},{tone:'甘め',t:'寂しい思いさせてごめんなさい。ちゃんと見てますよ、また会いたいです。'}]},
+ {code:'M.先生',rank:'A',cat:'rally',label:'ラリー（連投）',text:'今なにしてる？<br>ひま？<br>電話していい？',
+  drafts:[{tone:'軽め',t:'お仕事中です〜！落ち着いたらこちらからLINEしますね。'},{tone:'共感',t:'ごめんなさい今バタバタで…夜にゆっくり話しましょう？'}]},
+ {code:'D.部長',rank:'B',cat:'rally',label:'ラリー（連投）',text:'いまどこー？<br>のみたい<br>むかえきて笑',
+  drafts:[{tone:'軽め',t:'部長酔ってますね〜笑　今日はゆっくり休んでください、また今度お店で！'},{tone:'かわし',t:'お誘い嬉しいです、でも今日はおうちで休んでくださいね。また近いうちに。'}]},
+ {code:'Y.社長',rank:'B',cat:'batch',label:'まとめ',text:'最近仕事きつくてさ　愚痴聞いてくれる？',
+  drafts:[{tone:'共感',t:'もちろんです。無理しないでくださいね、お店でゆっくり聞かせてください。'},{tone:'軽め',t:'いつでも聞きますよ〜。おいしいお酒でも飲みながら、ね。'}]},
+ {code:'I.社長',rank:'A',cat:'batch',label:'まとめ',text:'この前の店良かったよ　また連れてって',
+  drafts:[{tone:'お礼',t:'嬉しい！気に入ってもらえてよかったです。また一緒に行きましょうね。'},{tone:'軽め',t:'ほんとですか〜嬉しい！次はどこ行きましょう、考えときます。'}]},
+ {code:'H.常務',rank:'S',cat:'now',label:'即対応',text:'誕生日の店、予約お願いできる？個室がいいな',
+  drafts:[{tone:'丁寧',t:'お誕生日、ぜひお任せください！個室のあるお店、いくつか押さえておきますね。日にち教えてください。'},{tone:'甘め',t:'常務のお誕生日、私に任せてください〜。素敵な個室、お探ししますね。'}]},
+];
+let msgId=0, unread=0, feedTimer=null, poolIdx=0;
+const live=[];
+function updateBadge(){const b=$('#ibadge');if(!b)return;b.style.display=unread>0?'block':'none';b.textContent=unread>9?'9+':unread;}
+function nextMsg(){const t=INBOX_POOL[poolIdx%INBOX_POOL.length];poolIdx++;return Object.assign({},t,{id:++msgId,done:false});}
+function pushMsg(isNew){
+  live.unshift(nextMsg());
+  if(live.length>12)live.pop();
+  renderInbox(isNew?live[0].id:0);
+  if(isNew && !$('#nav button[data-v="inbox"]').classList.contains('on')){unread++;updateBadge();}
+}
+function renderInbox(newId){
+  $('#inbox').innerHTML=live.map(m=>`
+   <div class="card ${m.id===newId?'newmsg':''}" id="ib${m.id}">
+     <div class="chd"><span class="rk ${m.rank}">${m.rank}</span><span class="code">${m.code}</span>${m.id===newId?'<span class="newtag">NEW</span>':''}<span class="pill ${m.cat}">${m.label}</span></div>
+     <div class="msg"><div class="who">${m.code} さんから</div>${m.text}</div>
+     <div id="da${m.id}">${m.done?'<button class="btn done full">✓ 送信へ（コピー済み）</button>':`<button class="btn gold full" data-id="${m.id}" data-act="show">下書きを見る</button>`}</div>
+   </div>`).join('');
+  $$('#inbox [data-act="show"]').forEach(b=>b.onclick=()=>showDrafts(+b.dataset.id));
+}
+function showDrafts(id){
+  const m=live.find(x=>x.id===id);if(!m)return;
+  $('#da'+id).innerHTML=m.drafts.map((d,j)=>`
+    <div class="draft"><div class="tone">${d.tone}</div><div class="dt">${d.t}</div>
+      <button class="btn go full" data-id="${id}" data-j="${j}" data-act="go">この文でコピー→LINE</button></div>`).join('');
+  $$('#da'+id+' [data-act="go"]').forEach(b=>b.onclick=()=>{
+    toast('コピーしました → LINEを開きます');
+    m.done=true;$('#ib'+id).style.opacity=.5;
+    $('#da'+id).innerHTML='<button class="btn done full">✓ 送信へ（コピー済み）</button>';
+  });
+}
+function startFeed(){
+  if(feedTimer)return;
+  const tick=()=>{pushMsg(true);feedTimer=setTimeout(tick,5000+Math.floor(Math.random()*4000));};
+  feedTimer=setTimeout(tick,2500);   // 開いてすぐ新着が来る＝受信が最初から動いている
+}
+function renderInboxInit(){live.length=0;msgId=0;poolIdx=0;for(let i=0;i<5;i++)pushMsg(false);renderInbox(0);}
+
+/* ---- アナウンス ---- */
+const CUST=[
+ {code:'T.会長',rank:'S',tags:['VIP','直近来店'],last:'2日前',bd:'07-20',cyc:10,note:'芋焼酎ロック',
+  draft:'会長、[[暑い日]]が続きますね。今週あたり、{{会長のお席をご用意して}}お待ちしています'},
+ {code:'H.常務',rank:'S',tags:['VIP','直近来店'],last:'5日前',bd:'',cyc:12,note:'葉巻',
+  draft:'常務 [[この前はありがとう]]ございました！また{{ゆっくりお相手させてください}}、今週お待ちしてます'},
+ {code:'R.監督',rank:'S',tags:['VIP','ご無沙汰'],last:'2ヶ月前',bd:'08-03',cyc:15,note:'赤ワイン',
+  draft:'監督 [[ごぶさた]]しております。{{そろそろお顔が見たいです}}、[[夏]]のうちにぜひ一杯。'},
+ {code:'K.専務',rank:'A',tags:['常連','ご無沙汰'],last:'1ヶ月前',bd:'',cyc:14,note:'野球好き',
+  draft:'専務 [[ごぶさた]]してます。その後お変わりないですか？{{そろそろ近況きかせてください}}'},
+ {code:'M.先生',rank:'A',tags:['誕生日近い'],last:'来店記録なし',bd:'07-22',cyc:21,note:'日本酒',
+  draft:'先生、{{もうすぐお誕生日ですね}} {{今年もお祝いさせてください}}！[[暑い]]ですが近いうちにぜひ'},
+ {code:'N.課長',rank:'A',tags:['常連','直近来店'],last:'4日前',bd:'',cyc:20,note:'ハイボール',
+  draft:'課長 [[この前]]はありがとうございました！[[暑い]]ので、また涼みがてら寄ってくださいね'},
+ {code:'I.社長',rank:'A',tags:['VIP'],last:'10日前',bd:'09-11',cyc:14,note:'シャンパン',
+  draft:'社長、[[暑さ]]が続きますね。{{社長のお好きなお酒}}ご用意してお待ちしてます、今週いかがですか？'},
+ {code:'O.専務',rank:'A',tags:['常連','直近来店'],last:'3日前',bd:'',cyc:18,note:'ゴルフ',
+  draft:'専務 [[先日]]はありがとうございました！ゴルフのお話の続き、また聞かせてくださいね'},
+ {code:'F.教授',rank:'B',tags:['誕生日近い'],last:'3週間前',bd:'07-25',cyc:28,note:'焼酎お湯割り',
+  draft:'教授、{{もうすぐお誕生日ですね}}。{{ささやかにお祝いさせてください}}、[[暑い]]ですが近々ぜひ'},
+ {code:'S.部長',rank:'B',tags:['常連','ご無沙汰'],last:'3ヶ月前',bd:'',cyc:30,note:'',
+  draft:'部長 [[お久しぶり]]です！すっかり[[暑く]]なりましたね。{{近況報告がてら}}、また涼みにいらしてください'},
+ {code:'Y.社長',rank:'B',tags:['直近来店'],last:'1日前',bd:'',cyc:30,note:'ビール党',
+  draft:'社長 昨日はありがとうございました！[[暑い]]ですし、また涼みにいらしてくださいね'},
+ {code:'D.部長',rank:'B',tags:['ご無沙汰'],last:'2ヶ月前',bd:'',cyc:25,note:'',
+  draft:'部長 [[ごぶさた]]しております。[[夏本番]]ですね、涼みがてら{{そろそろお顔見せてください}}'},
+ {code:'W.先生',rank:'B',tags:['常連'],last:'2週間前',bd:'',cyc:24,note:'ウイスキー',
+  draft:'先生 [[暑い日]]が続きますね。落ち着いたら、また一杯やりましょう。お待ちしてます'},
+ {code:'A.会長',rank:'S',tags:['VIP','ご無沙汰'],last:'5週間前',bd:'',cyc:12,note:'コニャック',
+  draft:'会長 [[ごぶさた]]しております。{{そろそろお会いしたいです}}、[[暑い]]ので涼みにいらしてください'},
+ {code:'C.会長',rank:'S',tags:['VIP','直近来店'],last:'3日前',bd:'',cyc:10,note:'ブランデー',
+  draft:'会長 [[この前]]はありがとうございました！また{{とっておきをご用意して}}お待ちしてます'},
+ {code:'E.社長',rank:'A',tags:['常連'],last:'1週間前',bd:'',cyc:16,note:'焼酎ロック',
+  draft:'社長 [[暑い日]]が続きますね。また涼みに、[[今週]]あたりいかがですか？'},
+ {code:'J.専務',rank:'A',tags:['VIP','直近来店'],last:'2日前',bd:'',cyc:14,note:'シガー',
+  draft:'専務 [[先日]]はありがとうございました。{{ゆっくりお話の続き}}、また近いうちにぜひ'},
+ {code:'L.先生',rank:'B',tags:['誕生日近い'],last:'2週間前',bd:'08-05',cyc:26,note:'ビール',
+  draft:'先生、{{もうすぐお誕生日ですね}}！{{ささやかにお祝いさせてください}}、[[暑い]]ですが近々ぜひ'},
+ {code:'P.課長',rank:'A',tags:['常連','ご無沙汰'],last:'5週間前',bd:'',cyc:20,note:'ハイボール',
+  draft:'課長 [[ごぶさた]]してます。お変わりないですか？{{そろそろ一杯やりましょう}}'},
+ {code:'Q.監督',rank:'S',tags:['VIP'],last:'8日前',bd:'',cyc:15,note:'赤ワイン',
+  draft:'監督 [[暑さ]]厳しいですね。{{監督のお好きな一本}}空けてお待ちしてます、今週いかがですか？'},
+ {code:'U.社長',rank:'B',tags:['直近来店'],last:'1日前',bd:'',cyc:30,note:'ウーロンハイ',
+  draft:'社長 昨日はありがとうございました！[[暑い]]のでまた涼みにいらしてくださいね'},
+ {code:'X.会長',rank:'S',tags:['VIP','ご無沙汰'],last:'7週間前',bd:'',cyc:12,note:'コニャック',
+  draft:'会長 [[ごぶさた]]しております。{{そろそろお顔が見たいです}}、[[夏]]のうちにぜひ'},
+ {code:'G.部長',rank:'B',tags:['ご無沙汰'],last:'6週間前',bd:'',cyc:28,note:'',
+  draft:'部長 [[ごぶさた]]しております。[[夏本番]]ですね、{{そろそろお会いしたいです}}'},
+ {code:'Z.専務',rank:'A',tags:['常連'],last:'10日前',bd:'',cyc:22,note:'ワイン',
+  draft:'専務 [[暑い日]]が続きますね。落ち着いたら、また一杯ご一緒しましょう'},
+];
+const A={mode:'greeting',ranks:new Set(),tags:new Set(),excluded:new Set()};
+function aMatched(){
+  return CUST.filter(c=>{
+    if(A.mode==='thanks') return c.tags.includes('直近来店') &&
+      (!A.ranks.size||A.ranks.has(c.rank)) && (!A.tags.size||c.tags.some(t=>A.tags.has(t)));
+    if(!A.ranks.size&&!A.tags.size) return false;
+    const r=!A.ranks.size||A.ranks.has(c.rank), t=!A.tags.size||c.tags.some(x=>A.tags.has(x));
+    if(A.ranks.size&&A.tags.size) return r&&t;
+    return A.ranks.size?r:t;
+  });
+}
+function aRefresh(){
+  const m=aMatched(); const act=m.filter(c=>!A.excluded.has(c.code));
+  $('#a-count').textContent=act.length+'人'+(m.length&&act.length<m.length?`（${m.length}人中）`:'');
+  const pv=$('#a-preview');
+  if(!m.length){pv.innerHTML='<div class="empty">'+(A.mode==='thanks'?'直近の来店客がいません':'上で選ぶと対象が出ます')+'</div>';}
+  else pv.innerHTML=m.map(c=>{const off=A.excluded.has(c.code)?' off':'';
+    return `<div class="prow${off}" data-c="${c.code}"><span class="ck">✓</span><span class="rk ${c.rank}">${c.rank}</span><span class="nm">${c.code}</span>${c.tags.filter(t=>t!=='直近来店').map(t=>`<span class="tg">${t}</span>`).join('')}<span class="meta">前回 ${c.last}</span></div>`;}).join('');
+  $$('#a-preview .prow').forEach(r=>r.onclick=()=>{const c=r.dataset.c;A.excluded.has(c)?A.excluded.delete(c):A.excluded.add(c);aRefresh();});
+}
+$$('#a-ranks .chip').forEach(ch=>ch.onclick=()=>{ch.classList.toggle('on');const r=ch.dataset.r;A.ranks.has(r)?A.ranks.delete(r):A.ranks.add(r);aRefresh();});
+$$('#a-tags .chip').forEach(ch=>ch.onclick=()=>{ch.classList.toggle('on');const t=ch.dataset.t;A.tags.has(t)?A.tags.delete(t):A.tags.add(t);aRefresh();});
+$$('.mode').forEach(mo=>mo.onclick=()=>{$$('.mode').forEach(x=>x.classList.toggle('on',x===mo));A.mode=mo.dataset.mode;aRefresh();});
+$('#a-gen').onclick=()=>{
+  const list=aMatched().filter(c=>!A.excluded.has(c.code));
+  if(!list.length)return toast('あて先を選んでください');
+  const html=`<div class="sec" style="margin-top:6px"><span class="bar"></span><span>生成した下書き</span><span class="rule"></span><span class="hint">${list.length}件</span></div>
+   <div class="legend"><span><i class="l1">黄</i> 季節・来店</span><span><i class="l2">緑</i> タグの話題</span></div>`
+   + list.map((c,i)=>{const txt=c.draft.replace(/\[\[(.+?)\]\]/g,'<em>$1</em>').replace(/\{\{(.+?)\}\}/g,'<b>$1</b>');
+     const why=A.mode==='thanks'?'来店お礼':(c.tags.includes('誕生日近い')?'誕生日が近い':c.tags.includes('ご無沙汰')?'ご無沙汰':c.tags.includes('VIP')?'VIP':'前回'+c.last);
+     return `<div class="card" id="g${i}"><div class="chd"><span class="rk ${c.rank}">${c.rank}</span><span class="code">${c.code}</span><span class="why">${why}</span></div>
+       <div class="msg" style="color:var(--text)">${txt}</div>
+       <button class="btn go full" data-g="${i}">この文でコピー→LINE</button></div>`;}).join('');
+  const box=document.createElement('div');box.innerHTML=html;
+  const v=$('#v-announce');v.innerHTML='<div class="sec"><span class="bar"></span><span>アナウンス</span><span class="rule"></span><span class="hint">生成結果</span></div><button class="btn ghost full" id="a-back" style="margin-bottom:11px">← 選び直す</button>'+box.innerHTML;
+  $('#a-back').onclick=()=>{location.hash='';renderAnnounceReset();};
+  $$('#v-announce [data-g]').forEach(b=>b.onclick=()=>{toast('コピーしました → LINEを開きます');b.className='btn done full';b.textContent='✓ 送信へ（コピー済み）';b.closest('.card').style.opacity=.55;});
+};
+function renderAnnounceReset(){location.reload();}
+
+/* ---- 顧客カード ---- */
+const RANKS=['S','A','B'],MTAGS=['VIP','常連'];
+function renderCust(){
+  $('#cust').innerHTML=CUST.map((c,i)=>{
+    const rc=RANKS.map(r=>`<div class="chip r${r} ${c.rank===r?'on':''}" data-i="${i}" data-act="rank" data-v="${r}">${r}</div>`).join('');
+    const tc=MTAGS.map(x=>`<div class="chip ${c.tags.includes(x)?'on':''}" data-i="${i}" data-act="tag" data-v="${x}">${x}</div>`).join('');
+    return `<div class="card" id="cc${i}">
+      <div class="chd"><span class="rk ${c.rank}">${c.rank}</span><span class="code">${c.code}</span><span class="meta" style="margin-left:auto;font-size:11px;color:var(--muted)">前回 ${c.last}</span></div>
+      <div class="lbl" style="margin-top:2px">ランク</div><div class="chips">${rc}</div>
+      <div class="lbl">タグ（手動）</div><div class="chips">${tc}</div>
+      <div class="lbl">誕生日 / 来店周期(日)</div><div class="two"><div><input class="in" value="${c.bd}" placeholder="例: 07-20"></div><div><input class="in" value="${c.cyc||''}" placeholder="例: 14"></div></div>
+      <div class="lbl">メモ</div><input class="in" value="${c.note||''}" placeholder="好み・話題">
+      <div style="display:flex;gap:8px;margin-top:11px"><button class="btn go" data-i="${i}" data-act="visit" style="flex:1">＋今日 来店を記録</button><button class="btn ghost" data-i="${i}" data-act="save">保存</button></div>
+    </div>`;}).join('');
+  $$('#cust [data-act="rank"]').forEach(ch=>ch.onclick=()=>{const i=ch.dataset.i;$$(`#cc${i} [data-act="rank"]`).forEach(x=>x.classList.remove('on'));ch.classList.add('on');});
+  $$('#cust [data-act="tag"]').forEach(ch=>ch.onclick=()=>ch.classList.toggle('on'));
+  $$('#cust [data-act="save"]').forEach(b=>b.onclick=()=>toast('保存しました'));
+  $$('#cust [data-act="visit"]').forEach(b=>b.onclick=()=>{const i=b.dataset.i;$(`#cc${i} .meta`).textContent='前回 本日';toast('来店を記録しました');});
+}
+
+/* ---- 実績 ---- */
+$('#events').innerHTML=[
+ ['7/14','T.会長','来店（確定）'],['7/12','H.常務','同伴（確定）'],['7/10','Y.社長','来店（確定）'],
+ ['7/6','K.専務','来店（確定）'],['7/2','M.先生','記念日（仮）']
+].map(([d,n,k])=>`<div class="rowline"><span><b>${d}</b>　${n}</span><span style="color:var(--muted)">${k}</span></div>`).join('');
+
+// 種類(即対応/ラリー/まとめ/不機嫌)を交互に並べて、最初から交ざって見えるようにする
+(function interleave(){
+  const byCat={}; INBOX_POOL.forEach(m=>{(byCat[m.cat]=byCat[m.cat]||[]).push(m);});
+  Object.values(byCat).forEach(a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}});
+  const cats=['angry','now','rally','batch'].filter(c=>byCat[c]); const out=[]; let go=true;
+  while(go){go=false;for(const c of cats){if(byCat[c] && byCat[c].length){out.push(byCat[c].shift());go=true;}}}
+  INBOX_POOL.length=0; INBOX_POOL.push(...out);
+})();
+renderInboxInit();startFeed();aRefresh();renderCust();
+</script>
+</body>
+</html>

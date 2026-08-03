@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>帳場 — アナウンス</title>
+<style>
+  :root{--bg:#f2efe9;--card:#fffdf9;--ink:#2b2620;--sub:#8a8175;--line:#e6e0d5;
+    --accent:#9a7b4f;--accent2:#c8a26a;--s:#b4553f;--a:#9a7b4f;--b:#6f7d6a;--go:#2f7d5b;--chip:#efe9dd;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(160deg,#e9e3d8,#f4f1ea);font-family:-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;color:var(--ink);display:flex;justify-content:center;padding:16px 12px 60px}
+  .wrap{width:100%;max-width:430px}
+  .top{background:linear-gradient(135deg,#3a322a,#5a4d3c);color:#f5eee0;padding:16px 16px 13px;border-radius:18px 18px 0 0}
+  .top h1{margin:0;font-size:18px;letter-spacing:.05em;font-weight:600}
+  .top .sub{font-size:11.5px;opacity:.78;margin-top:3px}
+  .season{margin-top:9px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:9px;padding:6px 10px;font-size:11.5px}
+  .body{background:var(--bg);padding:13px 13px 18px;border-radius:0 0 18px 18px}
+  .sec{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:12px;margin-bottom:11px}
+  .sec h2{margin:0 0 9px;font-size:12.5px;color:var(--sub);font-weight:600;letter-spacing:.03em;display:flex;align-items:center;gap:6px}
+  .sec h2 .n{margin-left:auto;color:var(--accent);font-weight:700}
+  .modes{display:flex;gap:8px;margin-bottom:11px}
+  .mode{flex:1;text-align:center;border:1.4px solid var(--line);background:var(--card);border-radius:12px;padding:11px 6px;cursor:pointer;font-weight:700;font-size:13.5px}
+  .mode small{display:block;font-weight:500;font-size:10.5px;color:var(--sub);margin-top:2px}
+  .mode.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .mode.on small{color:rgba(255,255,255,.85)}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{border:1.4px solid var(--line);background:var(--chip);border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;cursor:pointer;user-select:none}
+  .chip.rankS.on{background:var(--s);border-color:var(--s);color:#fff}
+  .chip.rankA.on{background:var(--a);border-color:var(--a);color:#fff}
+  .chip.rankB.on{background:var(--b);border-color:var(--b);color:#fff}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.smart{border-style:dashed}
+  .chip.smart.on{background:#b4553f;border-color:#b4553f}
+  .tmpl{width:100%;border:1px solid var(--line);border-radius:11px;padding:10px;font-size:14px;font-family:inherit;background:#fbf9f4;resize:none;line-height:1.5}
+  .hint{font-size:11px;color:var(--sub);margin-top:7px;line-height:1.6}
+  .preview{border-top:1px dashed var(--line);padding-top:9px;margin-top:9px}
+  .prow{display:flex;align-items:center;gap:8px;padding:7px 6px;font-size:12.5px;border-radius:9px;cursor:pointer;border:1px solid transparent}
+  .prow:active{background:#f3eee3}
+  .prow .ck{width:19px;height:19px;border-radius:6px;border:1.6px solid var(--go);color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:0 0 auto;background:var(--go)}
+  .prow.off{opacity:.5}
+  .prow.off .ck{background:#fff;border-color:#cfc7b8;color:transparent}
+  .prow.off .nm{text-decoration:line-through}
+  .rk{width:19px;height:19px;border-radius:6px;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .rk.S{background:var(--s)}.rk.A{background:var(--a)}.rk.B{background:var(--b)}
+  .prow .nm{font-weight:600}.prow .meta{margin-left:auto;color:var(--sub);font-size:11px}
+  .tg{font-size:10px;color:var(--sub);border:1px solid var(--line);border-radius:5px;padding:0 5px;margin-left:4px}
+  .genbtn{width:100%;margin-top:3px;border:none;border-radius:13px;padding:15px;font-size:15px;font-weight:700;color:#fff;background:linear-gradient(135deg,#9a7b4f,#c8a26a);cursor:pointer;box-shadow:0 6px 16px rgba(154,123,79,.32)}
+  .genbtn:disabled{opacity:.45;box-shadow:none}
+  .genbtn small{display:block;font-size:11px;font-weight:500;opacity:.9;margin-top:2px}
+  .rhead{display:flex;align-items:center;margin:2px 2px 9px}.rhead .t{font-size:13px;font-weight:700}.rhead .prog{margin-left:auto;font-size:12px;color:var(--sub)}
+  .bar{height:6px;background:#e6e0d5;border-radius:99px;overflow:hidden;margin:0 2px 12px}.bar>i{display:block;height:100%;width:0;background:var(--go);transition:.4s}
+  .dcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:10px;transition:.3s}.dcard.done{opacity:.5}
+  .dtop{display:flex;align-items:center;gap:8px;margin-bottom:7px}.dtop .nm{font-weight:700;font-size:13.5px}.dtop .why{margin-left:auto;font-size:10.5px;color:var(--accent2);font-weight:600}
+  .dtext{font-size:14px;line-height:1.6;background:#fbf9f4;border-radius:10px;padding:9px 11px;border:1px solid #efe9dd;white-space:pre-wrap}
+  .dtext[contenteditable]:focus{outline:2px solid var(--accent2)}
+  .copy{width:100%;margin-top:9px;border:none;border-radius:11px;padding:11px;font-size:14px;font-weight:700;color:#fff;background:var(--go);cursor:pointer}.copy.done{background:#b8b1a3}
+  .empty{text-align:center;color:var(--sub);font-size:12.5px;padding:20px 8px}
+  .foot{text-align:center;font-size:10.5px;color:var(--sub);padding:8px 12px 0;line-height:1.6}
+  .back{background:none;border:none;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer;padding:4px 2px;margin-bottom:2px}
+  .banner{background:#fff4e0;border:1px solid #e8d199;color:#7a5b1e;border-radius:10px;padding:8px 10px;font-size:11.5px;margin-bottom:11px;line-height:1.55}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>帳場 — アナウンス</h1>
+    <div class="sub">グループを選ぶ → 一人ずつ違う下書きを一括生成（送信は本人の指）</div>
+    <div class="season" id="season">季節を読み込み中…</div>
+  </div>
+
+  <!-- 選択画面 -->
+  <div class="body" id="pickView">
+    <div class="banner" id="aiBanner" style="display:none">APIキー未設定のため、いまはテンプレ下書き（品質は本番と異なります）。</div>
+
+    <div class="modes">
+      <div class="mode on" data-mode="greeting">営業のきっかけ<small>選んだ相手へ一声</small></div>
+      <div class="mode" data-mode="thanks">来店お礼<small>直近3日の来店客へ</small></div>
+    </div>
+
+    <div class="sec" id="rankSec">
+      <h2>① ランクで選ぶ <span class="n" id="rankN"></span></h2>
+      <div class="chips" id="rankChips">
+        <div class="chip rankS" data-rank="S">S</div>
+        <div class="chip rankA" data-rank="A">A</div>
+        <div class="chip rankB" data-rank="B">B</div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>選択中のあて先 <span class="n" id="selN">0人</span></h2>
+      <div class="hint" style="margin-top:0;margin-bottom:6px">名前をタップで、その人を送る／外すを個別に切り替え。</div>
+      <div class="preview" id="preview" style="border-top:none;padding-top:0"><div class="empty">上で選ぶと、対象がここに出ます</div></div>
+    </div>
+
+    <div class="sec" id="tagSec">
+      <h2>② タグで絞る（任意）</h2>
+      <div class="chips" id="tagChips">
+        <div class="chip" data-tag="VIP">VIP</div>
+        <div class="chip" data-tag="常連">常連</div>
+        <div class="chip" data-tag="誕生日近い">誕生日近い</div>
+        <div class="chip smart" data-tag="ご無沙汰">⏳ ご無沙汰</div>
+      </div>
+      <div class="hint">タグは<b>話す内容</b>も決めます（誕生日近い→お祝い、ご無沙汰→近況報告）。<b>事実がある時だけ</b>その話題に触れます（誕生日・来店記録が無ければ作りません）。</div>
+    </div>
+
+    <div class="sec" id="tmplSec">
+      <h2>③ 送りたい趣旨（1回だけ書く）</h2>
+      <textarea class="tmpl" id="tmpl" rows="2">今日お店に来てほしい</textarea>
+      <div class="hint">帳場が本人の文体で、相手ごとに言い回し・季節・来店記録を変えて作ります。名前は自動。</div>
+    </div>
+
+    <button class="genbtn" id="genBtn" disabled>一括生成する<small id="genSub">あて先を選んでください</small></button>
+    <div class="foot">送信は必ず本人の指。帳場は文を作るだけで、勝手に送りません。</div>
+  </div>
+
+  <!-- 結果画面 -->
+  <div class="body" id="resultView" style="display:none">
+    <button class="back" id="backBtn">← あて先選択に戻る</button>
+    <div class="rhead"><span class="t">生成した下書き</span><span class="prog" id="prog">0 / 0 送信済み</span></div>
+    <div class="bar"><i id="progBar"></i></div>
+    <div id="cards"></div>
+    <div class="foot">各カードを「コピー→LINE」でその人に送る。名前は打たなくてよい。文はタップで直せます。</div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+const sel={mode:"greeting",ranks:new Set(),tags:new Set()};
+const excluded=new Set();   // 個別に「送らない」にした相手コード
+let matchedCodes=[];        // いま条件に合致している相手コード
+let debounce;
+
+async function api(url,opts){const r=await fetch(url,opts);if(!r.ok)throw new Error(r.status);return r.json();}
+
+function setMode(m){
+  sel.mode=m;
+  document.querySelectorAll('.mode').forEach(x=>x.classList.toggle('on',x.dataset.mode===m));
+  // thanksモードでは あて先=直近来店客が自動。ランク/タグ/趣旨は補助的に。
+  $('tmplSec').style.display = m==='greeting'?'':'none';
+  $('rankSec').querySelector('h2').firstChild.textContent = m==='thanks'?'① ランクで絞る（任意）':'① ランクで選ぶ ';
+  refresh();
+}
+function bindChips(){
+  document.querySelectorAll('#rankChips .chip').forEach(ch=>ch.onclick=()=>{
+    ch.classList.toggle('on');const r=ch.dataset.rank;ch.classList.contains('on')?sel.ranks.add(r):sel.ranks.delete(r);refresh();});
+  document.querySelectorAll('#tagChips .chip').forEach(ch=>ch.onclick=()=>{
+    ch.classList.toggle('on');const t=ch.dataset.tag;ch.classList.contains('on')?sel.tags.add(t):sel.tags.delete(t);refresh();});
+  document.querySelectorAll('.mode').forEach(m=>m.onclick=()=>setMode(m.dataset.mode));
+}
+function activeCount(){return matchedCodes.filter(c=>!excluded.has(c)).length;}
+function updateGenBtn(){
+  const n=activeCount();
+  $('selN').textContent=n+'人'+(matchedCodes.length&&n<matchedCodes.length?`（${matchedCodes.length}人中）`:'');
+  $('genBtn').disabled=n===0;
+  $('genSub').textContent=n===0?'あて先を選んでください':`${n}人ぶんを一括で作る`;
+}
+function refresh(){
+  clearTimeout(debounce);
+  debounce=setTimeout(async()=>{
+    const q=new URLSearchParams({ranks:[...sel.ranks].join(','),tags:[...sel.tags].join(','),mode:sel.mode});
+    let d;try{d=await api('/api/campaign/recipients?'+q);}catch(e){return;}
+    $('rankN').textContent=sel.ranks.size?[...sel.ranks].join('・'):'';
+    matchedCodes=d.recipients.map(c=>c.code);
+    const pv=$('preview');
+    if(d.count===0){pv.innerHTML='<div class="empty">'+(sel.mode==='thanks'?'直近3日の来店客がいません（来店を記録すると出ます）':'上で選ぶと、対象がここに出ます')+'</div>';}
+    else pv.innerHTML=d.recipients.map(c=>{
+      const off=excluded.has(c.code)?' off':'';
+      return `<div class="prow${off}" data-code="${c.code}"><span class="ck">✓</span><span class="rk ${c.rank}">${c.rank}</span><span class="nm">${c.code}</span>${c.tags.map(t=>`<span class="tg">${t}</span>`).join('')}<span class="meta">前回 ${c.last_visit}</span></div>`;
+    }).join('');
+    document.querySelectorAll('.prow').forEach(r=>r.onclick=()=>{
+      const code=r.dataset.code;
+      if(excluded.has(code)){excluded.delete(code);r.classList.remove('off');}
+      else{excluded.add(code);r.classList.add('off');}
+      updateGenBtn();
+    });
+    updateGenBtn();
+  },220);
+}
+
+let cards=[];
+async function generate(){
+  $('genBtn').disabled=true;$('genSub').textContent='生成中…';
+  const codes=matchedCodes.filter(c=>!excluded.has(c));
+  let d;
+  try{d=await api('/api/campaign/generate',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({mode:sel.mode,ranks:[...sel.ranks],tags:[...sel.tags],template:$('tmpl').value,codes})});}
+  catch(e){$('genSub').textContent='生成に失敗（サーバ確認）';$('genBtn').disabled=false;return;}
+  cards=d.items.map(x=>({...x,done:false}));
+  $('pickView').style.display='none';$('resultView').style.display='block';
+  $('cards').innerHTML=cards.map((c,i)=>`<div class="dcard" id="dc${i}">
+     <div class="dtop"><span class="rk ${c.rank}">${c.rank}</span><span class="nm">${c.code}</span><span class="why">${c.why}</span></div>
+     <div class="dtext" contenteditable data-i="${i}">${c.text}</div>
+     <button class="copy" data-i="${i}">この文でコピー→LINE</button></div>`).join('');
+  document.querySelectorAll('.dtext').forEach(t=>t.oninput=()=>{cards[+t.dataset.i].text=t.textContent;});
+  document.querySelectorAll('.copy').forEach(b=>b.onclick=()=>copyGo(+b.dataset.i,b));
+  updateProg();
+}
+function copyGo(i,btn){
+  if(cards[i].done)return;
+  const txt=cards[i].text;
+  if(navigator.clipboard)navigator.clipboard.writeText(txt).catch(()=>{});
+  cards[i].done=true;$('dc'+i).classList.add('done');btn.classList.add('done');btn.textContent='✓ コピー済み（LINEへ）';
+  updateProg();
+  // LINEを開く(相手はLINE側で選ぶ)。貼り付けで送る、送信は本人。
+  setTimeout(()=>{try{location.href='line://nv/chat';}catch(e){}},120);
+}
+function updateProg(){const d=cards.filter(c=>c.done).length;$('prog').textContent=`${d} / ${cards.length} 送信済み`;$('progBar').style.width=(cards.length?d/cards.length*100:0)+'%';}
+
+$('genBtn').onclick=generate;
+$('backBtn').onclick=()=>{$('resultView').style.display='none';$('pickView').style.display='block';};
+
+(async()=>{
+  bindChips();
+  try{const d=await api('/api/campaign/recipients?mode=greeting');
+    $('season').textContent='☀️ 今日の季節：'+d.season+'／季節と来店記録を各文に自動反映';}catch(e){}
+  try{const p=await api('/api/profile');}catch(e){}
+  // APIキー有無はバナーで(生成時にitems.aiで確定。ここでは軽く出す)
+  setMode('greeting');
+})();
+</script>
+</body>
+</html>

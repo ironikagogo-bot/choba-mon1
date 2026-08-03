@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>帳場｜お席と実績</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap');
+:root{--bg:#F7F4EC;--panel:#fff;--soft:#FFFDF8;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;
+ --gold:#A8842F;--goldsoft:#FBF6E9;--shu:#C0402C;--shusoft:#FBEDEA;--ok:#5E8A5D;--oksoft:#EEF4EC;--chip:#F1ECE0;
+ --ai:#3A5170;--aisoft:#EAEEF3;--peer:#8a5a86;--peersoft:#f4ecf3;--lg:#06c755}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);font-family:'Zen Kaku Gothic New',sans-serif;color:var(--text);padding:12px 12px 40px;max-width:460px;margin:0 auto}
+h2{font-family:'Shippori Mincho',serif;font-size:15px;letter-spacing:.1em}
+.sec{display:flex;align-items:center;gap:8px;margin:16px 2px 9px}
+.sec .bar{width:4px;height:14px;background:var(--gold);border-radius:2px}
+.sec span{font-family:'Shippori Mincho',serif;font-size:13px;letter-spacing:.12em;color:var(--gold)}
+.sec .rule{flex:1;height:1px;background:var(--line)}
+.stat3{display:flex;gap:8px}
+.stat3 .s{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 6px;text-align:center}
+.stat3 .s b{font-size:22px;color:var(--gold);font-family:'Shippori Mincho',serif}
+.stat3 .s.shu b{color:var(--shu)}
+.stat3 .s span{display:block;font-size:10.5px;color:var(--muted);margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 13px;margin-bottom:8px}
+.anni{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 12px;margin-bottom:8px;border-left:3px solid var(--gold)}
+.anni .d{flex-shrink:0;width:48px;text-align:center}
+.anni .d b{display:block;font-family:'Shippori Mincho',serif;font-size:16px;color:var(--gold)}
+.anni .d small{font-size:9.5px;color:var(--muted)}
+.anni .m{flex:1;min-width:0}
+.anni .m .t{font-size:13px;font-weight:700;line-height:1.4}
+.anni .m .in{font-size:10.5px;color:var(--shu);font-weight:700;margin-top:2px}
+.anni .cp{flex-shrink:0;background:var(--lg);color:#fff;border:none;border-radius:8px;padding:8px 10px;font-size:11px;font-weight:700;font-family:inherit}
+.anni.done{opacity:.5}
+.anni .cp.ok{background:var(--oksoft);color:var(--ok);border:1px solid #C4D8C0}
+.sitrow{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:12px 13px;margin-bottom:8px;cursor:pointer}
+.sitrow .dt{font-family:'Shippori Mincho',serif;font-size:13px;color:var(--muted);width:58px;flex-shrink:0}
+.sitrow .nm{font-family:'Shippori Mincho',serif;font-size:15px;font-weight:700}
+.sitrow .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.sitrow .go{margin-left:auto;color:var(--gold);font-size:18px}
+.pill{display:inline-block;font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px;background:var(--oksoft);color:var(--ok);border:1px solid #C4D8C0}
+.pill.part{background:var(--goldsoft);color:var(--gold);border-color:#E0C98A}
+.btn{display:block;width:100%;text-align:center;border:none;border-radius:10px;padding:13px;font-size:14px;font-weight:700;font-family:inherit;color:#fff;background:var(--gold);margin-top:6px}
+.btn.shu{background:var(--shu)}.btn.line{background:var(--lg)}
+.btn.ghost{background:var(--panel);color:var(--gold);border:1px solid #E0C98A}
+.empty{color:var(--muted);font-size:12.5px;text-align:center;padding:16px;background:var(--soft);border:1px dashed var(--line);border-radius:11px}
+.bkbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.bk{background:none;border:none;color:var(--gold);font-size:13px;font-weight:700;font-family:inherit}
+label.f{display:block;font-size:11.5px;color:var(--muted);margin:14px 2px 6px;letter-spacing:.04em}
+input.tf{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit;background:var(--soft)}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12.5px;font-family:inherit;cursor:pointer;transition:.15s}
+.chip.on{background:var(--goldsoft);border-color:var(--gold);color:var(--gold);font-weight:700}
+.chip.peer.on{background:var(--peersoft);border-color:var(--peer);color:var(--peer)}
+.chip.staff.on{background:var(--aisoft);border-color:var(--ai);color:var(--ai)}
+.grp{font-size:11px;color:var(--muted);margin:10px 2px 6px;letter-spacing:.05em}
+.mem{display:flex;align-items:center;gap:7px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 10px;margin-bottom:7px}
+.mem .who{font-weight:700;font-size:13.5px;min-width:74px}
+.mem .rc,.mem .sc{font-size:10.5px;font-weight:700;border-radius:6px;padding:4px 8px;border:1px solid var(--line);background:var(--soft);cursor:pointer;font-family:inherit}
+.mem .rc{color:var(--gold)}
+.mem .sc.senior{color:#B5772A;background:#fff5e9;border-color:#E0C98A}
+.mem .sc.equal{color:var(--muted)}
+.mem .sc.junior{color:var(--ok);background:var(--oksoft);border-color:#C4D8C0}
+.mem .rm{margin-left:auto;background:none;border:none;color:var(--muted);font-size:17px;cursor:pointer}
+.orh{background:var(--soft);border:1px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:10px}
+.orh .t{font-family:'Shippori Mincho',serif;font-size:15px;font-weight:700}
+.orh .s{font-size:11.5px;color:var(--muted);margin-top:3px}
+.progbar{height:7px;background:var(--chip);border-radius:4px;overflow:hidden;margin-top:9px}
+.progbar .fill{height:100%;background:var(--gold);width:0;transition:width .3s}
+.orow{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 12px;margin-bottom:8px}
+.orow.done{opacity:.5}
+.orow .top{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:6px}
+.orow .nm{font-family:'Shippori Mincho',serif;font-weight:700;font-size:14px}
+.rt{font-size:9px;font-weight:800;border-radius:4px;padding:2px 7px}
+.rt-customer{background:var(--shusoft);color:var(--shu)}.rt-intro{background:var(--goldsoft);color:var(--gold)}
+.rt-peer{background:var(--peersoft);color:var(--peer)}.rt-after{background:var(--peersoft);color:var(--peer)}
+.rt-help{background:var(--aisoft);color:var(--ai)}.rt-report{background:var(--chip);color:var(--muted)}
+.sn{font-size:9px;font-weight:800;border-radius:999px;padding:2px 7px;border:1px solid}
+.sn.senior{background:#fff5e9;border-color:#E0C98A;color:#B5772A}
+.sn.equal{background:var(--chip);border-color:var(--line);color:var(--muted)}
+.sn.junior{background:var(--oksoft);border-color:#C4D8C0;color:var(--ok)}
+.first{margin-left:auto;font-size:9.5px;font-weight:800;color:var(--shu)}
+.dtxt{font-size:12.5px;line-height:1.7;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.sendbtn{width:100%;margin-top:8px;padding:9px;border:none;border-radius:7px;font-size:12.5px;font-weight:800;font-family:inherit;color:#fff;background:var(--lg)}
+.sendbtn.pri{background:var(--shu)}
+.sentmark{width:100%;margin-top:8px;padding:9px;border-radius:7px;font-size:12.5px;font-weight:800;text-align:center;color:var(--ok);background:var(--oksoft);border:1px solid #C4D8C0}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(43,40,35,.94);color:#fff;border-radius:8px;padding:10px 14px;font-size:12px;z-index:9;display:none}
+.hint{font-size:11px;color:var(--muted);line-height:1.6;background:var(--goldsoft);border-radius:8px;padding:9px 11px;margin-top:8px}
+</style></head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+var ROLE_LABEL={customer:"主賓客",intro:"紹介者",peer:"同業者",after:"アフター",help:"ヘルプ",report:"担当ママへ共有"};
+var ROLE_CYCLE=["intro","peer","after","help","report"];
+var STAND_LABEL={senior:"先輩",equal:"対等",junior:"後輩"};
+var STAND_CYCLE=["senior","equal","junior"];
+var contactsCache=[], rosterCache=[];
+function api(u,opt){return fetch(u,opt).then(function(r){return r.json();});}
+function post(u,body){return api(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});}
+function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function toast(t){var e=document.getElementById("toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(function(){e.style.display="none";},1900);}
+var app=document.getElementById("app");
+
+/* ---------------- HOME ---------------- */
+function home(){
+  Promise.all([api("/api/sittings"),api("/api/contacts"),api("/api/anniversaries?within=14")]).then(function(res){
+    var sits=res[0].sittings||[], cons=res[1]||[], annis=(res[2]||{}).items||[];
+    contactsCache=cons;
+    var custN=cons.filter(function(c){return (c.kind||"customer")==="customer";}).length;
+    var memTotal=sits.reduce(function(a,s){return a+(s.member_count||0);},0);
+    var h='';
+    h+='<div class="sec"><span class="bar"></span><span>実 績</span><div class="rule"></div></div>';
+    h+='<div class="stat3"><div class="s"><b>'+sits.length+'</b><span>お席（記録数）</span></div>'
+      +'<div class="s shu"><b>'+memTotal+'</b><span>御礼メンバー延べ</span></div>'
+      +'<div class="s"><b>'+custN+'</b><span>keep in touch</span></div></div>';
+    h+='<button class="btn" style="margin-top:12px" data-go="record">＋ 新しいお席を記録する</button>';
+
+    h+='<div class="sec"><span class="bar"></span><span>記 念 日（14日以内）</span><div class="rule"></div></div>';
+    if(!annis.length){ h+='<div class="empty">近い記念日はありません。顧客カードに誕生日・お子様の誕生日・創立記念日を入れると、ここに出ます。（ご命日は扱いません）</div>'; }
+    else { h+='<div id="anniList">'+annis.map(anniHtml).join("")+'</div>'; }
+
+    h+='<div class="sec"><span class="bar"></span><span>お 席 の 記 録</span><div class="rule"></div></div>';
+    if(!sits.length){ h+='<div class="empty">まだお席がありません。「＋新しいお席を記録する」から。</div>'; }
+    else { h+=sits.map(sitRowHtml).join(""); }
+    app.innerHTML=h;
+  });
+}
+function anniHtml(a){
+  var mm=a.date.split("-")[0], dd=a.date.split("-")[1];
+  var inlabel=a.days===0?"今日":("あと"+a.days+"日");
+  return '<div class="anni" data-code="'+esc(a.code)+'" data-date="'+esc(a.date)+'">'
+    +'<div class="d"><b>'+dd+'</b><small>'+mm+'月</small></div>'
+    +'<div class="m"><div class="t">'+esc(a.label)+'</div><div class="in">'+inlabel+'</div></div>'
+    +'<button class="cp" data-anni="'+esc(a.draft)+'">お祝い<br>コピー</button></div>';
+}
+function sitRowHtml(s){
+  var nm=mainName(s.main_contact);
+  var done=(s.sent_count||0)>=(s.member_count||0)&&(s.member_count||0)>0;
+  var pill=done?'<span class="pill">御礼済み</span>':'<span class="pill part">'+(s.sent_count||0)+'/'+(s.member_count||0)+'</span>';
+  return '<div class="sitrow" data-sit="'+s.id+'"><div class="dt">'+esc(s.date_label||"—")+'</div>'
+    +'<div style="flex:1;min-width:0"><div class="nm">'+esc(nm)+' <span style="font-family:Zen Kaku Gothic New;font-size:11px;color:var(--muted)">のお席</span></div>'
+    +'<div class="sub">メンバー'+(s.member_count||0)+'名 '+pill+'</div></div><div class="go">›</div></div>';
+}
+function mainName(code){var c=contactsCache.filter(function(x){return x.code===code;})[0];return c?((c.nickname||"").trim()||c.code):code;}
+
+/* ---------------- RECORD ---------------- */
+var rec={main:"",mainStand:"equal",members:[],dateLabel:""};
+function record(){
+  rec={main:"",mainStand:"equal",members:[],dateLabel:"今夜"};
+  Promise.all([api("/api/contacts"),api("/api/roster?kinds=peer,excolleague,staff")]).then(function(res){
+    contactsCache=res[0]||[]; rosterCache=(res[1]||{}).roster||[];
+    drawRecord();
+  });
+}
+function stdOf(code){var all=contactsCache.concat(rosterCache);var c=all.filter(function(x){return x.code===code;})[0];return (c&&c.stand)||"equal";}
+function dispName(code){var all=contactsCache.concat(rosterCache);var c=all.filter(function(x){return x.code===code;})[0];return c?((c.nickname||"").trim()||c.code):code;}
+function drawRecord(){
+  var custs=contactsCache.filter(function(c){return (c.kind||"customer")==="customer";});
+  var peers=rosterCache.filter(function(c){return c.kind==="peer"||c.kind==="excolleague";});
+  var staff=rosterCache.filter(function(c){return c.kind==="staff";});
+  var h='';
+  h+='<div class="bkbar"><button class="bk" data-go="home">‹ 実績へ</button></div>';
+  h+='<div class="sec"><span class="bar"></span><span>お席を記録</span><div class="rule"></div></div>';
+  h+='<label class="f">いつのお席</label><input class="tf" id="dlab" value="'+esc(rec.dateLabel)+'">';
+  h+='<label class="f">主賓客（お席の主役）</label><div class="chips">'
+    +custs.map(function(c){var on=rec.main===c.code;return '<button class="chip'+(on?" on":"")+'" data-main="'+esc(c.code)+'">'+esc(dispName(c.code))+'</button>';}).join("")+'</div>';
+  h+='<label class="f">同席メンバーを足す（タップで追加）</label>';
+  h+='<div class="grp">顧客（紹介者など）</div><div class="chips">'+chipList(custs.filter(function(c){return c.code!==rec.main;}),"")+'</div>';
+  h+='<div class="grp">同業者（店外）</div><div class="chips">'+chipList(peers,"peer")+'</div>';
+  h+='<div class="grp">店内（ヘルプ・担当ママ）</div><div class="chips">'+chipList(staff,"staff")+'</div>';
+  h+='<div class="sec"><span class="bar"></span><span>選択中メンバー</span><div class="rule"></div></div>';
+  if(!rec.members.length){ h+='<div class="empty">上のチップをタップして追加してください。役割・立場はチップをタップで切替できます。</div>'; }
+  else { h+=rec.members.map(memHtml).join(""); }
+  h+='<div class="hint">立場「先輩」の相手は御礼リストで上に並び、先に送る／へりくだった口調になります。取引上は自分が客でも、先輩には先に御礼するのが効きます。</div>';
+  h+='<button class="btn shu" style="margin-top:12px" data-record="1">この席を記録する</button>';
+  app.innerHTML=h;
+  document.getElementById("dlab").addEventListener("input",function(e){rec.dateLabel=e.target.value;});
+}
+function chipList(arr,cls){
+  return arr.map(function(c){
+    var on=rec.members.some(function(m){return m.contact===c.code;});
+    return '<button class="chip '+cls+(on?" on":"")+'" data-add="'+esc(c.code)+'" data-cls="'+cls+'">'+esc(dispName(c.code))+'</button>';
+  }).join("");
+}
+function memHtml(m){
+  return '<div class="mem"><span class="who">'+esc(dispName(m.contact))+'</span>'
+    +'<button class="rc" data-role="'+esc(m.contact)+'">'+ROLE_LABEL[m.role]+'</button>'
+    +'<button class="sc '+m.stand+'" data-stand="'+esc(m.contact)+'">'+STAND_LABEL[m.stand]+'</button>'
+    +'<button class="rm" data-rm="'+esc(m.contact)+'">×</button></div>';
+}
+function defaultRole(code,cls){
+  if(cls==="peer") return "peer";
+  if(cls==="staff"){ var c=rosterCache.filter(function(x){return x.code===code;})[0]; if(c&&(c.tags||"").indexOf("担当")>=0||code.indexOf("ママ")>=0) return "report"; return "help"; }
+  return "intro";
+}
+
+/* ---------------- OREI ---------------- */
+function orei(sid){
+  Promise.all([api("/api/sittings/"+sid),post("/api/sittings/"+sid+"/orei")]).then(function(res){
+    var sit=res[0], list=(res[1]||{}).orei||[];
+    var main=mainName(sit.main_contact);
+    var total=list.length, sent=list.filter(function(x){return x.sent;}).length;
+    var h='';
+    h+='<div class="bkbar"><button class="bk" data-go="home">‹ 実績へ</button></div>';
+    h+='<div class="orh"><div class="t">'+esc(main)+' のお席・御礼</div><div class="s">'+esc(sit.date_label||"")+' ／ 先に送るべき順（先輩→対等→後輩）</div>'
+      +'<div class="progbar"><div class="fill" id="ofill" style="width:'+(total?sent/total*100:0)+'%"></div></div>'
+      +'<div class="s" id="ocount" style="margin-top:6px"><b>'+sent+'</b> / '+total+' 送信済み</div></div>';
+    h+='<div id="olist">'+list.map(oreiRow).join("")+'</div>';
+    app.innerHTML=h;
+    app._sid=sid; app._total=total;
+  });
+}
+function oreiRow(p){
+  var first=(p.stand==="senior");
+  var btn=p.sent?'<div class="sentmark">✓ 送信済み</div>'
+    :'<button class="sendbtn'+(first?" pri":"")+'" data-send="'+esc(p.contact)+'" data-text="'+esc(p.text)+'">'+(first?"先に送る（コピー→LINE）":"コピー→LINE")+'</button>';
+  return '<div class="orow'+(p.sent?" done":"")+'" id="or-'+esc(p.contact)+'"><div class="top">'
+    +'<span class="nm">'+esc(p.name)+'</span>'
+    +'<span class="rt rt-'+p.role+'">'+esc(p.role_label)+'</span>'
+    +'<span class="sn '+p.stand+'">'+STAND_LABEL[p.stand]+'</span>'
+    +(first&&!p.sent?'<span class="first">先に送る</span>':'')+'</div>'
+    +'<div class="dtxt">'+esc(p.text)+'</div>'+btn+'</div>';
+}
+
+/* ---------------- events ---------------- */
+document.addEventListener("click",function(ev){
+  var t=ev.target.closest("[data-go],[data-main],[data-add],[data-role],[data-stand],[data-rm],[data-record],[data-sit],[data-send],[data-anni]");
+  if(!t) return;
+  if(t.dataset.go){ nav(t.dataset.go); return; }
+  if(t.dataset.sit){ nav("orei",Number(t.dataset.sit)); return; }
+  if(t.hasOwnProperty("dataset")&&t.dataset.anni!==undefined){ copyText(t.dataset.anni); var a=t.closest(".anni"); if(a){a.classList.add("done");} t.textContent="済"; t.classList.add("ok"); toast("お祝いをコピーしました"); return; }
+  if(t.dataset.main!==undefined){ rec.main=t.dataset.main; rec.mainStand=stdOf(t.dataset.main); drawRecord(); return; }
+  if(t.dataset.add!==undefined){
+    var code=t.dataset.add, cls=t.dataset.cls;
+    var idx=rec.members.map(function(m){return m.contact;}).indexOf(code);
+    if(idx>=0){ rec.members.splice(idx,1); }
+    else { rec.members.push({contact:code,role:defaultRole(code,cls),stand:stdOf(code)}); }
+    drawRecord(); return;
+  }
+  if(t.dataset.role){ var m=rec.members.filter(function(x){return x.contact===t.dataset.role;})[0]; if(m){ var i=ROLE_CYCLE.indexOf(m.role); m.role=ROLE_CYCLE[(i+1)%ROLE_CYCLE.length]; drawRecord(); } return; }
+  if(t.dataset.stand){ var m2=rec.members.filter(function(x){return x.contact===t.dataset.stand;})[0]; if(m2){ var j=STAND_CYCLE.indexOf(m2.stand); m2.stand=STAND_CYCLE[(j+1)%STAND_CYCLE.length]; drawRecord(); } return; }
+  if(t.dataset.rm){ rec.members=rec.members.filter(function(x){return x.contact!==t.dataset.rm;}); drawRecord(); return; }
+  if(t.dataset.record){ doRecord(); return; }
+  if(t.dataset.send){ doSend(t.dataset.send,t.dataset.text); return; }
+});
+function doRecord(){
+  if(!rec.main){ toast("主賓客を選んでください"); return; }
+  var members=[{contact:rec.main,role:"customer",stand:rec.mainStand}].concat(rec.members);
+  var seen={}; members=members.filter(function(m){if(seen[m.contact])return false;seen[m.contact]=true;return true;});
+  post("/api/sittings",{date_label:rec.dateLabel,main:rec.main,members:members}).then(function(r){
+    toast("お席を記録しました"); nav("orei",r.id);
+  });
+}
+function doSend(contact,text){
+  copyText(text);
+  var sid=app._sid;
+  post("/api/sittings/"+sid+"/sent",{contact:contact}).then(function(){
+    var row=document.getElementById("or-"+cssEsc(contact));
+    orei(sid); toast("コピーしました。LINEで貼って送ってください");
+  });
+}
+function cssEsc(s){return s.replace(/["\\#.:\[\]]/g,"\\$&");}
+function copyText(t){ try{navigator.clipboard&&navigator.clipboard.writeText(t);}catch(e){} }
+
+/* ---------------- router ---------------- */
+function nav(view,arg){
+  if(view==="home") home();
+  else if(view==="record") record();
+  else if(view==="orei") orei(arg);
+  try{ window.parent&&window.parent.postMessage({sekiView:view},"*"); }catch(e){}
+}
+home();
+</script>
+
+<script>
+/* 触感フィードバック(可能な環境のみ): Android=Vibration API / iOS17.4+=スイッチ裏技(軽いタプティック) */
+(function(){
+  var lab, warned=false;
+  function ios(){ try{
+    if(!lab){ lab=document.createElement('label'); lab.setAttribute('aria-hidden','true');
+      lab.style.cssText='position:fixed;top:-200px;left:-200px;width:0;height:0;opacity:0;pointer-events:none';
+      var i=document.createElement('input'); i.type='checkbox'; i.setAttribute('switch',''); lab.appendChild(i);
+      document.body.appendChild(lab);
+    }
+    lab.click();
+  }catch(e){} }
+  window.haptic=function(strong){ try{
+    if(navigator.vibrate){ navigator.vibrate(strong?[12,26,12]:9); return; }
+    ios();
+  }catch(e){} };
+  document.addEventListener('click', function(ev){
+    var t=ev.target.closest('button,[data-act],[onclick],.seg span,.chip,.fp,.sendbtn,.cp,.handoff-opt,.b');
+    if(!t) return;
+    var s=((t.dataset&&t.dataset.act)||'')+' '+(t.className||'')+' '+(t.id||'');
+    var strong=/copygo|copy|send|record|orei|primary|save|deskapprove|demoReset|go\b/i.test(s);
+    window.haptic(strong);
+  }, true);
+})();
+</script>
+
+</body></html>

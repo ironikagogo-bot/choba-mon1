@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>帳場 — 一斉下書き（グループ選択）デモ</title>
+<style>
+  :root{
+    --bg:#f2efe9; --card:#fffdf9; --ink:#2b2620; --sub:#8a8175;
+    --line:#e6e0d5; --accent:#9a7b4f; --accent2:#c8a26a;
+    --s:#b4553f; --a:#9a7b4f; --b:#6f7d6a; --go:#2f7d5b; --chip:#efe9dd;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(160deg,#e9e3d8,#f4f1ea);font-family:-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;color:var(--ink);display:flex;justify-content:center;padding:22px 12px 60px}
+  .phone{width:100%;max-width:412px;background:var(--bg);border-radius:34px;box-shadow:0 18px 50px rgba(60,45,25,.22);overflow:hidden;border:1px solid #d9d1c3}
+  .top{background:linear-gradient(135deg,#3a322a,#5a4d3c);color:#f5eee0;padding:18px 18px 14px}
+  .top h1{margin:0;font-size:18px;letter-spacing:.06em;font-weight:600}
+  .top .sub{font-size:11.5px;opacity:.75;margin-top:3px}
+  .season{margin-top:10px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);border-radius:10px;padding:7px 10px;font-size:11.5px;display:flex;gap:8px;align-items:center}
+  .season b{font-weight:600}
+  .body{padding:14px 14px 18px}
+  .sec{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:13px 13px;margin-bottom:12px;box-shadow:0 2px 8px rgba(90,70,40,.05)}
+  .sec h2{margin:0 0 9px;font-size:12.5px;color:var(--sub);font-weight:600;letter-spacing:.04em;display:flex;align-items:center;gap:6px}
+  .sec h2 .n{margin-left:auto;color:var(--accent);font-weight:700}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{border:1.4px solid var(--line);background:var(--chip);color:var(--ink);border-radius:999px;padding:7px 13px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s;user-select:none}
+  .chip .c{font-size:11px;color:var(--sub);margin-left:5px;font-weight:600}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.on .c{color:rgba(255,255,255,.85)}
+  .chip.rankS.on{background:var(--s);border-color:var(--s)}
+  .chip.rankA.on{background:var(--a);border-color:var(--a)}
+  .chip.rankB.on{background:var(--b);border-color:var(--b)}
+  .chip.smart{border-style:dashed}
+  .chip.smart.on{background:#b4553f;border-color:#b4553f}
+  .tmpl{width:100%;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:14px;font-family:inherit;color:var(--ink);background:#fbf9f4;resize:none;line-height:1.5}
+  .hint{font-size:11px;color:var(--sub);margin-top:7px;line-height:1.6}
+  .hint code{background:#efe9dd;padding:1px 5px;border-radius:5px;font-size:11px}
+  .preview{margin-top:10px;border-top:1px dashed var(--line);padding-top:9px}
+  .prow{display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:12.5px}
+  .rk{width:19px;height:19px;border-radius:6px;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+  .rk.S{background:var(--s)} .rk.A{background:var(--a)} .rk.B{background:var(--b)}
+  .prow .nm{font-weight:600}
+  .prow .meta{margin-left:auto;color:var(--sub);font-size:11px}
+  .genbtn{width:100%;margin-top:4px;border:none;border-radius:14px;padding:15px;font-size:15px;font-weight:700;color:#fff;background:linear-gradient(135deg,#9a7b4f,#c8a26a);cursor:pointer;box-shadow:0 6px 16px rgba(154,123,79,.35);letter-spacing:.03em}
+  .genbtn:disabled{opacity:.45;box-shadow:none;cursor:default}
+  .genbtn .small{display:block;font-size:11px;font-weight:500;opacity:.9;margin-top:2px}
+  /* results */
+  .rhead{display:flex;align-items:center;margin:4px 2px 10px}
+  .rhead .t{font-size:13px;font-weight:700}
+  .rhead .prog{margin-left:auto;font-size:12px;color:var(--sub)}
+  .bar{height:6px;background:#e6e0d5;border-radius:99px;overflow:hidden;margin:0 2px 12px}
+  .bar>i{display:block;height:100%;width:0;background:var(--go);transition:.4s}
+  .dcard{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px 12px;margin-bottom:10px;box-shadow:0 2px 8px rgba(90,70,40,.05);transition:.3s}
+  .dcard.done{opacity:.5}
+  .dtop{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .dtop .nm{font-weight:700;font-size:13.5px}
+  .dtop .tag{font-size:10.5px;color:var(--sub);border:1px solid var(--line);border-radius:6px;padding:1px 6px;margin-left:2px}
+  .dtop .why{margin-left:auto;font-size:10.5px;color:var(--accent2);font-weight:600}
+  .dtext{font-size:14px;line-height:1.6;color:var(--ink);background:#fbf9f4;border-radius:10px;padding:9px 11px;border:1px solid #efe9dd;white-space:pre-wrap}
+  .dtext em{font-style:normal;background:#f6e9cf;border-radius:3px;padding:0 2px}
+  .dtext b{font-weight:600;background:#d7ead9;border-radius:3px;padding:0 2px}
+  .legend{display:flex;gap:14px;justify-content:center;font-size:10.5px;color:var(--sub);margin:2px 0 8px}
+  .legend i{font-style:normal;padding:1px 6px;border-radius:4px}
+  .legend .l1{background:#f6e9cf} .legend .l2{background:#d7ead9}
+  .themebox{margin-top:8px;background:#f6f1e7;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:11px;color:#6b5f4c;line-height:1.7}
+  .themebox b{color:var(--accent);font-weight:700}
+  .copy{width:100%;margin-top:9px;border:none;border-radius:11px;padding:11px;font-size:14px;font-weight:700;color:#fff;background:var(--go);cursor:pointer}
+  .copy.done{background:#b8b1a3}
+  .empty{text-align:center;color:var(--sub);font-size:12.5px;padding:24px 8px}
+  .foot{text-align:center;font-size:10.5px;color:var(--sub);padding:6px 16px 2px;line-height:1.6}
+  .back{background:none;border:none;color:var(--accent);font-weight:700;font-size:13px;cursor:pointer;padding:6px 2px;margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="top">
+    <h1>帳場 — 一斉下書き</h1>
+    <div class="sub">グループ丸ごと選択 → 一人ずつ違う下書きを一括生成</div>
+    <div class="season">☀️ <span><b>今日：7/16（真夏・梅雨明け頃）</b>／季節と来店記録を各文に自動反映</span></div>
+  </div>
+
+  <!-- 選択画面 -->
+  <div class="body" id="pickView">
+    <div class="sec">
+      <h2>① ランクで選ぶ <span class="n" id="rankN"></span></h2>
+      <div class="chips" id="rankChips">
+        <div class="chip rankS" data-rank="S">S <span class="c">2人</span></div>
+        <div class="chip rankA" data-rank="A">A <span class="c">3人</span></div>
+        <div class="chip rankB" data-rank="B">B <span class="c">3人</span></div>
+      </div>
+    </div>
+
+    <div class="sec">
+      <h2>② タグで絞る（任意）</h2>
+      <div class="chips" id="tagChips">
+        <div class="chip" data-tag="VIP">VIP</div>
+        <div class="chip" data-tag="常連">常連</div>
+        <div class="chip" data-tag="誕生日近い">誕生日近い</div>
+        <div class="chip smart" data-tag="ご無沙汰">⏳ ご無沙汰（来店周期超過）</div>
+      </div>
+      <div class="hint">「ご無沙汰」は帳場が<b>前回来店＋来店周期</b>から自動で洗い出す“賢いタグ”。誰に送るかを自分で探さなくていい。</div>
+      <div class="themebox">タグは<b>話す内容（テーマ）</b>も決めます：<br>
+        ・VIP → 特別感・丁寧に　／　常連 → 砕けた親しみ<br>
+        ・誕生日近い → <b>お祝い・誕生日の話</b>　／　ご無沙汰 → <b>そろそろ近況報告・会いたい</b><br>
+        ※テーマは実データがある時だけ（誕生日を知らない客には誕生日の話を作らない＝捏造しない）。</div>
+    </div>
+
+    <div class="sec">
+      <h2>③ テンプレ（1回だけ書く）</h2>
+      <textarea class="tmpl" id="tmpl" rows="2">{名前}さん こんにちは 今日お店来てください</textarea>
+      <div class="hint"><code>{名前}</code> は各人の名前に自動置換。さらに帳場が<b>語尾・言い回し・季節・来店記録</b>で一通ずつ変える（同文連投を避ける）。</div>
+    </div>
+
+    <div class="sec">
+      <h2>選択中のあて先 <span class="n" id="selN">0人</span></h2>
+      <div class="preview" id="preview"><div class="empty">上でランク／タグを選ぶと、対象がここに出ます</div></div>
+    </div>
+
+    <button class="genbtn" id="genBtn" disabled>一括生成する<span class="small" id="genSub">あて先を選んでください</span></button>
+    <div class="foot">送信は必ず本人の指。帳場は文を作るだけで、勝手に送りません。</div>
+  </div>
+
+  <!-- 結果画面 -->
+  <div class="body" id="resultView" style="display:none">
+    <button class="back" id="backBtn">← あて先選択に戻る</button>
+    <div class="rhead"><span class="t">生成した下書き</span><span class="prog" id="prog">0 / 0 送信済み</span></div>
+    <div class="bar"><i id="progBar"></i></div>
+    <div class="legend"><span><i class="l1">黄</i> 季節・来店記録</span><span><i class="l2">緑</i> タグの話題</span></div>
+    <div id="cards"></div>
+    <div class="foot">各カードを「コピー→LINE」でその人に送る。名前は打たなくてよい。<br>文面は全員バラバラ。<b>タグに応じて話す内容まで変わる</b>（誕生日→お祝い、ご無沙汰→近況報告）。</div>
+  </div>
+</div>
+
+<script>
+// ==== 架空の顧客データ（機微情報は不使用・すべてダミー）====
+// draft内: [[..]]=季節/来店記録の差し込み（黄）, {{..}}=タグの話題の差し込み（緑）
+const CUST = [
+  {nm:"田中",  rk:"S", tags:["VIP"],       last:"7/2",  gap:"2週間", why:"VIP・前回2週間前",
+    draft:"田中さん、[[暑い日]]が続きますね。今週あたり、{{田中さんのお席をご用意して}}お待ちしています"},
+  {nm:"伊藤",  rk:"S", tags:["VIP"],       last:"7/10", gap:"6日",  why:"VIP・直近来店",
+    draft:"伊藤さん [[この前はありがとう]]ございました！また{{ゆっくりお相手させてください}}、今週お待ちしてます"},
+  {nm:"佐藤",  rk:"A", tags:["常連"],       last:"6/28", gap:"18日", why:"常連・ひと月ぶり",
+    draft:"佐藤さん こんばんは〜。[[梅雨も明けた]]し、{{そろそろ顔出しません？笑}}"},
+  {nm:"高橋",  rk:"A", tags:["誕生日近い"],  last:"7/5",  gap:"11日", why:"誕生日が近い",
+    draft:"高橋さん、{{もうすぐお誕生日ですね}}🎂 {{今年もお祝いさせてください}}！[[暑い]]ですが近いうちにぜひ"},
+  {nm:"山本",  rk:"A", tags:["常連"],       last:"6/15", gap:"1ヶ月", why:"常連・季節",
+    draft:"山本さん こんにちは。[[お盆前]]でばたばたですか？落ち着いたら{{軽く一杯どうです？}}"},
+  {nm:"鈴木",  rk:"B", tags:["ご無沙汰"],    last:"4/10", gap:"3ヶ月", why:"周期超過3ヶ月",
+    draft:"鈴木さん [[ごぶさた]]してます。その後お変わりないですか？{{そろそろ近況きかせてください}}"},
+  {nm:"渡辺",  rk:"B", tags:["ご無沙汰"],    last:"3/20", gap:"4ヶ月", why:"周期超過4ヶ月",
+    draft:"渡辺さん [[お久しぶり]]です！すっかり[[暑く]]なりましたね。{{近況報告がてら}}、また涼みにいらしてください"},
+  {nm:"中村",  rk:"B", tags:[],            last:"5/30", gap:"1.5ヶ月",why:"季節・ご無沙汰気味",
+    draft:"中村さん、[[暑い日]]続きますがお元気ですか？また遊びにいらしてくださいね"},
+];
+
+const sel = {ranks:new Set(), tags:new Set()};
+
+function matched(){
+  return CUST.filter(c=>{
+    const rOk = sel.ranks.size===0 || sel.ranks.has(c.rk);
+    const tOk = sel.tags.size===0 || c.tags.some(t=>sel.tags.has(t));
+    // タグ選択時はランク未選択でも可。両方選択時はAND。
+    if(sel.ranks.size && sel.tags.size) return rOk && tOk;
+    if(sel.ranks.size) return rOk;
+    if(sel.tags.size) return tOk;
+    return false;
+  });
+}
+function rankCount(r){return CUST.filter(c=>c.rk===r).length;}
+function el(id){return document.getElementById(id);}
+
+function renderChips(){
+  document.querySelectorAll('#rankChips .chip').forEach(ch=>{
+    ch.onclick=()=>{const r=ch.dataset.rank; ch.classList.toggle('on'); ch.classList.contains('on')?sel.ranks.add(r):sel.ranks.delete(r); refresh();};
+  });
+  document.querySelectorAll('#tagChips .chip').forEach(ch=>{
+    ch.onclick=()=>{const t=ch.dataset.tag; ch.classList.toggle('on'); ch.classList.contains('on')?sel.tags.add(t):sel.tags.delete(t); refresh();};
+  });
+}
+function refresh(){
+  const m=matched();
+  el('selN').textContent=m.length+"人";
+  el('rankN').textContent=sel.ranks.size?[...sel.ranks].join("・"):"";
+  const pv=el('preview');
+  if(m.length===0){pv.innerHTML='<div class="empty">上でランク／タグを選ぶと、対象がここに出ます</div>';}
+  else{
+    pv.innerHTML=m.map(c=>`<div class="prow"><span class="rk ${c.rk}">${c.rk}</span><span class="nm">${c.nm}さん</span><span class="meta">前回 ${c.last}・${c.gap}前</span></div>`).join('');
+  }
+  const btn=el('genBtn');
+  btn.disabled=m.length===0;
+  el('genSub').textContent=m.length===0?"あて先を選んでください":`${m.length}人ぶんを一括で作る`;
+}
+
+let cards=[];
+function generate(){
+  cards=matched().map(c=>({...c,done:false}));
+  el('pickView').style.display='none';
+  el('resultView').style.display='block';
+  const box=el('cards');
+  box.innerHTML=cards.map((c,i)=>{
+    let txt=c.draft
+      .replace(/\[\[(.+?)\]\]/g,'<em>$1</em>')   // 季節/来店記録=黄
+      .replace(/\{\{(.+?)\}\}/g,'<b>$1</b>');    // タグの話題=緑
+    const tag=c.tags[0]?`<span class="tag">${c.tags[0]}</span>`:'';
+    return `<div class="dcard" id="dc${i}">
+      <div class="dtop"><span class="rk ${c.rk}">${c.rk}</span><span class="nm">${c.nm}さん</span>${tag}<span class="why">${c.why}</span></div>
+      <div class="dtext">${txt}</div>
+      <button class="copy" data-i="${i}">この文でコピー→LINE</button>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('.copy').forEach(b=>{
+    b.onclick=()=>{const i=+b.dataset.i; if(cards[i].done)return; cards[i].done=true;
+      el('dc'+i).classList.add('done'); b.classList.add('done'); b.textContent='✓ コピー済み（LINEへ）';
+      updateProg();};
+  });
+  updateProg();
+}
+function updateProg(){
+  const d=cards.filter(c=>c.done).length;
+  el('prog').textContent=`${d} / ${cards.length} 送信済み`;
+  el('progBar').style.width=(cards.length?d/cards.length*100:0)+'%';
+}
+
+el('genBtn').onclick=generate;
+el('backBtn').onclick=()=>{el('resultView').style.display='none';el('pickView').style.display='block';};
+renderChips(); refresh();
+</script>
+</body>
+</html>

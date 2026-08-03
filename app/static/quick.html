@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="帳場クイック">
+<title>帳場｜クイック下書き</title>
+<style>
+  :root{--bg:#0e1116;--card:#171d26;--line:#2a333f;--ink:#e9eef4;--sub:#9aa6b4;
+        --accent:#2f7bd6;--green:#0f9d58;--line-green:#06c755;--chip:#212b37;--warn:#e3a008}
+  @media (prefers-color-scheme: light){
+    :root{--bg:#eef1f5;--card:#fff;--line:#dce3ea;--ink:#1a2230;--sub:#5a6675;--chip:#eef2f7}
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{background:var(--bg);color:var(--ink);font-family:-apple-system,"Hiragino Sans","Noto Sans JP",system-ui,sans-serif;line-height:1.6;padding:16px 14px 40px;max-width:560px;margin:0 auto}
+  h1{font-size:19px;display:flex;align-items:center;gap:8px}
+  h1 .b{width:26px;height:26px;border-radius:7px;background:var(--line-green);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800}
+  .hint{font-size:12.5px;color:var(--sub);margin:5px 0 14px}
+  label{font-size:12px;color:var(--sub);display:block;margin:14px 0 5px}
+  textarea{width:100%;min-height:110px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:16px;color:var(--ink);resize:vertical;font-family:inherit}
+  .paste{margin-top:8px;width:100%;background:var(--chip);border:1px solid var(--line);border-radius:10px;padding:11px;font-size:14px;font-weight:700;color:var(--accent)}
+  .chips{display:flex;gap:7px;flex-wrap:wrap;margin-top:4px}
+  .chip{font-size:13px;font-weight:700;padding:8px 13px;border-radius:999px;background:var(--card);border:1.5px solid var(--line);color:var(--sub)}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  input[type=text]{width:100%;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;font-size:16px;color:var(--ink);font-family:inherit}
+  .gen{margin-top:18px;width:100%;background:var(--accent);color:#fff;border:none;border-radius:13px;padding:15px;font-size:16px;font-weight:800}
+  .gen:disabled{opacity:.5}
+  .out{margin-top:18px}
+  .draft{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px;margin-bottom:11px}
+  .draft .tone{font-size:11px;font-weight:800;color:var(--accent);margin-bottom:6px}
+  .draft .txt{font-size:15px;line-height:1.7;white-space:pre-wrap}
+  .draft .acts{display:flex;gap:8px;margin-top:11px}
+  .draft .cp{flex:1;text-align:center;background:var(--line-green);color:#fff;border:none;border-radius:10px;padding:11px;font-size:14px;font-weight:800}
+  .draft .ln{flex:0 0 auto;background:var(--chip);border:1px solid var(--line);color:var(--ink);border-radius:10px;padding:11px 14px;font-size:14px;font-weight:700;text-decoration:none}
+  .spin{width:34px;height:34px;border-radius:50%;border:4px solid var(--line);border-top-color:var(--accent);margin:22px auto;animation:s 1s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .err{background:#3a1414;border:1px solid #c4381a;color:#ffb4a3;border-radius:11px;padding:11px 13px;font-size:13.5px;margin-top:14px}
+  @media (prefers-color-scheme: light){.err{background:#fdecea;color:#a3271a}}
+  details{margin-top:14px;background:var(--card);border:1px solid var(--line);border-radius:11px;padding:10px 12px}
+  summary{font-size:13px;color:var(--sub);cursor:pointer}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:rgba(0,0,0,.85);color:#fff;font-size:13px;padding:9px 18px;border-radius:999px;opacity:0;transition:.2s;pointer-events:none}
+  .toast.show{opacity:1}
+  .warn{font-size:11.5px;color:var(--warn);margin-top:6px}
+</style>
+</head>
+<body>
+  <h1><span class="b">帳</span>クイック下書き</h1>
+  <div class="hint">相手のLINEを貼って「下書きを作る」を押すだけ。ショートカット設定は不要。ホーム画面に追加しておくとアプリのように開けます。</div>
+
+  <label>① 相手のメッセージ</label>
+  <textarea id="msg" placeholder="ここに相手のLINE本文を貼り付け"></textarea>
+  <button class="paste" id="pasteBtn">📋 クリップボードから貼り付け</button>
+
+  <label>② 口調（距離感）</label>
+  <div class="chips" id="regChips">
+    <span class="chip" data-v="keigo_only">敬語厳守</span>
+    <span class="chip" data-v="keigo">敬語</span>
+    <span class="chip on" data-v="mix">混在</span>
+    <span class="chip" data-v="casual">タメ口OK</span>
+  </div>
+
+  <label>③ 呼び方（任意）</label>
+  <input type="text" id="nick" placeholder="例：あき / 社長（空でも可）">
+
+  <button class="gen" id="genBtn">下書きを作る</button>
+
+  <div class="out" id="out"></div>
+
+  <details id="settings">
+    <summary>⚙️ 設定（最初に1回だけ）</summary>
+    <label>合言葉トークン（サーバーで設定していれば入力・空でも可）</label>
+    <input type="text" id="token" placeholder="CHOUBA_INGEST_TOKEN の値">
+    <div class="warn">この端末にだけ保存されます（次回から自動で入ります）。</div>
+  </details>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+  var $ = function(id){return document.getElementById(id)};
+  var register = "mix";
+
+  // token 記憶
+  try{ var t=localStorage.getItem("chouba_token"); if(t) $("token").value=t; }catch(e){}
+  $("token").addEventListener("change", function(){
+    try{ localStorage.setItem("chouba_token", $("token").value.trim()); }catch(e){}
+  });
+
+  // register chips
+  $("regChips").addEventListener("click", function(e){
+    var c=e.target.closest(".chip"); if(!c) return;
+    [].forEach.call(document.querySelectorAll("#regChips .chip"), function(x){x.classList.remove("on")});
+    c.classList.add("on"); register=c.getAttribute("data-v");
+  });
+
+  // paste
+  $("pasteBtn").addEventListener("click", async function(){
+    try{
+      var txt = await navigator.clipboard.readText();
+      if(txt){ $("msg").value=txt; toast("貼り付けました"); }
+      else toast("クリップボードが空です");
+    }catch(e){ toast("貼り付け不可。長押しでペーストしてください"); }
+  });
+
+  function toast(m){
+    var el=$("toast"); el.textContent=m; el.classList.add("show");
+    setTimeout(function(){el.classList.remove("show")},1600);
+  }
+
+  function copyText(t, btn){
+    function ok(){ if(btn){var o=btn.textContent; btn.textContent="✓ コピーしました"; setTimeout(function(){btn.textContent=o},1400);} }
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(t).then(ok).catch(function(){fallback(t);ok()});
+    } else { fallback(t); ok(); }
+  }
+  function fallback(t){
+    var ta=document.createElement("textarea"); ta.value=t; document.body.appendChild(ta);
+    ta.select(); try{document.execCommand("copy")}catch(e){} document.body.removeChild(ta);
+  }
+
+  $("genBtn").addEventListener("click", async function(){
+    var text=$("msg").value.trim();
+    if(!text){ toast("相手のメッセージを入れてください"); return; }
+    $("genBtn").disabled=true; $("genBtn").textContent="作成中…";
+    $("out").innerHTML='<div class="spin"></div>';
+    var body={ text:text, register:register };
+    var nick=$("nick").value.trim(); if(nick) body.nickname=nick;
+    var tok=$("token").value.trim(); if(tok) body.token=tok;
+    try{
+      var r=await fetch("/api/quickdraft",{
+        method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body)
+      });
+      if(!r.ok){ throw new Error("サーバー応答 "+r.status+(r.status===401?"（トークン不一致：設定を確認）":"")); }
+      var data=await r.json();
+      var drafts=data.drafts||[];
+      if(!drafts.length){ throw new Error("下書きが空でした"); }
+      $("out").innerHTML = drafts.map(function(d,i){
+        var safe=(d.text||"").replace(/</g,"&lt;");
+        return '<div class="draft"><div class="tone">案'+(i+1)+(d.tone?" ・ "+d.tone:"")+'</div>'
+          +'<div class="txt" id="d'+i+'">'+safe+'</div>'
+          +'<div class="acts"><button class="cp" data-i="'+i+'">この文をコピー</button>'
+          +'<a class="ln" href="line://">LINE</a></div></div>';
+      }).join("");
+      [].forEach.call(document.querySelectorAll(".cp"), function(b){
+        b.addEventListener("click", function(){ copyText(drafts[b.getAttribute("data-i")].text, b); });
+      });
+    }catch(e){
+      $("out").innerHTML='<div class="err">'+(e.message||"通信に失敗しました")+'<br>URLが正しいサーバーで開けているか、ネット接続を確認してください。</div>';
+    }finally{
+      $("genBtn").disabled=false; $("genBtn").textContent="下書きを作る";
+    }
+  });
+</script>
+</body>
+</html>

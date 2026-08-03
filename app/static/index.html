@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>帳場 — pilot</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap');
+:root{--bg:#F7F4EC;--panel:#fff;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;--gold:#A8842F;--shu:#C0402C;--ok:#5E8A5D}
+*{box-sizing:border-box}
+body{margin:0;background:#EDE8DA;font-family:'Zen Kaku Gothic New',sans-serif;color:var(--text)}
+.wrap{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);border-left:1px solid var(--line);border-right:1px solid var(--line);padding-bottom:40px}
+header{padding:14px 16px 10px;background:#FFFDF8;border-bottom:1px solid var(--line)}
+h1{font-family:'Shippori Mincho',serif;font-size:19px;letter-spacing:.38em;margin:0;display:inline}
+.desk{font-size:10px;color:var(--muted);margin-top:5px}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:5px}
+.sec{display:flex;align-items:center;gap:10px;margin:16px 16px 9px}
+.sec .bar{width:3px;height:14px;background:var(--gold)}
+.sec.shu .bar{background:var(--shu)}
+.sec span{font-family:'Shippori Mincho',serif;font-size:13px;letter-spacing:.26em;color:var(--gold)}
+.sec.shu span{color:var(--shu)}
+.sec .rule{flex:1;height:1px;background:var(--line)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin:0 16px 10px;box-shadow:0 1px 3px rgba(60,50,30,.06)}
+.card.u{border-left:3px solid var(--shu)}
+.card.r{border-left:3px solid var(--gold)}
+.row{display:flex;align-items:center;gap:8px}
+.code{font-family:'Shippori Mincho',serif;font-size:15px}
+.time{margin-left:auto;font-size:11px;color:var(--muted)}
+.msg{font-size:13.5px;margin-top:8px;line-height:1.6}
+.reason{font-size:10px;color:var(--shu);margin-top:8px;letter-spacing:.1em}
+.draftbox{border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-size:13.5px;line-height:1.8;background:#FFFDF8;margin-top:8px}
+.tone{font-size:10px;color:var(--gold);font-weight:700;letter-spacing:.1em}
+button{font-family:inherit;cursor:pointer}
+.btn{width:100%;padding:12px 0;background:var(--gold);border:none;color:#fff;border-radius:6px;font-size:13px;font-weight:700;letter-spacing:.06em;margin-top:10px}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.acts{display:flex;gap:6px;margin-top:8px}
+.acts button{flex:1;padding:9px 0;border:1px solid var(--line);background:#fff;border-radius:6px;font-size:11.5px;color:var(--muted)}
+.note{font-size:11px;color:var(--muted);line-height:1.9;margin:14px 16px}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);width:min(380px,88%);background:rgba(43,40,35,.9);color:#fff;border-radius:8px;padding:10px 14px;font-size:12px;text-align:center;z-index:50;display:none}
+.empty{color:var(--muted);font-size:12.5px;margin:4px 18px 8px}
+.mode{font-size:9.5px;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:1px 6px;margin-left:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>帳場</h1><span class="mode" id="mode"></span>
+    <div class="desk"><span class="dot"></span>デスク監視中（読み取りのみ・送信不可）— pilot</div>
+  </header>
+
+  <div class="sec shu"><div class="bar"></div><span id="uCount">即対応</span><div class="rule"></div></div>
+  <div id="urgent"></div>
+
+  <div class="sec"><div class="bar"></div><span id="rCount">ラリー</span><div class="rule"></div></div>
+  <div id="rally"></div>
+
+  <div class="sec"><div class="bar"></div><span id="bCount">まとめ箱</span><div class="rule"></div></div>
+  <div id="batch"></div>
+
+  <div class="note">読む・判断は帳場内で完結。送信を伴う操作だけLINEに移ります（コピー済みの本文を貼って送信）。デスクは送信機能そのものを持ちません。<br>受信のデモ投入: <code>python scripts/demo_feed.py</code></div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+let toastT;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.style.display='block';
+  clearTimeout(toastT); toastT=setTimeout(()=>t.style.display='none',1800); }
+
+async function api(path, opt){ const r = await fetch(path, opt); if(!r.ok) throw new Error(await r.text()); return r.json(); }
+
+function msgCard(m, cls){
+  const el = document.createElement('div');
+  el.className = 'card ' + cls;
+  el.innerHTML = `
+    <div class="row"><span class="code">${m.contact}</span>
+      <span class="time">${new Date(m.ts*1000).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'})}</span></div>
+    <div class="msg">「${m.text}」</div>
+    <div class="reason">● ${m.reason}</div>
+    <div class="drafts"></div>
+    <button class="btn gen">下書きをつくる</button>
+    <div class="acts">
+      <button data-a="deferred">明日へ</button>
+      <button data-a="skipped">流す</button>
+    </div>`;
+  el.querySelector('.gen').onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = '生成中…';
+    const res = await api(`/api/messages/${m.id}/drafts`, {method:'POST'});
+    const box = el.querySelector('.drafts'); box.innerHTML = '';
+    res.drafts.forEach(d => {
+      const dv = document.createElement('div'); dv.className='draftbox';
+      dv.innerHTML = `<div class="tone">${d.tone}</div>${d.text}`;
+      const cp = document.createElement('button'); cp.className='btn'; cp.textContent='コピーしてLINEで送る';
+      cp.onclick = async () => {
+        try{ await navigator.clipboard.writeText(d.text); }catch(_){}
+        await api(`/api/messages/${m.id}/action`, {method:'POST',
+          headers:{'content-type':'application/json'}, body:JSON.stringify({action:'replied'})});
+        toast('✓ コピー — LINEで貼って送信してください');
+        load();
+      };
+      dv.appendChild(cp); box.appendChild(dv);
+    });
+    e.target.remove();
+  };
+  el.querySelectorAll('.acts button').forEach(b => b.onclick = async () => {
+    await api(`/api/messages/${m.id}/action`, {method:'POST',
+      headers:{'content-type':'application/json'}, body:JSON.stringify({action:b.dataset.a})});
+    toast(b.dataset.a==='deferred' ? '→ 明朝のまとめに回しました' : '— 今回は返さない、で記録しました');
+    load();
+  });
+  return el;
+}
+
+async function load(){
+  const d = await api('/api/inbox');
+  const u = $('#urgent'), r = $('#rally'), b = $('#batch');
+  u.innerHTML = r.innerHTML = b.innerHTML = '';
+  $('#uCount').textContent = `即対応 ・ ${d.urgent.length}件`;
+  $('#bCount').textContent = `まとめ箱 ・ ${d.batch.length}件（${d.batch_time} 一括）`;
+  const rallyN = Object.keys(d.rally).length;
+  $('#rCount').textContent = `ラリー ・ ${rallyN}件`;
+  if(!d.urgent.length) u.innerHTML = '<div class="empty">即対応はありません。鳴りません。</div>';
+  d.urgent.forEach(m => u.appendChild(msgCard(m,'u')));
+  if(!rallyN) r.innerHTML = '<div class="empty">進行中の連続やり取りはありません。</div>';
+  for(const [c, ms] of Object.entries(d.rally)) ms.forEach(m => r.appendChild(msgCard(m,'r')));
+  if(!d.batch.length) b.innerHTML = '<div class="empty">預かり中の雑談はありません。</div>';
+  d.batch.forEach(m => b.appendChild(msgCard(m,'')));
+}
+load();
+setInterval(load, 4000);
+fetch('/api/profile').then(r=>r.json()).then(p => {
+  $('#mode').textContent = p && p.n_messages ? `文体プロファイル: ${p.n_messages}通から抽出済` : '文体プロファイル未登録';
+});
+</script>
+</body>
+</html>

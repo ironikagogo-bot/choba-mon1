@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>帳場 — 顧客カード</title>
+<style>
+  :root{--bg:#f2efe9;--card:#fffdf9;--ink:#2b2620;--sub:#8a8175;--line:#e6e0d5;
+    --accent:#9a7b4f;--accent2:#c8a26a;--s:#b4553f;--a:#9a7b4f;--b:#6f7d6a;--go:#2f7d5b;--chip:#efe9dd;}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:linear-gradient(160deg,#e9e3d8,#f4f1ea);font-family:-apple-system,"Hiragino Sans","Yu Gothic",sans-serif;color:var(--ink);display:flex;justify-content:center;padding:16px 12px 60px}
+  .wrap{width:100%;max-width:430px}
+  .top{background:linear-gradient(135deg,#3a322a,#5a4d3c);color:#f5eee0;padding:16px 16px 13px;border-radius:18px 18px 0 0}
+  .top h1{margin:0;font-size:18px;letter-spacing:.05em;font-weight:600}
+  .top .sub{font-size:11.5px;opacity:.78;margin-top:3px}
+  .nav{display:flex;gap:8px;margin-top:10px}
+  .nav a{flex:1;text-align:center;background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);color:#f5eee0;text-decoration:none;border-radius:9px;padding:7px 6px;font-size:12px;font-weight:600}
+  .body{background:var(--bg);padding:13px 13px 18px;border-radius:0 0 18px 18px}
+  .add{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:11px;margin-bottom:12px;display:flex;gap:8px}
+  .add input{flex:1;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px;font-family:inherit;background:#fbf9f4}
+  .add button{border:none;border-radius:10px;padding:0 15px;font-weight:700;color:#fff;background:var(--accent);cursor:pointer;font-size:14px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:12px 13px;margin-bottom:11px}
+  .chead{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .chead .nm{font-weight:700;font-size:15px}
+  .chead .last{margin-left:auto;font-size:11px;color:var(--sub)}
+  .row{display:flex;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+  .lbl{font-size:11.5px;color:var(--sub);font-weight:600;width:100%;margin-bottom:-2px}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{border:1.4px solid var(--line);background:var(--chip);border-radius:999px;padding:6px 12px;font-size:12.5px;font-weight:600;cursor:pointer;user-select:none}
+  .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .chip.rS.on{background:var(--s);border-color:var(--s)}
+  .chip.rA.on{background:var(--a);border-color:var(--a)}
+  .chip.rB.on{background:var(--b);border-color:var(--b)}
+  .in{border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:13.5px;font-family:inherit;background:#fbf9f4;width:100%}
+  .in.short{width:120px}
+  .two{display:flex;gap:8px}.two>div{flex:1}
+  .visit{border:none;border-radius:10px;padding:10px 12px;font-weight:700;color:#fff;background:var(--go);cursor:pointer;font-size:13px}
+  .save{border:1px solid var(--accent);background:#fff;color:var(--accent);border-radius:10px;padding:10px 14px;font-weight:700;cursor:pointer;font-size:13px}
+  .cfoot{display:flex;gap:8px;margin-top:10px;align-items:center}
+  .flash{font-size:11.5px;color:var(--go);font-weight:600;opacity:0;transition:.2s}
+  .flash.on{opacity:1}
+  .hint{font-size:11px;color:var(--sub);line-height:1.6;margin:2px 2px 12px}
+  .foot{text-align:center;font-size:10.5px;color:var(--sub);padding:8px 12px 0;line-height:1.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <h1>帳場 — 顧客カード</h1>
+    <div class="sub">ランク・タグ・誕生日・来店周期・来店記録を入れる。アナウンスの材料になります。</div>
+  </div>
+  <div class="body">
+    <div class="hint">タグ「VIP／常連」は手動。「ご無沙汰・直近来店・誕生日近い」は帳場が<b>来店記録・来店周期・誕生日から自動</b>で付けます（手入力不要）。</div>
+    <div class="add">
+      <input id="newName" placeholder="新しい顧客名（例: T.会長）">
+      <button id="addBtn">追加</button>
+    </div>
+    <div id="list"></div>
+    <div class="foot">「保存」で反映。「＋今日 来店を記録」で来店をつけると、お礼／ご無沙汰の判定に使われます。</div>
+  </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const RANKS=["S","A","B"], MANUAL_TAGS=["VIP","常連"];
+async function api(u,o){const r=await fetch(u,o);if(!r.ok)throw new Error(r.status);return r.json();}
+function gap(ts){
+  if(!ts)return "来店記録なし";
+  const d=Math.floor((Date.now()/1000-ts)/86400);
+  if(d<=0)return "本日"; if(d<7)return d+"日前"; if(d<30)return Math.floor(d/7)+"週間前";
+  if(d<365)return Math.floor(d/30)+"ヶ月前"; return Math.floor(d/365)+"年前";
+}
+function tagsOf(c){return (c.tags||"").split(",").map(x=>x.trim()).filter(Boolean);}
+
+function cardHtml(c){
+  const t=tagsOf(c);
+  const rankChips=RANKS.map(r=>`<div class="chip r${r} ${c.rank===r?'on':''}" data-act="rank" data-v="${r}">${r}</div>`).join('');
+  const tagChips=MANUAL_TAGS.map(x=>`<div class="chip ${t.includes(x)?'on':''}" data-act="tag" data-v="${x}">${x}</div>`).join('');
+  return `<div class="card" data-code="${c.code}">
+    <div class="chead"><span class="nm">${c.code}</span><span class="last">前回 ${gap(c.last_visit_ts)}</span></div>
+    <div class="row"><span class="lbl">ランク</span><div class="chips">${rankChips}</div></div>
+    <div class="row"><span class="lbl">タグ（手動）</span><div class="chips">${tagChips}</div></div>
+    <div class="row"><span class="lbl">誕生日 / 来店周期(日)</span>
+      <div class="two">
+        <div><input class="in" data-f="birthday" placeholder="例: 07-20" value="${c.birthday||''}"></div>
+        <div><input class="in" data-f="cycle_days" type="number" inputmode="numeric" placeholder="例: 14" value="${c.cycle_days||''}"></div>
+      </div>
+    </div>
+    <div class="row"><span class="lbl">メモ（好み・話題）</span><input class="in" data-f="note" placeholder="例: 芋焼酎ロック、野球好き" value="${(c.note||'').replace(/"/g,'&quot;')}"></div>
+    <div class="cfoot">
+      <button class="visit" data-act="visit">＋今日 来店を記録</button>
+      <button class="save" data-act="save">保存</button>
+      <span class="flash">保存しました</span>
+    </div>
+  </div>`;
+}
+
+let CACHE={};
+async function load(){
+  const cs=await api('/api/contacts');
+  CACHE={}; cs.forEach(c=>CACHE[c.code]=c);
+  $('#list').innerHTML=cs.map(cardHtml).join('') || '<div class="foot">まだ顧客がいません。上で追加してください。</div>';
+  bind();
+}
+function bind(){
+  document.querySelectorAll('.card').forEach(card=>{
+    const code=card.dataset.code;
+    card.querySelectorAll('[data-act="rank"]').forEach(ch=>ch.onclick=()=>{
+      card.querySelectorAll('[data-act="rank"]').forEach(x=>x.classList.remove('on'));ch.classList.add('on');});
+    card.querySelectorAll('[data-act="tag"]').forEach(ch=>ch.onclick=()=>ch.classList.toggle('on'));
+    card.querySelector('[data-act="visit"]').onclick=async(e)=>{
+      await api('/api/contacts/'+encodeURIComponent(code)+'/visit',{method:'POST'});
+      flash(card); const c=await api('/api/contacts'); const me=c.find(x=>x.code===code);
+      if(me)card.querySelector('.last').textContent='前回 '+gap(me.last_visit_ts);
+    };
+    card.querySelector('[data-act="save"]').onclick=()=>saveCard(card,code);
+  });
+}
+function flash(card){const f=card.querySelector('.flash');f.classList.add('on');setTimeout(()=>f.classList.remove('on'),1400);}
+async function saveCard(card,code){
+  const rank=card.querySelector('[data-act="rank"].on')?.dataset.v||'B';
+  const tags=[...card.querySelectorAll('[data-act="tag"].on')].map(x=>x.dataset.v).join(',');
+  const birthday=card.querySelector('[data-f="birthday"]').value.trim();
+  const cyc=card.querySelector('[data-f="cycle_days"]').value.trim();
+  const note=card.querySelector('[data-f="note"]').value;
+  await api('/api/contacts',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({code,rank,tags,birthday,note,cycle_days:cyc?parseInt(cyc):null})});
+  flash(card);
+}
+$('#addBtn').onclick=async()=>{
+  const name=$('#newName').value.trim(); if(!name)return;
+  await api('/api/contacts',{method:'POST',headers:{'content-type':'application/json'},
+    body:JSON.stringify({code:name,rank:'B'})});
+  $('#newName').value=''; load();
+};
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>帳場｜顧客管理</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap');
+:root{--bg:#F7F4EC;--panel:#fff;--soft:#FFFDF8;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;
+      --gold:#A8842F;--goldsoft:#FBF6E9;--shu:#C0402C;--shusoft:#FBEDEA;--ok:#5E8A5D;--oksoft:#EEF4EC;--chip:#F1ECE0}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:var(--bg);color:var(--text);font-family:'Zen Kaku Gothic New',sans-serif;font-size:16px;line-height:1.6}
+.wrap{max-width:640px;margin:0 auto;min-height:100vh;background:var(--bg)}
+.mincho{font-family:'Shippori Mincho',serif}
+.hd{position:sticky;top:0;z-index:10;background:var(--soft);border-bottom:1px solid var(--line);padding:12px 14px;display:flex;align-items:center;gap:8px}
+.hd .t{font-family:'Shippori Mincho',serif;font-size:16px;letter-spacing:.14em;font-weight:700;flex:1}
+.hd .b{font-size:12.5px;color:var(--gold);font-weight:700;background:none;border:none;padding:4px 6px;letter-spacing:.04em}
+.hd .b.badge{position:relative}
+.hd .b .n{position:absolute;top:-4px;right:-4px;background:var(--shu);color:#fff;font-size:9px;font-weight:700;border-radius:8px;min-width:15px;height:15px;line-height:15px;text-align:center;padding:0 3px}
+.search{padding:10px 14px}
+.search input{width:100%;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;font-family:inherit;color:var(--text)}
+.filt{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 10px}
+.fp{font-size:12px;font-weight:700;padding:6px 12px;border-radius:5px;background:var(--panel);border:1px solid var(--line);color:var(--muted);letter-spacing:.04em}
+.fp.on{background:var(--gold);border-color:var(--gold);color:#fff}
+.fp.attr{background:var(--goldsoft);border-color:#E7D9AE;color:var(--gold)}
+.fp.attr.on{background:var(--gold);color:#fff;border-color:var(--gold)}
+.row{display:flex;align-items:center;gap:11px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:0 14px 8px;cursor:pointer;box-shadow:0 1px 3px rgba(60,50,30,.05)}
+.ava{width:38px;height:38px;border-radius:50%;background:var(--chip);display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--gold);flex:0 0 auto;font-family:'Shippori Mincho',serif}
+.cmid{flex:1;min-width:0}
+.cn{font-family:'Shippori Mincho',serif;font-size:15px;font-weight:700;display:flex;align-items:center;gap:6px}
+.rk{font-size:10px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:1px 6px;flex:0 0 auto;background:#fff}
+.rk.S{color:#fff;background:var(--shu);border-color:var(--shu)}.rk.A{color:#fff;background:var(--gold);border-color:var(--gold)}
+.csub{font-size:11.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chp{font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:#fff;border:1px solid var(--line);color:var(--muted)}
+.chp.red{background:var(--shusoft);color:var(--shu);border-color:#E7C4BC}.chp.pur{background:var(--goldsoft);color:var(--gold);border-color:#E7D9AE}
+.linetag{font-size:10px;color:var(--ok);font-weight:700;margin-top:2px}
+.empty{color:var(--muted);font-size:13px;margin:34px 20px;text-align:center}
+.frow{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;gap:10px;background:var(--panel)}
+.fl{font-size:12px;color:var(--muted)}
+.fv{font-size:14px;font-weight:600;text-align:right}
+.sec{display:flex;align-items:center;gap:9px;margin:16px 16px 8px}
+.sec::before{content:"";width:3px;height:13px;background:var(--gold);flex:0 0 auto}
+.sec{font-family:'Shippori Mincho',serif;font-size:12.5px;letter-spacing:.22em;color:var(--gold);font-weight:700}
+.memo{padding:12px 16px;background:var(--panel);font-size:13px;color:var(--text);line-height:1.9;white-space:pre-wrap}
+.fg{background:var(--panel);margin:8px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.fi{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px}
+.fi:last-child{border-bottom:none}
+.fi label{font-size:13px;color:var(--text);flex:0 0 auto}
+.fi input,.fi select{font-size:15px;border:none;text-align:right;flex:1;background:none;color:var(--text);min-width:0;font-family:inherit}
+.fi textarea{width:100%;border:none;font-size:14px;min-height:60px;font-family:inherit;background:none;color:var(--text);line-height:1.8}
+.seg{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.seg span{font-size:12px;font-weight:700;padding:6px 11px;border-radius:5px;background:var(--chip);color:var(--muted);cursor:pointer;white-space:nowrap}
+.seg span.on{background:var(--gold);color:#fff}
+.seg span.on.red{background:var(--shu)}
+.glabel{font-family:'Shippori Mincho',serif;font-size:11.5px;font-weight:700;color:var(--gold);letter-spacing:.2em;padding:14px 16px 2px}
+.morebtn{display:block;width:calc(100% - 32px);margin:14px 16px 2px;padding:10px 0;border:1px dashed var(--line);background:none;border-radius:10px;color:#8D8674;font-size:12px;font-family:inherit}
+.btnrow{padding:16px;display:flex;gap:9px}
+.btn{flex:1;text-align:center;border-radius:6px;padding:13px;font-size:14px;font-weight:700;border:none;letter-spacing:.06em}
+.btn.primary{background:var(--gold);color:#fff}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.btn.mini{flex:0 0 auto;font-size:12px;padding:8px 13px;border-radius:5px;background:var(--goldsoft);color:var(--gold);border:1px solid #E7D9AE;font-weight:700}
+.aliasrow{padding:10px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px;font-size:13px;background:var(--panel)}
+.alx{border:1px solid #d8cfc0;background:#faf6ee;color:#a05a4a;border-radius:8px;font-size:11px;padding:4px 10px;font-family:inherit}
+.trnote{font-size:12px;color:var(--gold);background:var(--goldsoft);border-bottom:1px solid #E7D9AE;padding:10px 14px;line-height:1.7}
+.trcard{background:var(--panel);margin:10px 14px;border:1px solid var(--line);border-radius:10px;padding:12px;box-shadow:0 1px 3px rgba(60,50,30,.05)}
+.trtop{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+.trname{font-family:'Shippori Mincho',serif;font-weight:700;font-size:14px}
+.trcnt{margin-left:auto;font-size:10.5px;color:var(--muted)}
+.trmsg{font-size:12.5px;color:var(--text);background:var(--soft);border:1px solid var(--line);border-radius:7px;padding:8px 10px;line-height:1.7}
+.tract{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.tb{flex:1;min-width:88px;text-align:center;font-size:12px;font-weight:700;padding:9px 4px;border-radius:6px;border:1px solid;cursor:pointer}
+.tb.link{border-color:#E7D9AE;color:var(--gold);background:var(--goldsoft)}
+.tb.new{border-color:#C4D8C0;color:var(--ok);background:var(--oksoft)}
+.tb.priv{border-color:#E7C4BC;color:var(--shu);background:var(--shusoft)}
+.picker{margin-top:8px;display:none}.picker.show{display:block}
+.picker select{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);font-size:14px;background:var(--soft);font-family:inherit;color:var(--text)}
+.mutedrow{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;background:var(--panel);font-size:13px}
+.mutedrow .u{color:var(--gold);font-weight:700}
+.defcard{background:var(--panel);margin:10px 14px;border-radius:10px;padding:12px 13px;border:1px solid var(--line)}
+.defcard .dh{font-family:'Shippori Mincho',serif;font-weight:700;display:flex;align-items:center;gap:7px}
+.typechips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.tc{font-size:12px;font-weight:700;padding:6px 12px;border-radius:5px;background:var(--goldsoft);color:var(--gold);border:1px solid #E7D9AE;cursor:pointer}
+.tc.on{background:var(--gold);color:#fff;border-color:var(--gold)}
+.opt{font-size:11px;background:var(--chip);border-radius:4px;padding:3px 9px;color:var(--muted);display:inline-block;margin:3px 3px 0 0}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:rgba(43,40,35,.92);color:#fff;font-size:13px;padding:10px 18px;border-radius:8px;z-index:100;opacity:0;transition:.2s}
+.toast.show{opacity:1}
+.err{margin:14px;background:var(--shusoft);border:1px solid #E7C4BC;color:var(--shu);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.7}
+.delbtn{width:100%;background:#fff;border:1px solid #E7C4BC;color:#C0402C;border-radius:9px;padding:11px;font-size:13px;font-family:inherit}
+.delbtn.armed{background:#C0402C;color:#fff;border-color:#C0402C;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"><div class="empty">読み込み中…</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+var rankColor={S:"#C0402C",A:"#A8842F",B:"#8D8674"};
+var REG=[["","自動（実例）"],["keigo","敬語"],["keigo_only","敬語厳守"]];
+var regLabel=function(v){if(v==="mix")return "混在(旧)";if(v==="casual")return "タメ口(旧)";var f=REG.find(function(r){return r[0]===v});return f?f[1]:"自動"};
+var DEFS=[];        // 属性定義キャッシュ
+var TRAYCOUNT=0;
+var $=function(s,el){return (el||document).querySelector(s)};
+function toast(m){var t=document.getElementById("toast");t.textContent=m;t.classList.add("show");setTimeout(function(){t.classList.remove("show")},1600);}
+
+async function api(path, method, body){
+  var o={method:method||"GET",headers:{"content-type":"application/json"}};
+  if(body) o.body=JSON.stringify(body);
+  var r=await fetch(path,o);
+  if(!r.ok){var t=await r.text();throw new Error("["+r.status+"] "+t.slice(0,120));}
+  return r.json();
+}
+function esc(s){return (s==null?"":String(s)).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]})}
+
+/* ---------- LIST ---------- */
+var LST={q:"",rank:"",ak:"",av:"",kind:"customer"};
+async function viewList(){
+  var app=document.getElementById("app");
+  if(!DEFS.length){ try{DEFS=(await api("/api/attrs")).defs||[]}catch(e){} }
+  try{ TRAYCOUNT=((await api("/api/tray")).pending||[]).length }catch(e){}
+  var qs="?q="+encodeURIComponent(LST.q)+(LST.ak?"&attr_key="+encodeURIComponent(LST.ak)+"&attr_val="+encodeURIComponent(LST.av):"");
+  var list=[];
+  var kindMap={peer:"peer",staff:"staff",ex:"excolleague"};
+  try{
+    if(LST.kind==="customer"){ list=(await api("/api/contacts/search"+qs)).contacts||[]; }
+    else{ list=((await api("/api/roster?kinds="+kindMap[LST.kind])).roster)||[];
+          if(LST.q){ var qq=LST.q; list=list.filter(function(c){return (c.code||"").indexOf(qq)>=0||(c.tags||"").indexOf(qq)>=0;}); } }
+  }catch(e){ app.innerHTML=header("顧客リスト")+'<div class="err">読み込み失敗: '+esc(e.message)+'</div>'; return; }
+  if(LST.rank&&LST.kind==="customer") list=list.filter(function(c){return c.rank===LST.rank});
+  // 属性フィルタ用チップ(最初のchoice型属性の選択肢)
+  var choiceDef=DEFS.find(function(d){return d.atype==="choice"&&d.options});
+  var attrChips="";
+  if(choiceDef){ attrChips=choiceDef.options.split(",").map(function(o){o=o.trim();
+    return '<span class="fp attr'+(LST.ak===choiceDef.key&&LST.av===o?" on":"")+'" onclick="toggleAttr(\''+esc(choiceDef.key)+'\',\''+esc(o)+'\')">'+esc(choiceDef.key)+':'+esc(o)+'</span>'}).join(""); }
+  var rows=list.map(function(c){
+    var aliases=(c.aliases&&c.aliases.length)?c.aliases.join("・"):"";
+    var tags=(c.tags||"").split(",").filter(Boolean).slice(0,1).map(function(t){return '<span class="chp">'+esc(t)+'</span>'}).join("");
+    var sake=c.attrs&&LST.ak&&c.attrs[LST.ak]?'<span class="chp pur">'+esc(LST.ak)+':'+esc(c.attrs[LST.ak])+'</span>':'';
+    return '<div class="row" onclick="go(\'card/'+encodeURIComponent(c.code)+'\')">'
+      +'<div class="ava">'+esc((c.code||"?")[0])+'</div><div class="cmid">'
+      +'<div class="cn">'+esc(c.code)+' <span class="rk '+esc(c.rank)+'">'+esc(c.rank)+'</span></div>'
+      +'<div class="csub">'+(c.register?esc(regLabel(c.register))+' / ':'')+(c.nickname?'呼び='+esc(c.nickname):'')+'</div>'
+      +(aliases?'<div class="linetag">🔗 '+esc(aliases)+'</div>':'<div class="linetag" style="color:#c99">🔗 未紐付け</div>')
+      +'</div><div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+tags+sake+'</div></div>';
+  }).join("");
+  app.innerHTML=header("顧客リスト", true)
+    +kindBar()
+    +'<div class="search"><input id="q" placeholder="🔍 名前・タグ・メモで検索" value="'+esc(LST.q)+'"></div>'
+    +'<div class="filt"><span class="fp'+(!LST.rank?" on":"")+'" onclick="setRank(\'\')">全員</span>'
+    +'<span class="fp'+(LST.rank==="S"?" on":"")+'" onclick="setRank(\'S\')">S</span>'
+    +'<span class="fp'+(LST.rank==="A"?" on":"")+'" onclick="setRank(\'A\')">A</span>'
+    +'<span class="fp'+(LST.rank==="B"?" on":"")+'" onclick="setRank(\'B\')">B</span>'+attrChips+'</div>'
+    +(rows||'<div class="empty">該当なし。右上「＋」で追加。</div>');
+  var qi=document.getElementById("q");
+  var tmr;qi.oninput=function(){clearTimeout(tmr);tmr=setTimeout(function(){LST.q=qi.value;viewList()},350)};
+}
+function header(title, isList){
+  return '<div class="hd">'+(isList?'':'<button class="b" onclick="history.back()">‹ 戻る</button>')
+    +'<div class="t">'+esc(title)+'</div>'
+    +(isList?'<button class="b badge" onclick="go(\'tray\')">未紐付け'+(TRAYCOUNT?'<span class="n">'+TRAYCOUNT+'</span>':'')+'</button>'
+       +'<button class="b" onclick="go(\'attrs\')">属性</button><button class="b" onclick="go(\'new\')">＋ 新規</button>':'')+'</div>';
+}
+function setRank(r){LST.rank=r;viewList()}
+function kindBar(){
+  var K=[["customer","顧客"],["peer","同業者"],["staff","店内"],["ex","元同僚"]];
+  var seg=K.map(function(k){return '<span class="fp'+(LST.kind===k[0]?" on":"")+'" onclick="setKind(\''+k[0]+'\')">'+k[1]+'</span>';}).join("");
+  var move=(LST.kind==="staff")?'<span class="fp" style="margin-left:auto;color:#8a5a86;border-color:#d9c3d6" onclick="doTransfer()">→ 全員を元同僚へ（移籍）</span>':"";
+  return '<div class="filt">'+seg+move+'</div>';
+}
+function setKind(k){LST.kind=k;LST.rank="";viewList();}
+async function doTransfer(){ try{var r=await api("/api/transfer","POST",{from_kind:"staff",to_kind:"excolleague"});toast("移籍: "+(r.moved||0)+"名を元同僚へ");LST.kind="ex";viewList();}catch(e){toast("失敗: "+e.message);} }
+function toggleAttr(k,v){ if(LST.ak===k&&LST.av===v){LST.ak="";LST.av="";}else{LST.ak=k;LST.av=v;} viewList(); }
+
+/* ---------- CARD ---------- */
+async function viewCard(code){
+  var app=document.getElementById("app");
+  var d, events=[];
+  try{ d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail"); }
+  catch(e){ app.innerHTML=header("顧客カード")+'<div class="err">'+esc(e.message)+'</div>'; return; }
+  try{ events=(await api("/api/events")).filter?function(){}:[]; }catch(e){}
+  try{ var ev=await api("/api/events"); events=(ev.events||ev||[]).filter(function(x){return x.contact===code}); }catch(e){events=[]}
+  var attrRows=DEFS.map(function(df){var v=(d.attrs||{})[df.key];return v?'<div class="frow"><span class="fl" style="color:#6b4bd6">'+esc(df.key)+'</span><span class="fv">'+esc(v)+'</span></div>':''}).join("");
+  var visitRows=events.slice(0,6).map(function(e){return '<div class="frow"><span class="fl">'+esc(e.label||e.kind)+'</span><span class="fv" style="color:#8a8f98;font-weight:500">'+(e.status==="confirmed"?"確定":"仮")+'・自動</span></div>'}).join("")||'<div class="memo" style="color:#9aa1aa">まだ記録なし（返信すると自動で貯まる）</div>';
+  app.innerHTML=header("顧客カード")
+    +'<div class="hd" style="position:static;border-top:none"><div class="t" style="font-size:20px">'+esc(d.code)+' <span class="rk '+esc(d.rank)+'" style="display:inline-flex">'+esc(d.rank)+'</span></div><button class="b" onclick="go(\'edit/'+encodeURIComponent(code)+'\')">編集</button></div>'
+    +'<div class="frow"><span class="fl">本名</span><span class="fv">'+esc(d.real_name||"—")+'</span></div>'
+    +'<div class="frow"><span class="fl">電話番号</span><span class="fv">'+esc(d.phone||"—")+'</span></div>'
+    +(d.stand?'<div class="frow"><span class="fl">立場</span><span class="fv">'+({senior:"先輩",equal:"対等",junior:"後輩"}[d.stand]||"—")+'</span></div>':'')
+    +((Number(d.flag_ero)||Number(d.flag_koi))?'<div class="frow"><span class="fl">対応モード</span><span class="fv" style="color:#C0402C">'+[Number(d.flag_ero)===1?"いなし":(Number(d.flag_ero)===2?"ノリOK":""),Number(d.flag_koi)?"ガチ恋（線引き）":""].filter(Boolean).join(" / ")+'</span></div>':'')
+    +((d.kind&&d.kind!=="customer")?'<div class="frow"><span class="fl">種別</span><span class="fv">'+({peer:"同業者",staff:"店内",excolleague:"元同僚"}[d.kind]||d.kind)+'</span></div>':'')
+    +((d.birthday||d.kids_bday||d.founding)?'<div class="frow"><span class="fl">記念日</span><span class="fv" style="text-align:right">'+[d.birthday?"誕生日 "+esc(d.birthday):"",d.kids_bday?"子 "+esc(d.kids_bday):"",d.founding?"創立 "+esc(d.founding):""].filter(Boolean).join("<br>")+'</span></div>':'')
+    +'<div class="frow"><span class="fl">呼び方</span><span class="fv">'+esc(d.nickname||"—")+'</span></div>'
+    +'<div class="frow"><span class="fl">距離感</span><span class="fv"'+(d.register==="keigo_only"?' style="color:#C0402C"':'')+'>'+esc(regLabel(d.register))+'</span></div>'
+    +'<div class="frow"><span class="fl">タグ</span><span class="fv">'+esc(d.tags||"—")+'</span></div>'
+    +'<div class="sec">🔗 紐付けたLINE表示名</div>'
+    +((d.aliases&&d.aliases.length)?d.aliases.map(function(a){return '<div class="frow"><span class="fv" style="text-align:left;width:100%">'+esc(a)+'</span></div>'}).join(""):'<div class="memo" style="color:#9aa1aa">未紐付け</div>')
+    +(attrRows?'<div class="sec">ユーザー定義属性</div>'+attrRows:'')
+    +'<div class="sec">来店・同伴（返信操作から自動記録）</div>'+visitRows
+    +'<div class="sec" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→活かす）</div><div class="memo" style="background:#EEF4EC;border-top:1px solid #C4D8C0;border-bottom:1px solid #C4D8C0;color:#3f6b3d">'+esc(d.note_pos||"—")+'</div>'
+    +'<div class="sec" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には出しません）</div><div class="memo" style="background:#FBEDEA;border-top:1px solid #E7C4BC;border-bottom:1px solid #E7C4BC;color:#8a2f22">'+esc(d.note_neg||"—")+'</div>'
+    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact(\''+encodeURIComponent(d.code)+'\',this)">この顧客を削除</button></div>';
+}
+
+function delContact(code, btn){
+  code=decodeURIComponent(code);
+  if(btn.getAttribute("data-c")!=="1"){ btn.setAttribute("data-c","1"); btn.textContent="本当に削除？もう一度タップ"; btn.classList.add("armed");
+    setTimeout(function(){ if(btn){btn.setAttribute("data-c","0"); btn.textContent="この顧客を削除"; btn.classList.remove("armed");} }, 3000); return; }
+  api("/api/contacts/"+encodeURIComponent(code)+"/delete","POST").then(function(){ toast("削除しました"); location.hash="list"; }).catch(function(e){ toast("失敗: "+e.message); });
+}
+/* ---------- EDIT / NEW ---------- */
+var EF={};
+var EF_MORE=false;   // 「詳しく設定」開閉
+var EF_ISNEW=false;
+async function viewEdit(code){
+  var app=document.getElementById("app");
+  var isNew=!code;
+  EF_ISNEW=isNew; EF_MORE=false;
+  if(!DEFS.length){try{DEFS=(await api("/api/attrs")).defs||[]}catch(e){}}
+  if(isNew){ EF={code:"",rank:"B",nickname:"",register:"",tags:"",note:"",real_name:"",phone:"",note_pos:"",note_neg:"",stand:"",birthday:"",kids_bday:"",founding:"",kind:"customer",flag_ero:0,flag_koi:0,aliases:[],attrs:{}}; }
+  else{ try{var d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail");EF={code:d.code,rank:d.rank||"B",nickname:d.nickname||"",register:(d.register==="mix"||d.register==="casual")?"":(d.register||""),tags:d.tags||"",note:d.note||"",real_name:d.real_name||"",phone:d.phone||"",note_pos:d.note_pos||"",note_neg:d.note_neg||"",stand:d.stand||"",birthday:d.birthday||"",kids_bday:d.kids_bday||"",founding:d.founding||"",kind:d.kind||"customer",flag_ero:Number(d.flag_ero)||0,flag_koi:Number(d.flag_koi)||0,aliases:d.aliases||[],attrs:d.attrs||{}};}catch(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>';return;} }
+  paintEdit();
+}
+function paintEdit(){
+  var app=document.getElementById("app");
+  var isNew=EF_ISNEW;
+  var regSeg=REG.map(function(r){return '<span class="'+(EF.register===r[0]?"on"+(r[0]==="keigo_only"?" red":""):"")+'" onclick="EF.register=\''+r[0]+'\';renderEdit()">'+r[1]+'</span>'}).join("");
+  var rankSeg=["S","A","B"].map(function(r){return '<span class="'+(EF.rank===r?"on"+(r==="S"?" red":""):"")+'" onclick="EF.rank=\''+r+'\';renderEdit()">'+r+'</span>'}).join("");
+  var standDim=(EF.kind==="customer"); if(standDim){EF.stand="";}
+  var STANDS=[["","なし"],["senior","先輩"],["equal","対等"],["junior","後輩"]];
+  var standSeg=STANDS.map(function(r){return '<span class="'+(EF.stand===r[0]?"on":"")+'" onclick="EF.stand=\''+r[0]+'\';renderEdit()">'+r[1]+'</span>'}).join("");
+  var KINDS=[["customer","顧客"],["peer","同業者"],["staff","店内"],["excolleague","元同僚"]];
+  var kindSeg=KINDS.map(function(r){return '<span class="'+(EF.kind===r[0]?"on":"")+'" onclick="EF.kind=\''+r[0]+'\';renderEdit()">'+r[1]+'</span>'}).join("");
+  var aliasList=EF.aliases.map(function(a,i){return '<div class="aliasrow">🔗 <span style="flex:1">'+esc(a)+'</span><button class="alx" onclick="delAlias('+i+')">解除</button></div>'}).join("");
+  var attrItems=DEFS.map(function(df){
+    var v=EF.attrs[df.key]||"";
+    var inp;
+    if(df.atype==="choice"){var opts=(df.options||"").split(",").map(function(o){o=o.trim();return '<option'+(v===o?" selected":"")+'>'+esc(o)+'</option>'}).join("");inp='<select onchange="EF.attrs[\''+esc(df.key)+'\']=this.value"><option value="">—</option>'+opts+'</select>';}
+    else if(df.atype==="date"){inp='<input type="date" value="'+esc(v)+'" onchange="EF.attrs[\''+esc(df.key)+'\']=this.value">';}
+    else if(df.atype==="number"){inp='<input type="number" value="'+esc(v)+'" oninput="EF.attrs[\''+esc(df.key)+'\']=this.value">';}
+    else{inp='<input value="'+esc(v)+'" oninput="EF.attrs[\''+esc(df.key)+'\']=this.value">';}
+    return '<div class="fi"><label style="color:#6b4bd6">'+esc(df.key)+'</label>'+inp+'</div>';
+  }).join("");
+  app.innerHTML=header(isNew?"新規顧客":"顧客を編集")
+    +'<div class="glabel">基本（ここだけで動きます）</div><div class="fg">'
+    +'<div class="fi"><label>名前(呼び名)</label><input id="ef_code" value="'+esc(EF.code)+'" placeholder="例: 健さん / T.会長"></div>'
+    +(isNew?'':'<div style="font-size:10px;color:#8D8674;padding:0 16px 8px;line-height:1.6;border-bottom:1px solid var(--line)">名前を変えて保存すると呼び名が変わります（受信・学習・実績はそのまま引き継ぎ。元の名前は紐付けとして残ります）</div>')
+    +'<div class="fi"><label>ランク</label><div class="seg">'+rankSeg+'</div></div>'
+    +'<div class="fi"><label>距離感（口調）</label><div class="seg">'+regSeg+'</div></div>'
+    +'<div style="font-size:10.5px;color:#8D8674;padding:7px 16px 10px;line-height:1.7;border-bottom:1px solid var(--line)">自動＝この相手に実際に送った文から口調を合わせます（使うほど正確に）</div>'
+    +'<div class="fi"><label>種別</label><div class="seg">'+kindSeg+'</div></div>'
+    +'</div>'
+    +'<div class="glabel">対応モード（返信AIの構え）</div><div class="fg">'
+    +'<div class="fi"><label>下ネタが来たら</label><div class="seg">'
+    +[[0,"確認する"],[1,"いなし"],[2,"ノリOK"]].map(function(o){return '<span class="'+(Number(EF.flag_ero)===o[0]?(o[0]===1?"on red":"on"):"")+'" onclick="EF.flag_ero='+o[0]+';renderEdit()">'+o[1]+'</span>'}).join("")
+    +'</div></div>'
+    +'<div class="fi"><label>ガチ恋（線引き）</label><div class="seg">'
+    +'<span class="'+(Number(EF.flag_koi)?"":"on")+'" onclick="EF.flag_koi=0;renderEdit()">OFF</span>'
+    +'<span class="'+(Number(EF.flag_koi)?"on red":"")+'" onclick="EF.flag_koi=1;renderEdit()">ON</span>'
+    +'</div></div>'
+    +'<div style="font-size:10.5px;color:#8D8674;padding:9px 16px 12px;line-height:1.75">確認する＝下ネタを検知したら受信箱で「いなしにする？」と聞く（既定）／いなし＝常に乗らず・拒まず受け流す／ノリOK＝この相手のノリは芸なので何もしない。ガチ恋ON＝恋愛の燃料を足さず、突き放しもせず、距離一定で返す。</div>'
+    +'</div>'
+    +'<button class="morebtn" onclick="EF_MORE=!EF_MORE;renderEdit()">'+(EF_MORE?'▴ 詳しく設定を閉じる':'▾ 詳しく設定（任意・空欄でも全部動きます）')+'</button>'
+    +'<div style="display:'+(EF_MORE?'block':'none')+'">'
+    +'<div class="glabel">名前・連絡先</div><div class="fg">'
+    +'<div class="fi"><label>本名</label><input id="ef_real" value="'+esc(EF.real_name)+'" placeholder="例: 山田 健"></div>'
+    +'<div class="fi"><label>電話番号</label><input id="ef_phone" value="'+esc(EF.phone)+'" placeholder="例: 090-1234-5678" inputmode="tel"></div>'
+    +'<div class="fi"><label>呼び方</label><input id="ef_nick" value="'+esc(EF.nickname)+'" placeholder="例: あき"></div>'
+    +'<div class="fi"><label>タグ</label><input id="ef_tags" value="'+esc(EF.tags)+'" placeholder="VIP,常連 (カンマ区切り)"></div>'
+    +'<div class="fi"'+(standDim?' style="opacity:.4;pointer-events:none"':'')+'><label>立場（先輩後輩）'+(standDim?' <span style="font-size:10px;color:#8D8674;font-weight:400">顧客には不要</span>':'')+'</label><div class="seg">'+standSeg+'</div></div>'
+    +'</div>'
+    +'<div class="glabel">記念日（お祝いLINE用・ご命日は扱いません）</div><div class="fg">'
+    +'<div class="fi"><label>誕生日（月-日）</label><input id="ef_bday" value="'+esc(EF.birthday)+'" placeholder="例: 07-20" inputmode="numeric"></div>'
+    +'<div class="fi"><label>お子様・お孫様の誕生日</label><input id="ef_kids" value="'+esc(EF.kids_bday)+'" placeholder="例: 長男:03-15, お孫さん:07-28"></div>'
+    +'<div class="fi"><label>会社の創立記念日（月-日）</label><input id="ef_found" value="'+esc(EF.founding)+'" placeholder="例: 04-01（社長・オーナー様に）"></div>'
+    +'</div>'
+    +(isNew?'':'<div class="glabel">🔗 LINE紐付け</div>'
+      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの顧客に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
+      +'<div class="fg">'+(aliasList||'<div class="aliasrow" style="color:#9aa1aa">未紐付け</div>')
+      +'<div class="fi"><input id="ef_alias" placeholder="LINE表示名を追加"><button class="btn mini" onclick="addAlias()">追加</button></div></div>')
+    +(isNew?'':'<div class="glabel">📖 この相手のトーク履歴を取り込む</div>'
+      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの「トーク履歴を送信」で出た .txt を入れると、この相手への口調を覚えます。txt内の表示名は自動でこのカードに紐付けされます。</div>'
+      +'<div class="fg"><div class="fi"><label>あなたの表示名</label><input id="ef_selfname" value="'+esc(window.SELFNAME||"")+'" placeholder="トーク内でのあなたの名前"></div>'
+      +'<div class="fi"><input type="file" id="ef_talkfile" accept=".txt" style="text-align:left;font-size:12px"><button class="btn mini" onclick="importTalk()">取り込む</button></div></div>')
+    +(attrItems?'<div class="glabel">ユーザー定義属性</div><div class="fg">'+attrItems+'</div>':'')
+    +'<div class="glabel" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→下書きで活かす）</div><div class="fg"><div class="fi"><textarea id="ef_pos" placeholder="例: 酒癖よし、日本酒好き、聞き上手">'+esc(EF.note_pos)+'</textarea></div></div>'
+    +'<div class="glabel" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には絶対出しません）</div><div class="fg"><div class="fi"><textarea id="ef_neg" placeholder="例: ケチ、恐妻家">'+esc(EF.note_neg)+'</textarea></div></div>'
+    +'<div class="glabel">自由メモ（中立・検索対象外）</div><div class="fg"><div class="fi"><textarea id="ef_note" placeholder="好み・雑記">'+esc(EF.note)+'</textarea></div></div>'
+    +'</div>'
+    +'<div class="btnrow"><button class="btn ghost" onclick="history.back()">キャンセル</button><button class="btn primary" onclick="saveEdit('+(isNew?"true":"false")+')">保存</button></div>';
+}
+function renderEdit(){ // seg更新: 入力値を保持したまま再描画(サーバー再読込しない)
+  syncEF(); paintEdit();
+}
+function syncEF(){
+  var g=function(id){var e=document.getElementById(id);return e?e.value:undefined};
+  if(g("ef_code")!==undefined){ if(EF_ISNEW){EF.code=g("ef_code");} else {EF.newcode=g("ef_code");} }
+  if(g("ef_nick")!==undefined)EF.nickname=g("ef_nick");
+  if(g("ef_tags")!==undefined)EF.tags=g("ef_tags");
+  if(g("ef_note")!==undefined)EF.note=g("ef_note");
+  if(g("ef_real")!==undefined)EF.real_name=g("ef_real");
+  if(g("ef_phone")!==undefined)EF.phone=g("ef_phone");
+  if(g("ef_pos")!==undefined)EF.note_pos=g("ef_pos");
+  if(g("ef_neg")!==undefined)EF.note_neg=g("ef_neg");
+  if(g("ef_bday")!==undefined)EF.birthday=g("ef_bday");
+  if(g("ef_kids")!==undefined)EF.kids_bday=g("ef_kids");
+  if(g("ef_found")!==undefined)EF.founding=g("ef_found");
+}
+async function addAlias(){
+  syncEF();
+  var v=(document.getElementById("ef_alias")||{}).value; v=(v||"").trim();
+  if(!v)return;
+  if(!EF.code){toast("先に名前を入れて保存してください");return;}
+  try{ await api("/api/contacts/"+encodeURIComponent(EF.code)+"/alias","POST",{line_name:v}); EF.aliases.push(v); toast("紐付けを追加"); paintEdit(); }
+  catch(e){toast("失敗: "+e.message)}
+}
+async function delAlias(i){
+  syncEF();
+  var a=EF.aliases[i]; if(a===undefined)return;
+  try{ await api("/api/contacts/"+encodeURIComponent(EF.code)+"/alias/remove","POST",{line_name:a}); EF.aliases.splice(i,1); toast("紐付けを解除しました"); paintEdit(); }
+  catch(e){toast("失敗: "+e.message)}
+}
+async function importTalk(){
+  syncEF();
+  var f=(document.getElementById("ef_talkfile")||{}).files; f=f&&f[0];
+  var sn=((document.getElementById("ef_selfname")||{}).value||"").trim();
+  if(!f){toast("先に .txt を選んでください");return;}
+  if(!sn){toast("あなたの表示名を入れてください（txt内のあなたの名前）");return;}
+  if(!EF.code){toast("先に名前を入れて保存してください");return;}
+  window.SELFNAME=sn;
+  var fd=new FormData(); fd.append("file",f);
+  try{
+    var r=await fetch("/api/profile/import?contact="+encodeURIComponent(EF.code)+"&self_name="+encodeURIComponent(sn),{method:"POST",body:fd});
+    var j=await r.json();
+    if(!r.ok) throw new Error(j.detail||"取り込みに失敗しました");
+    if(j.alias_added&&EF.aliases.indexOf(j.alias_added)<0){EF.aliases.push(j.alias_added);}
+    toast("覚えました（この相手への実例 "+(j.contact_msgs||0)+" 件"+(j.alias_added?"・紐付け: "+j.alias_added:"")+"）");
+    paintEdit();
+  }catch(e){toast("失敗: "+e.message)}
+}
+async function saveEdit(isNew){
+  syncEF();
+  if(!EF.code){toast("名前を入れてください");return;}
+  try{
+    if(!isNew && EF.newcode && EF.newcode.trim() && EF.newcode.trim()!==EF.code){
+      var rr=await api("/api/contacts/"+encodeURIComponent(EF.code)+"/rename","POST",{new_code:EF.newcode.trim()});
+      EF.code=rr.code;
+      toast("呼び名を「"+EF.code+"」に変更しました");
+    }
+    if(isNew){ await api("/api/contacts","POST",{code:EF.code,rank:EF.rank,tags:EF.tags,note:EF.note}); }
+    await api("/api/contacts/"+encodeURIComponent(EF.code),"POST",{rank:EF.rank,nickname:EF.nickname,register:EF.register,note:EF.note,tags:EF.tags,real_name:EF.real_name,phone:EF.phone,note_pos:EF.note_pos,note_neg:EF.note_neg,stand:EF.stand,birthday:EF.birthday,kids_bday:EF.kids_bday,founding:EF.founding,flag_ero:Number(EF.flag_ero)||0,flag_koi:Number(EF.flag_koi)||0});
+    try{ await api("/api/contacts/"+encodeURIComponent(EF.code)+"/kind","POST",{kind:EF.kind}); }catch(e){}
+    for(var k in EF.attrs){ if(EF.attrs[k]!=="") await api("/api/contacts/"+encodeURIComponent(EF.code)+"/attrs","POST",{key:k,value:EF.attrs[k]}); }
+    toast("保存しました");
+    location.hash="card/"+encodeURIComponent(EF.code);
+  }catch(e){toast("保存失敗: "+e.message)}
+}
+
+/* ---------- TRAY ---------- */
+async function viewTray(){
+  var app=document.getElementById("app");
+  var data,contacts=[];
+  try{ data=await api("/api/tray"); }catch(e){ app.innerHTML=header("未紐付けトレイ")+'<div class="err">'+esc(e.message)+'</div>'; return; }
+  try{ contacts=(await api("/api/contacts/search")).contacts||[] }catch(e){}
+  var pending=data.pending||[], muted=data.muted||[];
+  var pk=pending.map(function(p,idx){
+    var opts=contacts.map(function(c){return '<option value="'+esc(c.code)+'">'+esc(c.code)+'</option>'}).join("");
+    return '<div class="trcard"><div class="trtop"><div class="ava" style="width:30px;height:30px">'+esc((p.line_name||"?")[0])+'</div>'
+      +'<span class="trname">'+esc(p.line_name)+'</span><span class="trcnt">'+(p.count||1)+'件</span></div>'
+      +'<div class="trmsg">'+esc(p.last_text||"")+'</div>'
+      +'<div class="tract"><span class="tb link" onclick="togglePicker('+idx+')">既存客に紐付け</span>'
+      +'<span class="tb new" onclick="resolveTray(\''+esc(p.line_name)+'\',\'new\')">新規客</span>'
+      +'<span class="tb priv" onclick="resolveTray(\''+esc(p.line_name)+'\',\'private\')">私用（除外）</span></div>'
+      +'<div class="picker" id="pk'+idx+'"><select id="sel'+idx+'">'+opts+'</select>'
+      +'<button class="btn mini" style="margin-top:6px" onclick="resolveTray(\''+esc(p.line_name)+'\',\'link\',document.getElementById(\'sel'+idx+'\').value)">この客に紐付ける</button></div></div>';
+  }).join("")||'<div class="empty">未紐付けはありません。</div>';
+  var mk=muted.map(function(m){return '<div class="mutedrow"><span>🚫 '+esc(m.line_name)+'</span><span class="u" onclick="unmute(\''+esc(m.line_name)+'\')">解除</span></div>'}).join("");
+  app.innerHTML=header("未紐付けトレイ")
+    +'<div class="trnote">⚠️ 未知のアカウントはここに隔離。仕事(既存/新規)か私用かを仕分けるまで受信箱に出しません。</div>'
+    +pk+(mk?'<div class="sec">私用（取り込まない）一覧</div>'+mk:'')+'<div style="height:24px"></div>';
+}
+function togglePicker(i){var p=document.getElementById("pk"+i);if(p)p.classList.toggle("show")}
+async function resolveTray(name,action,contact){
+  try{ await api("/api/tray/resolve","POST",{line_name:name,action:action,contact:contact||null}); toast(action==="private"?"私用として除外":"仕分けました"); viewTray(); }
+  catch(e){toast("失敗: "+e.message)}
+}
+async function unmute(name){ try{await api("/api/tray/unmute","POST",{line_name:name});toast("解除しました");viewTray();}catch(e){toast(e.message)} }
+
+/* ---------- ATTRS ---------- */
+var ND={type:"choice"};
+async function viewAttrs(){
+  var app=document.getElementById("app");
+  try{ DEFS=(await api("/api/attrs")).defs||[]; }catch(e){ app.innerHTML=header("属性の定義")+'<div class="err">'+esc(e.message)+'</div>'; return; }
+  var cards=DEFS.map(function(d){var t={choice:"選択肢",text:"テキスト",number:"数値",date:"日付"}[d.atype]||d.atype;
+    return '<div class="defcard"><div class="dh">'+esc(d.key)+' <span style="margin-left:auto;font-size:11px;color:#6b4bd6">'+t+'型</span></div>'
+      +(d.options?'<div style="margin-top:6px">'+d.options.split(",").map(function(o){return '<span class="opt">'+esc(o.trim())+'</span>'}).join("")+'</div>':'')+'</div>';
+  }).join("")||'<div class="empty">まだ属性がありません。下で作成。</div>';
+  var types=[["choice","選択肢"],["text","テキスト"],["number","数値"],["date","日付"]];
+  app.innerHTML=header("属性の定義")
+    +'<div style="padding:10px 16px;font-size:12px;color:#6b7280">属性は1回作れば全顧客共通の検索軸になります。表記ゆれ防止に「選択肢型」推奨。</div>'
+    +cards
+    +'<div class="defcard" style="border:1.5px dashed #c9bef2;background:#faf8ff"><div class="dh" style="color:#6b4bd6">＋ 新しい属性を作る</div>'
+    +'<div class="fi" style="padding:8px 0"><label>名前</label><input id="nd_key" placeholder="例: 好きな酒"></div>'
+    +'<div class="typechips">'+types.map(function(t){return '<span class="tc'+(ND.type===t[0]?" on":"")+'" onclick="ND.type=\''+t[0]+'\';renderNDType()">'+t[1]+'</span>'}).join("")+'</div>'
+    +'<div class="fi" id="nd_optrow" style="padding:8px 0;'+(ND.type==="choice"?'':'display:none')+'"><label>選択肢</label><input id="nd_opts" placeholder="日本酒,焼酎,シャンパン"></div>'
+    +'<button class="btn primary" style="margin-top:10px" onclick="addDef()">属性を作成</button></div><div style="height:24px"></div>';
+}
+function renderNDType(){var r=document.getElementById("nd_optrow");if(r)r.style.display=ND.type==="choice"?"":"none";
+  document.querySelectorAll(".tc").forEach(function(x){x.classList.remove("on")});
+  var ts=["choice","text","number","date"],labels=["選択肢","テキスト","数値","日付"];
+  document.querySelectorAll(".tc").forEach(function(x,i){if(ts[i]===ND.type)x.classList.add("on")});
+}
+async function addDef(){
+  var key=(document.getElementById("nd_key")||{}).value;key=(key||"").trim();
+  var opts=(document.getElementById("nd_opts")||{}).value||"";
+  if(!key){toast("名前を入れてください");return;}
+  try{ await api("/api/attrs","POST",{key:key,type:ND.type,options:opts}); toast("属性を作成"); viewAttrs(); }
+  catch(e){toast("失敗: "+e.message)}
+}
+
+/* ---------- router ---------- */
+function go(h){location.hash=h}
+async function route(){
+  var h=location.hash.replace(/^#/,"")||"list";
+  var parts=h.split("/");
+  if(parts[0]==="list") return viewList();
+  if(parts[0]==="card") return viewCard(decodeURIComponent(parts[1]));
+  if(parts[0]==="edit") return viewEdit(decodeURIComponent(parts[1]));
+  if(parts[0]==="new") return viewEdit(null);
+  if(parts[0]==="tray") return viewTray();
+  if(parts[0]==="attrs") return viewAttrs();
+  viewList();
+}
+window.addEventListener("hashchange",route);
+route();
+</script>
+
+<script>
+/* 触感フィードバック(可能な環境のみ): Android=Vibration API / iOS17.4+=スイッチ裏技(軽いタプティック) */
+(function(){
+  var lab, warned=false;
+  function ios(){ try{
+    if(!lab){ lab=document.createElement('label'); lab.setAttribute('aria-hidden','true');
+      lab.style.cssText='position:fixed;top:-200px;left:-200px;width:0;height:0;opacity:0;pointer-events:none';
+      var i=document.createElement('input'); i.type='checkbox'; i.setAttribute('switch',''); lab.appendChild(i);
+      document.body.appendChild(lab);
+    }
+    lab.click();
+  }catch(e){} }
+  window.haptic=function(strong){ try{
+    if(navigator.vibrate){ navigator.vibrate(strong?[12,26,12]:9); return; }
+    ios();
+  }catch(e){} };
+  document.addEventListener('click', function(ev){
+    var t=ev.target.closest('button,[data-act],[onclick],.seg span,.chip,.fp,.sendbtn,.cp,.handoff-opt,.b');
+    if(!t) return;
+    var s=((t.dataset&&t.dataset.act)||'')+' '+(t.className||'')+' '+(t.id||'');
+    var strong=/copygo|copy|send|record|orei|primary|save|deskapprove|demoReset|go\b/i.test(s);
+    window.haptic(strong);
+  }, true);
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1041 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>帳場</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="帳場">
+<meta name="theme-color" content="#FFFDF8">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap');
+:root{--bg:#F7F4EC;--panel:#fff;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;--gold:#A8842F;--shu:#C0402C;--ok:#5E8A5D;--nav-h:58px}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:#EDE8DA;font-family:'Zen Kaku Gothic New',sans-serif;color:var(--text);-webkit-tap-highlight-color:transparent}
+.wrap{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);border-left:1px solid var(--line);border-right:1px solid var(--line);padding-bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 24px)}
+header{position:sticky;top:0;z-index:20;padding:calc(env(safe-area-inset-top) + 12px) 16px 10px;background:#FFFDF8;border-bottom:1px solid var(--line)}
+h1{font-family:'Shippori Mincho',serif;font-size:19px;letter-spacing:.38em;margin:0;display:inline}
+.mode{font-size:9.5px;color:var(--muted);border:1px solid var(--line);border-radius:3px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+.mode:empty{display:none}
+.desk{font-size:10px;color:var(--muted);margin-top:5px}
+.dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-right:5px}
+.dot.off{background:var(--shu)}
+/* セクション見出し */
+.sec{display:flex;align-items:center;gap:10px;margin:16px 16px 9px}
+.sec .bar{width:3px;height:14px;background:var(--gold)}
+.sec.shu .bar{background:var(--shu)}
+.sec span{font-family:'Shippori Mincho',serif;font-size:13px;letter-spacing:.26em;color:var(--gold)}
+.sec.shu span{color:var(--shu)}
+.sec .rule{flex:1;height:1px;background:var(--line)}
+.sec .hint{font-size:10px;color:var(--muted);letter-spacing:0}
+/* カード */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin:0 16px 10px;box-shadow:0 1px 3px rgba(60,50,30,.06)}
+.card.u{border-left:3px solid var(--shu)}
+.card.r{border-left:3px solid var(--gold)}
+.row{display:flex;align-items:center;gap:8px}
+.code{font-family:'Shippori Mincho',serif;font-size:15px}
+.rank{font-size:10px;font-weight:700;border-radius:3px;padding:1px 6px;border:1px solid var(--line);color:var(--muted)}
+.rank.S{color:#fff;background:var(--shu);border-color:var(--shu)}
+.rank.A{color:#fff;background:var(--gold);border-color:var(--gold)}
+.time{margin-left:auto;font-size:11px;color:var(--muted)}
+.msg{font-size:13.5px;margin-top:8px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.msg + .msg{border-top:1px dashed var(--line);padding-top:8px}
+.reason{font-size:10px;color:var(--shu);margin-top:8px;letter-spacing:.1em}
+.card.r .reason{color:var(--gold)}
+/* 下書き */
+.draft-opt{border:1px solid var(--line);border-radius:8px;padding:11px 12px;font-size:13.5px;line-height:1.8;background:#FFFDF8;margin-top:8px;cursor:pointer}
+.draft-block{border:1px solid var(--line);border-radius:10px;padding:11px 12px;margin-top:10px;background:#FFFDF8}
+.draft-block .dtext{font-size:14px;line-height:1.8;margin:4px 0 2px;cursor:text}
+.draft-block .btn{margin-top:8px}
+.draft-block textarea.edit{margin-top:4px}
+.draft-opt:active{background:#F4EEDD}
+.tone{font-size:10px;color:var(--gold);font-weight:700;letter-spacing:.1em;display:block;margin-bottom:3px}
+textarea.edit{width:100%;border:1px solid var(--gold);border-radius:8px;background:#FFFDF8;font-family:inherit;font-size:14px;line-height:1.8;padding:11px 12px;margin-top:8px;min-height:84px;resize:vertical;color:var(--text)}
+textarea.edit:focus{outline:none;box-shadow:0 0 0 2px rgba(168,132,47,.18)}
+button{font-family:inherit;cursor:pointer}
+.btn{width:100%;padding:12px 0;background:var(--gold);border:none;color:#fff;border-radius:6px;font-size:13px;font-weight:700;letter-spacing:.06em;margin-top:10px}
+.btn.shu{background:var(--shu)}
+.btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+.btn:disabled{opacity:.5}
+.acts{display:flex;gap:6px;margin-top:8px}
+.acts button{flex:1;padding:9px 0;border:1px solid var(--line);background:#fff;border-radius:6px;font-size:11.5px;color:var(--muted)}
+.confirm-note{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.8;text-align:center}
+.empty{color:var(--muted);font-size:12.5px;margin:4px 18px 8px}
+.note{font-size:11px;color:var(--muted);line-height:1.9;margin:14px 16px}
+/* 顧客・実績 */
+.list-item{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0 16px 8px}
+.list-item .sub{font-size:11px;color:var(--muted);margin-top:2px}
+.list-item .grow{flex:1;min-width:0}
+.chip{font-size:11px;border:1px solid var(--line);border-radius:4px;padding:2px 8px;color:var(--muted);background:#fff}
+.ev-kind{font-size:10px;font-weight:700;letter-spacing:.1em;border-radius:3px;padding:2px 7px;color:#fff;background:var(--gold)}
+.ev-kind.visit{background:var(--ok)}
+.ev-kind.dohan{background:var(--shu)}
+.status-t{font-size:10px;color:var(--muted)}
+/* 設定 */
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin:0 16px 12px}
+.panel h3{font-family:'Shippori Mincho',serif;font-size:13px;letter-spacing:.2em;color:var(--gold);margin:0 0 8px;font-weight:700}
+.panel p{font-size:11.5px;color:var(--muted);line-height:1.9;margin:6px 0}
+.panel .stat{font-size:12px;color:var(--text)}
+input[type=text]{width:100%;border:1px solid var(--line);border-radius:6px;padding:10px 12px;font-family:inherit;font-size:13px;background:#FFFDF8;margin-top:6px}
+input[type=file]{font-size:11px;margin-top:8px;width:100%}
+/* 裏側コンソール */
+#deskband{background:#23242B;color:#C9C4B4;padding:8px 14px;font-size:11px}
+#deskbandToggle{background:none;border:none;color:#CBB67E;font-size:10.5px;letter-spacing:.14em;cursor:pointer;padding:0}
+#deskConsole{display:none;margin-top:6px;line-height:1.9;font-family:ui-monospace,Menlo,monospace;max-height:150px;overflow-y:auto}
+#deskConsole.open{display:block}
+/* デスク開設ウィザード */
+.qrbox{text-align:center;padding:14px 0 6px}
+.qrbox .qr{width:72px;height:72px;margin:0 auto;background:repeating-linear-gradient(90deg,var(--text) 0 4px,transparent 4px 8px),repeating-linear-gradient(0deg,var(--text) 0 4px,transparent 4px 8px);opacity:.8;border:6px solid #fff;outline:1.5px solid var(--goldDim, #CBB67E)}
+.qrbox .qrlabel{font-size:10px;color:var(--muted);margin-top:8px;letter-spacing:.1em}
+.handoff-opt{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:11px 12px;margin-top:8px;color:var(--text)}
+.handoff-opt.on{border-color:var(--gold);background:#FBF6E9}
+.handoff-opt b{display:block;font-size:12.5px}
+.handoff-opt.on b{color:var(--gold)}
+.handoff-opt span{display:block;font-size:11px;color:var(--muted);line-height:1.8;margin-top:3px}
+.kv{display:flex;justify-content:space-between;font-size:12px;padding:5px 0;border-bottom:1px dashed var(--line)}
+.kv:last-child{border-bottom:none}
+.kv .k{color:var(--muted)}
+/* 下部ナビ */
+nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:430px;background:#FFFDF8;border-top:1px solid var(--line);display:flex;z-index:30;padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:none;padding:8px 0 7px;font-size:10px;color:var(--muted);letter-spacing:.01em;position:relative;transition:color .15s}
+nav button.on{color:var(--gold);font-weight:700}
+nav button .ico{display:flex;justify-content:center;align-items:center;height:23px;margin-bottom:3px}
+nav button .ico svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+nav button.on .ico svg{stroke-width:2}
+nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);color:#fff;font-size:9px;font-weight:700;border-radius:8px;min-width:15px;height:15px;line-height:15px;text-align:center;padding:0 3px}
+.embed{width:100%;height:calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom) - 26px);border:none;display:block;background:var(--bg)}
+.toast{position:fixed;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px);left:50%;transform:translateX(-50%);width:min(380px,88%);background:rgba(43,40,35,.92);color:#fff;border-radius:8px;padding:10px 14px;font-size:12px;text-align:center;z-index:50;display:none}
+.view{display:none}
+.view.on{display:block}
+.ios-guide{border:1px solid var(--gold);border-radius:8px;background:#FBF7EA;padding:12px;font-size:12px;line-height:2;margin-top:8px}
+
+/* パスB: 受信箱リデザイン */
+.card.u{overflow:hidden}
+.alertbar{background:var(--shu);color:#fff;padding:5px 12px;margin:-13px -14px 0;display:flex;align-items:center;gap:7px;font-size:10.5px;font-weight:700;letter-spacing:.06em}
+.alertbar .pulse{width:7px;height:7px;border-radius:50%;background:#fff;animation:pz 1.4s infinite}
+@keyframes pz{0%{box-shadow:0 0 0 0 rgba(255,255,255,.6)}70%{box-shadow:0 0 0 6px rgba(255,255,255,0)}100%{box-shadow:0 0 0 0 rgba(255,255,255,0)}}
+.alertbar .el{margin-left:auto;font-weight:400;opacity:.92}
+.unkcard{border-left:3px solid var(--gold)}
+.unkbar{background:var(--gold);color:#fff;padding:5px 12px;margin:-13px -14px 10px;font-size:10.5px;font-weight:700;letter-spacing:.05em;display:flex;align-items:center;gap:7px}
+.unkbar .el{margin-left:auto;font-weight:400}
+.linename{font-size:10px;color:var(--muted);margin-top:6px}
+.unkask{font-size:12px;color:var(--gold);font-weight:700;margin-top:9px}
+.unkchoice{display:flex;gap:8px;margin-top:8px}
+.unkchoice button{flex:1;padding:11px 4px;border-radius:7px;font-size:12.5px;font-weight:700;border:1.5px solid;line-height:1.3;font-family:inherit}
+.unkchoice .work{background:#EEF4EC;border-color:#C4D8C0;color:var(--ok)}
+.unkchoice .priv{background:#FBEDEA;border-color:#E7C4BC;color:var(--shu)}
+.unkchoice small{display:block;font-size:9px;font-weight:400;color:var(--muted);margin-top:1px}
+.bcollapsed{display:flex;align-items:center;gap:10px;cursor:pointer}
+.bcollapsed .bava{width:28px;height:28px;border-radius:50%;background:#F0EADC;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--gold);font-family:'Shippori Mincho',serif;flex:0 0 auto}
+.bcollapsed .bg{flex:1;min-width:0}
+.bcollapsed .bn{font-size:13px;font-weight:700}
+.bcollapsed .bi{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bcollapsed .chev{color:var(--muted);font-size:15px}
+.thread{margin:6px 0 0;padding:7px 0 1px;border-top:1px dashed var(--line)}
+.thread .msg{background:#F0EADC;border-radius:10px;border-top-left-radius:3px;padding:6px 10px;margin-bottom:5px}
+.thread .msg + .msg{border-top:none;padding-top:6px}
+.thread .msg.mini{font-size:12px;line-height:1.45;padding:4px 9px;margin-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
+.thread .msg.mini.mm{color:#8D8674;background:#F4EFE4;font-size:11px;padding:3px 9px}
+.roldbtn{display:block;width:100%;border:none;background:none;color:#8D8674;font-size:11px;padding:2px 0 6px;text-align:left;font-family:inherit}
+.rcnt{font-size:10px;color:var(--gold);letter-spacing:.04em;white-space:nowrap}
+.eroalarm{margin-top:8px;padding:8px 10px;border:1px dashed #C99;border-radius:9px;background:#FBF3F0;font-size:11.5px;color:#A0524A;line-height:1.6}
+.erobtns{display:flex;gap:8px;margin-top:6px}
+.erobtns button{flex:1;border:1px solid #d8bfb8;background:#fff;border-radius:8px;font-size:11.5px;padding:7px 0;font-family:inherit;color:#A0524A}
+.erobtns button:first-child{background:#A0524A;color:#fff;border-color:#A0524A}
+
+/* 店内・業務(黒服/ママ) */
+.unkchoice3{display:flex;gap:6px;margin-top:8px}
+.unkchoice3 button{flex:1;padding:9px 2px;border-radius:7px;font-size:12px;font-weight:700;border:1.5px solid;line-height:1.25;font-family:inherit}
+.unkchoice3 .work{background:#EEF4EC;border-color:#C4D8C0;color:var(--ok)}
+.unkchoice3 .staff{background:#EAEEF3;border-color:#C3CEDC;color:#3A5170}
+.unkchoice3 .priv{background:#FBEDEA;border-color:#E7C4BC;color:var(--shu)}
+.unkchoice3 small{display:block;font-size:8.5px;font-weight:400;color:var(--muted);margin-top:1px}
+.card.staff{border-left:3px solid #3A5170;overflow:hidden}
+.stafftag{font-size:10px;font-weight:700;color:#3A5170;background:#EAEEF3;border:1px solid #C3CEDC;border-radius:3px;padding:1px 7px}
+.staffnote{font-size:10px;color:var(--muted);margin-top:7px}
+
+/* デモ: リセットバー */
+.demobar{margin:12px 16px 2px;padding:9px 12px;background:#FBF6E9;border:1px solid #E0C98A;border-radius:8px;align-items:center;gap:10px}
+.demobar .t{font-size:11px;color:var(--gold);font-weight:700;flex:1}
+.demobar button{background:var(--gold);color:#fff;border:none;border-radius:6px;padding:7px 14px;font-size:12px;font-weight:700;font-family:inherit;flex:0 0 auto}
+.unksnooze{width:100%;margin-top:8px;background:none;border:1px dashed var(--line);color:var(--muted);border-radius:8px;padding:9px;font-size:12px;font-family:inherit}
+.quickrow{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.quickrow button{background:#EAEEF3;border:1px solid #c3cfdd;color:#3A5170;border-radius:999px;padding:6px 11px;font-size:12px;font-family:inherit}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>帳場</h1><span class="mode" id="mode"></span>
+    <div class="desk" style="display:none"><span class="dot off" id="deskDot"></span><span id="deskText"></span></div>
+  </header>
+
+  <!-- 裏側：デスクコンソール（デスクの動きが見える黒帯） -->
+  <div id="deskband" style="display:none">
+    <button id="deskbandToggle">● 裏側：クラウドデスクの動き ▼</button>
+    <div id="deskConsole" class="mono"></div>
+  </div>
+
+  <!-- 受信箱 -->
+  <section class="view on" id="view-inbox">
+    <div class="demobar" id="demoBar" style="display:none"><span class="t">デモ体験中 — いつでも最初からやり直せます</span><button id="demoResetBtn">🔄 最初からやり直す</button></div>
+    <div class="sec shu"><div class="bar"></div><span>即対応</span><div class="rule"></div><span class="hint" id="uHint"></span></div>
+    <div id="urgent"></div>
+    <div class="sec"><div class="bar"></div><span>ラリー</span><div class="rule"></div><span class="hint" id="rHint"></span></div>
+    <div id="rally"></div>
+    <div class="sec"><div class="bar"></div><span>まとめ箱</span><div class="rule"></div><span class="hint" id="bHint"></span></div>
+    <div id="batch"></div>
+    <div class="sec"><div class="bar" style="background:#3A5170"></div><span style="color:#3A5170">店内</span><div class="rule"></div><span class="hint" id="sHint"></span></div>
+    <div id="staff"></div>
+    <div class="note">読む・判断・下書きは帳場内で完結します。送信を伴う操作だけLINEに移ります（コピー済みの本文を貼って送信）。帳場は送信機能そのものを持ちません。</div>
+  </section>
+
+  <!-- 顧客 -->
+  <!-- アナウンス（/campaign を埋め込み） -->
+  <section class="view" id="view-announce">
+    <iframe class="embed" src="/campaign" title="アナウンス" loading="lazy"></iframe>
+  </section>
+
+  <!-- 顧客カード（/customers を埋め込み） -->
+  <section class="view" id="view-contacts">
+    <iframe class="embed" src="/crm" title="顧客" loading="lazy"></iframe>
+  </section>
+
+  <!-- 実績（お席の記録→御礼→記念日を /seki に統合） -->
+  <section class="view" id="view-events">
+    <iframe class="embed" src="/seki" title="お席と実績" loading="lazy"></iframe>
+  </section>
+
+  <!-- 設定 -->
+  <section class="view" id="view-settings">
+    <div class="sec"><div class="bar"></div><span>設定</span><div class="rule"></div></div>
+
+    <div class="panel">
+      <h3>通知</h3>
+      <p>即対応のLINEが来たとき、この端末に通知します。<br>iPhoneは「ホーム画面に追加」した帳場からのみ通知を受け取れます（iOS 16.4以降）。</p>
+      <div class="stat" id="pushStatus">状態を確認中…</div>
+      <div class="ios-guide" id="iosGuide" style="display:none">
+        <b>iPhoneでの手順</b><br>
+        1. Safariの共有ボタン（□↑）を押す<br>
+        2. 「ホーム画面に追加」を選ぶ<br>
+        3. ホーム画面の「帳場」を開いて、もう一度このボタンを押す
+      </div>
+      <button class="btn" id="pushBtn">通知をオンにする</button>
+      <button class="btn ghost" id="pushTestBtn">テスト通知を送る</button>
+    </div>
+
+    <div class="panel">
+      <h3>LINEへの受け渡し方式</h3>
+      <p>下書きを承認したあと、LINEへどう渡すかを選べます。</p>
+      <button class="handoff-opt" id="handoffCopy" data-handoff="copy">
+        <b>コピーしてLINEを開く（標準）</b>
+        <span>開いているトークに貼るだけ。宛先を間違えようがなく、貼る直前まで本文を直せます。</span>
+      </button>
+      <button class="handoff-opt" id="handoffShare" data-handoff="share">
+        <b>本文付きで送信先選択を開く（実験）</b>
+        <span>貼り付け不要。ただし宛先はLINEの選択画面で自分で選ぶため、選び間違い＝誤送信のリスクがあります。実機検証中の方式です。</span>
+      </button>
+    </div>
+
+    <div class="panel">
+      <h3>文体学習（顧客の一括登録）</h3>
+      <p>LINEのトーク履歴（.txt）を入れると、あなたの文体と、相手ごとの話し方を学習します。登場する相手は顧客として自動登録されます。</p>
+      <input type="text" id="selfName" placeholder="LINE上のあなたの表示名（例：あかり）">
+      <input type="file" id="importFile" accept=".txt,text/plain">
+      <button class="btn" id="importBtn">取り込む</button>
+      <div class="stat" id="importResult"></div>
+    </div>
+
+    <div class="panel">
+      <h3>試しに下書き</h3>
+      <p>相手と受信メッセージを入れると、その場でAI下書きを出します（Androidを待たずに文体を確認できます）。</p>
+      <input type="text" id="tryContact" placeholder="相手の名前（例：HI! / サイトウ / 九条さん）">
+      <input type="text" id="tryText" placeholder="受信メッセージ（例：今日は？）">
+      <button class="btn" id="tryBtn">下書きを見る</button>
+      <div class="stat" id="tryMode" style="margin-top:8px"></div>
+      <div id="tryResult"></div>
+    </div>
+
+    <div class="panel">
+      <h3>学習状況</h3>
+      <div id="profileBox"><p>まだ学習データがありません。</p></div>
+    </div>
+
+    <div class="panel">
+      <h3>接続状態</h3>
+      <div id="deskWizard"><p>確認中…</p></div>
+    </div>
+
+    <div class="panel">
+      <h3>データ消去（実験用）</h3>
+      <p style="font-size:11px;color:#8D8674;line-height:1.7">受信箱のみ＝届いたLINEと下書きだけ消す（連絡先・学習・実績は残る）。全消去＝まっさらに初期化。どちらも元に戻せません。</p>
+      <button class="btn ghost" data-wipe="messages" data-c="0">受信箱を空にする</button>
+      <button class="btn ghost" data-wipe="all" data-c="0" style="color:#C0402C;border-color:#d9b8b0;margin-top:8px">全データを消去（初期化）</button>
+    </div>
+  </section>
+</div>
+
+<nav>
+  <button data-view="inbox" class="on"><span class="ico"><svg viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>受信箱<span class="badge" id="navBadge" style="display:none"></span></button>
+  <button data-view="announce"><span class="ico"><svg viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>アナウンス</button>
+  <button data-view="contacts"><span class="ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>顧客カード</button>
+  <button data-view="events"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg></span>実績</button>
+  <button data-view="settings"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>設定</button>
+</nav>
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* ---------- 基盤 ---------- */
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let toastTimer = null;
+function toast(msg, ms = 2200) {
+  const t = $('#toast');
+  t.textContent = msg; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.display = 'none'; }, ms);
+}
+async function api(path, body, method) {
+  const opt = { method: method || (body !== undefined ? 'POST' : 'GET') };
+  if (body !== undefined) { opt.headers = { 'content-type': 'application/json' }; opt.body = JSON.stringify(body); }
+  const r = await fetch(path, opt);
+  if (!r.ok) throw new Error((await r.text()) || r.status);
+  return r.json();
+}
+function fmtTime(ts) {
+  const d = new Date(ts * 1000);
+  return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/* ---------- 画面切替 ---------- */
+document.querySelectorAll('nav button').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('on'));
+    $('#view-' + b.dataset.view).classList.add('on');
+    if (b.dataset.view === 'contacts') loadContacts();
+    if (b.dataset.view === 'events') loadEvents();
+    if (b.dataset.view === 'settings') { refreshPushStatus(); loadProfile(); loadDesk(); }
+    window.scrollTo(0, 0);
+  });
+});
+
+/* ---------- 受信箱 ---------- */
+// カードのUI状態（再描画で消えないよう保持）: mid -> {drafts, editing(text), phase}
+const cardState = new Map();
+const expanded = new Set();
+
+function draftAreaHtml(mid) {
+  const st = cardState.get(mid);
+  if (!st || st.phase === 'idle') {
+    return `<button class="btn" data-act="mkdraft" data-mid="${mid}">下書きをつくる</button>
+            <div class="acts">
+              <button data-act="stamped" data-mid="${mid}">スタンプで返す</button>
+              <button data-act="deferred" data-mid="${mid}">あとで</button>
+              <button data-act="skipped" data-mid="${mid}">対応不要</button>
+            </div>`;
+  }
+  if (st.phase === 'loading') return `<button class="btn" disabled>下書きを考えています…</button>`;
+  if (st.phase === 'pick') {
+    const label = getHandoff() === 'share' ? 'この文でLINEへ' : 'この文でコピー→LINE';
+    const blocks = st.drafts.map((d, i) => {
+      const body = (st.editingIndex === i)
+        ? `<textarea class="edit" data-mid="${mid}" data-i="${i}" id="edit-${mid}-${i}">${esc(d.text)}</textarea>`
+        : `<div class="dtext" data-act="editdraft" data-mid="${mid}" data-i="${i}">${esc(d.text)}</div>`;
+      return `<div class="draft-block">
+                <span class="tone">${esc(d.tone || '')}</span>${body}
+                <button class="btn shu" data-act="copygo" data-mid="${mid}" data-i="${i}">${label}</button>
+              </div>`;
+    }).join('');
+    return blocks + `<button class="btn ghost" data-act="cancel" data-mid="${mid}">閉じる</button>`;
+  }
+  return '';
+}
+
+function fmtElapsed(ts) {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+  if (s < 60) return 'たった今';
+  if (s < 3600) return Math.floor(s / 60) + '分前';
+  if (s < 86400) return Math.floor(s / 3600) + '時間前';
+  return Math.floor(s / 86400) + '日前';
+}
+function isMediaOnly(m) {
+  var t = (m.text || '').replace(/^【[^】]*】/, '').trim();
+  return /^(?:.{1,30}が)?(写真|スタンプ|動画|画像|ファイル|ボイスメッセージ|アルバム|位置情報|連絡先|ギフト)を送信しました$/.test(t);
+}
+function mediaLabel(m) {
+  const t = (m.text || '').replace(/^【[^】]*】/, '');
+  const mt = t.match(/(写真|スタンプ|動画|画像|ファイル|ボイスメッセージ|アルバム|位置情報|連絡先|ギフト)/);
+  return mt ? (mt[1] + 'を見る') : 'LINEで見る';
+}
+function mediaCardHtml(m) {
+  const g = (m.text || '').match(/^【([^】]*)】/);
+  const ctx = g ? `<span class="reason" style="color:#8D8674">グループ「${esc(g[1])}」</span>` : `<span class="reason" style="color:#8D8674">通知のみ</span>`;
+  return `<div class="card" id="card-${m.id}">
+    <div class="row"><span class="code">${esc(m.contact)}</span>${rankChip(m.rank)}${ctx}</div>
+    <div class="msg" style="color:#8D8674">${esc(m.text)}</div>
+    <div class="acts"><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="openline" data-mid="${m.id}">${mediaLabel(m)}</button></div>
+  </div>`;
+}
+function rankChip(r) { return r ? `<span class="rank ${r}">${r}</span>` : ''; }
+function isGroupUnknown(m) {
+  return /[,、]/.test(m.contact || '') || /^【グループ】/.test(m.text || '');
+}
+function groupCardHtml(m) {
+  const body = (m.text || '').replace(/^【グループ】/, '');
+  return `<div class="card" id="card-${m.id}">
+    <div class="row"><span class="code">グループLINE</span><span class="time">${fmtTime(m.ts)}</span></div>
+    <div class="reason" style="color:#8D8674">グループ「${esc(m.contact)}」— 誰の発言かは通知に含まれていません</div>
+    <div class="msg">${esc(body)}</div>
+    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視</button></div>
+  </div>`;
+}
+function unknownCardHtml(m) {
+  if (isGroupUnknown(m)) return groupCardHtml(m);
+  return `<div class="card unkcard" id="card-${m.id}">
+    <div class="unkbar">🆕 未登録の相手<span class="el">${fmtElapsed(m.ts)}</span></div>
+    <div class="row"><span class="code">${esc(m.contact)}</span><span class="reason">${esc(m.reason)}</span></div>
+    <div class="msg">${esc(m.text)}</div>
+    <div class="linename">🔗 LINEの表示名：${esc(m.contact)}</div>
+    <div class="unkask">この相手はどちら？</div>
+    <div class="unkchoice3">
+      <button class="work" data-act="unkwork" data-contact="${esc(m.contact)}">顧客<small>営業先</small></button>
+      <button class="staff" data-act="unkstaff" data-contact="${esc(m.contact)}">店内<small>黒服・ママ</small></button>
+      <button class="priv" data-act="unkpriv" data-contact="${esc(m.contact)}">私用<small>受け取らない</small></button>
+    </div>
+    <button class="unksnooze" data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視（分類しない）</button>
+  </div>`;
+}
+function staffCardHtml(m, cls) {
+  if (isMediaOnly(m)) return mediaCardHtml(m);
+  const alert = (cls === 'u')
+    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>店内・要対応<span class="el">${fmtElapsed(m.ts)}</span></div>`
+    : '';
+  return `<div class="card staff" id="card-${m.id}">
+    ${alert}
+    <div class="row"><span class="code">${esc(m.contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(m.reason)}</span></div>
+    <div class="msg">${esc(m.text)}</div>
+    <div class="quickrow">
+      <button data-act="quick" data-mid="${m.id}" data-text="了解です！">了解です</button>
+      <button data-act="quick" data-mid="${m.id}" data-text="後ほどご連絡します。">後ほど連絡</button>
+      <button data-act="quick" data-mid="${m.id}" data-text="おつかれさまです！">おつかれさま</button>
+      <button data-act="quick" data-mid="${m.id}" data-text="今向かっています！">向かってます</button>
+      <button data-act="quick" data-mid="${m.id}" data-text="確認します！">確認します</button>
+    </div>
+    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button data-act="deferred" data-mid="${m.id}">後ほど対応</button></div>
+  </div>`;
+}
+const KAWASU_RE = /(下着|ハイレグ|Tバック|エッチ|えっち|裸|セクシー|おっぱい|パンチラ|どぎつい|水着姿|脱いで|脱がし|抱いて|抱くか|激しく)/;
+function eroAlarmHtml(m) {
+  // 下ネタアラーム: 未設定(flag_ero==0)の相手の本文に検知したら、その場で本人に確認する
+  if (Number(m.flag_ero) !== 0) return '';
+  if (!KAWASU_RE.test(m.text || '')) return '';
+  return `<div class="eroalarm">⚠️ 下ネタアラーム — この相手、いなしモードにする？
+    <div class="erobtns">
+      <button data-act="eroon" data-contact="${esc(m.contact)}">いなしON</button>
+      <button data-act="erook" data-contact="${esc(m.contact)}">ノリOK（もう聞かない）</button>
+    </div></div>`;
+}
+function msgCardHtml(m, cls) {
+  if (isMediaOnly(m)) return mediaCardHtml(m);
+  if (m.unlinked) return unknownCardHtml(m);
+  if (m.kind === 'staff') return staffCardHtml(m, cls);
+  if (cls === 'u') {
+    return `<div class="card u" id="card-${m.id}">
+      <div class="alertbar"><span class="pulse"></span>要即返信${m.rank === 'S' ? '・S客' : ''}<span class="el">${fmtElapsed(m.ts)}</span></div>
+      <div class="row"><span class="code">${esc(m.contact)}</span>${rankChip(m.rank)}<span class="reason">${esc(m.reason)}</span></div>
+      <div class="msg">${esc(m.text)}</div>
+      ${eroAlarmHtml(m)}
+      <div class="draft-area">${draftAreaHtml(m.id)}</div>
+    </div>`;
+  }
+  if (!expanded.has(m.id)) {
+    return `<div class="card" id="card-${m.id}">
+      <div class="bcollapsed" data-act="expandbatch" data-mid="${m.id}">
+        <div class="bava">${esc((m.contact || '?').slice(0, 1))}</div>
+        <div class="bg"><div class="bn">${esc(m.contact)} ${rankChip(m.rank)}</div><div class="bi">${esc(m.reason || '雑談')}</div></div>
+        <span class="chev">›</span>
+      </div></div>`;
+  }
+  return `<div class="card" id="card-${m.id}">
+    <div class="row"><span class="code">${esc(m.contact)}</span>${rankChip(m.rank)}<span class="time">${fmtTime(m.ts)}</span></div>
+    <div class="msg">${esc(m.text)}</div>
+    <div class="reason">${esc(m.reason)}</div>
+    ${eroAlarmHtml(m)}
+    <div class="draft-area">${draftAreaHtml(m.id)}</div>
+  </div>`;
+}
+
+function mediaMini(m) {
+  const t = (m.text || '').replace(/^【[^】]*】/, '');
+  const mt = t.match(/(写真|スタンプ|動画|画像|ファイル|ボイスメッセージ|アルバム|位置情報|連絡先|ギフト)/);
+  return '📎 ' + (mt ? mt[1] : '通知');
+}
+function rallyGroupHtml(contact, msgs) {
+  if (msgs.every(isMediaOnly)) return mediaCardHtml(msgs[msgs.length - 1]);
+  const last = msgs[msgs.length - 1];
+  const items = msgs.map((m) => isMediaOnly(m)
+    ? `<div class="msg mini mm">${esc(mediaMini(m))}</div>`
+    : `<div class="msg mini">${esc(m.text)}</div>`);
+  const MAX = 3;
+  let older = '', btn = '';
+  let recent = items.join('');
+  if (items.length > MAX) {
+    older = `<div id="rold-${last.id}" style="display:none">${items.slice(0, items.length - MAX).join('')}</div>`;
+    btn = `<button class="roldbtn" data-act="rold" data-mid="${last.id}">前の${items.length - MAX}通を表示</button>`;
+    recent = items.slice(items.length - MAX).join('');
+  }
+  return `<div class="card r" id="card-${last.id}">
+    <div class="row"><span class="code">${esc(contact)}</span>${rankChip(last.rank)}<span class="rcnt">連投${msgs.length}通・1返信</span><span class="time">${fmtTime(last.ts)}</span></div>
+    <div class="thread">${btn}${older}${recent}</div>
+    ${eroAlarmHtml({...last, text: msgs.map((x) => x.text).join(' ')})}
+    <div class="draft-area">${draftAreaHtml(last.id)}</div>
+  </div>`;
+}
+
+let lastInboxJson = '';
+async function loadInbox(force) {
+  let data;
+  try { data = await api('/api/inbox'); } catch (e) { return; }
+  const j = JSON.stringify(data);
+  const editingNow = document.activeElement && document.activeElement.tagName === 'TEXTAREA';
+  if (!force && (j === lastInboxJson || editingNow)) { updateBadge(data); return; }
+  lastInboxJson = j;
+  updateBadge(data);
+
+  const _isStaff = (m) => m.kind === 'staff';
+  const _uCust = data.urgent.filter((m) => !_isStaff(m));
+  const _uStaff = data.urgent.filter(_isStaff);
+  $('#urgent').innerHTML = _uCust.length
+    ? _uCust.map((m) => msgCardHtml(m, 'u')).join('')
+    : '<div class="empty">いまは静かです。</div>';
+  const rallyKeys = Object.keys(data.rally);
+  $('#rally').innerHTML = rallyKeys.length
+    ? rallyKeys.map((c) => rallyGroupHtml(c, data.rally[c])).join('')
+    : '<div class="empty">続いているやり取りはありません。</div>';
+  $('#bHint').textContent = `${data.batch_time} に一括`;
+  const _bCust = data.batch.filter((m) => !_isStaff(m));
+  const _bStaff = data.batch.filter(_isStaff);
+  $('#batch').innerHTML = _bCust.length
+    ? _bCust.map((m) => msgCardHtml(m, '')).join('')
+    : '<div class="empty">まとめ待ちはありません。</div>';
+  const _staffHtml = _uStaff.map((m) => staffCardHtml(m, 'u')).concat(_bStaff.map((m) => staffCardHtml(m, ''))).join('');
+  $('#staff').innerHTML = _staffHtml || '<div class="empty">店内の連絡はありません。</div>';
+  $('#sHint').textContent = (_uStaff.length + _bStaff.length) ? `${_uStaff.length + _bStaff.length}件` : '';
+  $('#uHint').textContent = _uCust.length ? `${_uCust.length}件` : '';
+  $('#rHint').textContent = rallyKeys.length ? `${rallyKeys.length}組` : '';
+}
+function updateBadge(data) {
+  const n = data.urgent.length;
+  const b = $('#navBadge');
+  b.style.display = n ? 'block' : 'none';
+  b.textContent = n;
+}
+
+/* パスB: 未登録の仕分け・まとめ展開 */
+function switchToContactsEdit(code) {
+  const b = document.querySelector('nav button[data-view="contacts"]'); if (b) b.click();
+  const f = document.querySelector('#view-contacts iframe'); if (f) f.src = '/crm#edit/' + encodeURIComponent(code);
+}
+document.addEventListener('click', async (ev) => {
+  const el = ev.target.closest('[data-act]'); if (!el) return;
+  const act = el.dataset.act;
+  if (act === 'expandbatch') { expanded.add(Number(el.dataset.mid)); loadInbox(true); return; }
+  if (act === 'eroon' || act === 'erook') {
+    const c = el.dataset.contact;
+    const v = act === 'eroon' ? 1 : 2;
+    try { await api(`/api/contacts/${encodeURIComponent(c)}`, { flag_ero: v }); }
+    catch (e) { toast('設定に失敗しました'); return; }
+    toast(v === 1 ? 'いなしモードON。以後この相手の下書きは受け流し方針になります' : 'ノリOK。この相手にはもう聞きません');
+    loadInbox(true); return;
+  }
+  if (act === 'rold') {
+    const d = document.getElementById('rold-' + el.dataset.mid);
+    if (d) { d.style.display = 'block'; el.style.display = 'none'; }
+    return;
+  }
+  if (act === 'openline') {
+    const mid = Number(el.dataset.mid);
+    try { if (mid) await api(`/api/messages/${mid}/action`, { action: 'skipped' }); } catch (e) {}
+    if (mid) cardState.delete(mid);
+    setTimeout(() => { location.href = 'line://nv/chat'; }, 120);
+    loadInbox(true); return;
+  }
+  if (act === 'unksnooze') {
+    const c = el.dataset.contact;
+    try { await api('/api/inbox/classify', { contact: c, action: 'snooze' }); } catch (e) {}
+    toast('24時間、この相手からの通知を止めます'); loadInbox(true); return;
+  }
+  if (act === 'unkwork') {
+    const c = el.dataset.contact;
+    try { await api('/api/inbox/classify', { contact: c, action: 'work' }); }
+    catch (e) { toast('登録に失敗しました'); return; }
+    toast('顧客に登録しました。詳細を編集できます');
+    switchToContactsEdit(c);
+    setTimeout(() => loadInbox(true), 400);
+    return;
+  }
+  if (act === 'unkstaff') {
+    const c = el.dataset.contact;
+    try { await api('/api/inbox/classify', { contact: c, action: 'staff' }); }
+    catch (e) { toast('失敗しました'); return; }
+    toast('店内・業務として登録しました'); loadInbox(true); return;
+  }
+  if (act === 'unkpriv') {
+    const c = el.dataset.contact;
+    try { await api('/api/inbox/classify', { contact: c, action: 'private' }); }
+    catch (e) { toast('失敗しました'); return; }
+    toast('プライベートに設定しました'); loadInbox(true); return;
+  }
+});
+
+/* 下書きフロー（イベント委譲） */
+document.addEventListener('click', async (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) return;
+  const act = el.dataset.act;
+  const mid = Number(el.dataset.mid);
+  const st = cardState.get(mid) || { phase: 'idle' };
+
+  if (act === 'mkdraft') {
+    cardState.set(mid, { ...st, phase: 'loading' });
+    redrawCard(mid);
+    try {
+      const res = await api(`/api/messages/${mid}/drafts`, {});
+      cardState.set(mid, { phase: 'pick', drafts: res.drafts });
+      $('#mode').textContent = { llm: 'AI下書き', template: 'テンプレ下書き（APIキー未設定）',
+                                 prepared: 'デスクが用意した下書き' }[res.mode] || '';
+    } catch (e) { cardState.set(mid, { phase: 'idle' }); toast('下書きの生成に失敗しました'); }
+    redrawCard(mid);
+  }
+  if (act === 'editdraft') {  // 文をタップ → その案だけ編集可能に
+    cardState.set(mid, { ...st, editingIndex: Number(el.dataset.i) });
+    redrawCard(mid);
+  }
+  if (act === 'cancel') { cardState.delete(mid); redrawCard(mid); }
+  if (act === 'copygo') {  // この文でコピー→LINE（"送った?"の確認はしない・自動で対応済み）
+    const i = Number(el.dataset.i);
+    const ta = document.getElementById(`edit-${mid}-${i}`);
+    const text = (ta ? ta.value : (st.drafts[i] || {}).text || '').trim();
+    if (!text) return toast('本文が空です');
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) { return toast('コピーできませんでした。長押しでコピーしてください'); }
+    // 対応済みとして記録し、最終文(編集込み)を文体学習に還元
+    try { await api(`/api/messages/${mid}/action`, { action: 'replied', text }); } catch (e) {}
+    cardState.delete(mid);
+    if (getHandoff() === 'share') {
+      toast('コピー済み。送信先を選んで送ってください');
+      setTimeout(() => { location.href = 'https://line.me/R/share?text=' + encodeURIComponent(text); }, 400);
+    } else {
+      toast('コピー済み。LINEで貼って送ってください');
+      setTimeout(() => { location.href = 'line://nv/chat'; }, 400);
+    }
+    loadInbox(true);
+  }
+  if (act === 'quick') {
+    const text = el.dataset.text || '';
+    try { await navigator.clipboard.writeText(text); } catch (e) { return toast('コピーできませんでした。長押しでコピーしてください'); }
+    try { await api(`/api/messages/${mid}/action`, { action: 'replied', text }); } catch (e) {}
+    cardState.delete(mid);
+    toast('コピー済み。LINEで貼って送ってください');
+    setTimeout(() => { location.href = getHandoff() === 'share' ? ('https://line.me/R/share?text=' + encodeURIComponent(text)) : 'line://nv/chat'; }, 400);
+    loadInbox(true); return;
+  }
+  if (act === 'replied' || act === 'stamped' || act === 'deferred' || act === 'skipped') {
+    try {
+      await api(`/api/messages/${mid}/action`, { action: act });
+      cardState.delete(mid);
+      toast({ replied: '記録しました', stamped: 'スタンプ対応で記録しました',
+              deferred: 'あとで箱に移しました', skipped: '対応不要にしました' }[act]);
+      loadInbox(true);
+    } catch (e) { toast('記録に失敗しました'); }
+  }
+  /* 仮想デスク操作 */
+  if (act === 'deskstart') {
+    try { await api('/api/desk/start', { user_id: 'demo', speed: 1.0 }); toast('デスクを開設しています…'); loadDesk(); }
+    catch (e) { toast('開設に失敗しました'); }
+  }
+  if (act === 'deskapprove') {
+    try { await api('/api/desk/approve', {}); toast('承認を確認。受信の見張りを開始しました'); loadDesk(); }
+    catch (e) { toast('承認に失敗しました'); }
+  }
+  if (act === 'deskreplay') {
+    try {
+      await api('/api/desk/replay', {});
+      cardState.clear(); lastInboxJson = '';
+      loadInbox(true); loadDesk();
+      toast('受信デモを最初から流します');
+    } catch (e) { toast('再生に失敗しました'); }
+  }
+  if (act === 'deskstop') {
+    try { await api('/api/desk/stop', {}); loadDesk(); toast('デスクを停止しました'); }
+    catch (e) { toast('停止に失敗しました'); }
+  }
+  /* 顧客: ランク巡回 */
+  if (act === 'cycler') {
+    const code = el.dataset.code;
+    const next = { S: 'A', A: 'B', B: 'S' }[el.dataset.rank] || 'S';
+    try { await api(`/api/contacts/${encodeURIComponent(code)}/rank`, { rank: next }, 'PUT'); loadContacts(); }
+    catch (e) { toast('変更に失敗しました'); }
+  }
+});
+// textarea の編集内容を、その案の本文に反映して保持
+document.addEventListener('input', (ev) => {
+  if (ev.target.matches('textarea.edit')) {
+    const mid = Number(ev.target.dataset.mid);
+    const i = Number(ev.target.dataset.i);
+    const st = cardState.get(mid);
+    if (st && st.drafts && st.drafts[i]) st.drafts[i].text = ev.target.value;
+  }
+});
+function redrawCard(mid) {
+  const card = $(`#card-${mid}`);
+  if (card) card.querySelector('.draft-area').innerHTML = draftAreaHtml(mid);
+}
+
+/* ---------- 顧客 ---------- */
+async function loadContacts() {
+  if (!$('#contacts')) return;   // 顧客タブは /customers 埋め込みに移行済み
+  let list;
+  try { list = await api('/api/contacts'); } catch (e) { return; }
+  $('#contacts').innerHTML = list.length ? list.map((c) => `
+    <div class="list-item">
+      <div class="grow">
+        <span class="code">${esc(c.code)}</span>
+        <div class="sub">${c.cycle_days ? `来店周期 ${c.cycle_days}日` : '周期未設定'}${c.note ? '｜' + esc(c.note) : ''}</div>
+      </div>
+      <button class="rank ${esc(c.rank)}" data-act="cycler" data-code="${esc(c.code)}" data-rank="${esc(c.rank)}">${esc(c.rank)}</button>
+    </div>`).join('') : '<div class="empty">顧客がまだいません。設定からトーク履歴を取り込んでください。</div>';
+}
+$('#addContactBtn')?.addEventListener('click', async () => {
+  const code = $('#newCode').value.trim();
+  if (!code) return toast('コードネームを入れてください');
+  await api('/api/contacts', { code, rank: 'B' });
+  $('#newCode').value = '';
+  loadContacts();
+});
+
+/* ---------- 実績 ---------- */
+const KIND_LABEL = { visit: '来店', dohan: '同伴', anniversary: '記念日' };
+async function loadEvents() {
+  if (!$('#events')) return;   // 実績は /seki iframe に統合済み
+  let list;
+  try { list = await api('/api/events'); } catch (e) { return; }
+  $('#events').innerHTML = list.length ? list.map((e) => `
+    <div class="list-item">
+      <span class="ev-kind ${esc(e.kind)}">${KIND_LABEL[e.kind] || esc(e.kind)}</span>
+      <div class="grow"><div>${esc(e.label)}</div>
+        <div class="sub">${new Date(e.created_ts * 1000).toLocaleString('ja-JP')}</div></div>
+      <span class="status-t">${e.status === 'confirmed' ? '確定' : '仮'}</span>
+    </div>`).join('') : '<div class="empty">まだ実績がありません。来店系の返信をすると自動で記録されます。</div>';
+}
+
+/* ---------- プッシュ通知 ---------- */
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent);
+const IS_STANDALONE = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+function urlB64ToU8(s) {
+  const pad = '='.repeat((4 - (s.length % 4)) % 4);
+  const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+async function currentSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+async function refreshPushStatus() {
+  const box = $('#pushStatus');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    box.textContent = 'この環境はプッシュ通知に対応していません。';
+    if (IS_IOS && !IS_STANDALONE) $('#iosGuide').style.display = 'block';
+    return;
+  }
+  const sub = await currentSubscription();
+  if (sub) { box.textContent = '✓ 通知はオンです（この端末に届きます）'; $('#pushBtn').textContent = '通知をオフにする'; }
+  else {
+    box.textContent = '通知はまだオフです。';
+    $('#pushBtn').textContent = '通知をオンにする';
+    if (IS_IOS && !IS_STANDALONE) $('#iosGuide').style.display = 'block';
+  }
+}
+$('#pushBtn').addEventListener('click', async () => {
+  try {
+    const existing = await currentSubscription();
+    if (existing) {
+      await api('/api/push/unsubscribe', { endpoint: existing.endpoint });
+      await existing.unsubscribe();
+      toast('通知をオフにしました');
+      return refreshPushStatus();
+    }
+    if (IS_IOS && !IS_STANDALONE) { $('#iosGuide').style.display = 'block'; return toast('先にホーム画面に追加してください'); }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') return toast('通知が許可されませんでした');
+    const info = await api('/api/push/public_key');
+    if (!info.available || !info.key) return toast('サーバー側の通知基盤が未設定です');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToU8(info.key) });
+    await api('/api/push/subscribe', sub.toJSON());
+    toast('通知をオンにしました');
+    refreshPushStatus();
+  } catch (e) { toast('設定に失敗しました：' + e.message); }
+});
+$('#pushTestBtn').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/push/test', {});
+    toast(r.subscriptions === 0 ? '登録端末がありません。先に通知をオンに' : `テスト送信：${r.sent}/${r.subscriptions}件成功`);
+  } catch (e) { toast('テスト送信に失敗しました'); }
+});
+
+/* ---------- 仮想デスク ---------- */
+function pad2(n) { return String(n).padStart(2, '0'); }
+async function loadDesk() {
+  let s;
+  try { s = await api('/api/desk/status'); } catch (e) { return; }
+  renderDesk(s);
+}
+function renderDesk(s) {
+  const map = {
+    none: ['off', 'デスク未開設 — 設定タブから開設できます'],
+    requested: ['off', 'デスク準備中…'],
+    provisioning: ['off', '仮想PCを起動中…'],
+    awaiting_line_login: ['off', 'LINEログインの承認待ち'],
+    active: ['', 'デスク監視中（読み取りのみ・送信不可）'],
+    session_lost: ['off', 'デスク停止 — 再接続が必要です'],
+    reauth_required: ['off', '再ログインが必要です'],
+    failed: ['off', 'デスク停止中'],
+  };
+  const [cls, label] = map[s.desk_state] || ['off', s.desk_state];
+  $('#deskDot').className = 'dot ' + cls;
+  $('#deskText').textContent = label;
+  const band = $('#deskband'); if (band) band.style.display = 'none';
+  renderDeskWizard(s);
+}
+function renderDeskWizard(s) {
+  const box = $('#deskWizard');
+  if (!box) return;
+  let html = '';
+  if (s.mode === 'android') html = renderDeskWizardAndroid(s);
+  else if (s.mode === 'mac') html = renderDeskWizardReal(s);
+  else html = renderDeskWizardDemo(s);
+  box.innerHTML = html;
+}
+function renderDeskWizardAndroid(s) {
+  const n = s.android_count || 0;
+  return `<div class="stat"><b>受信中</b> — Androidの通知を受け付けています${n ? `（これまで ${n} 件取り込み）` : ''}</div>
+    <p style="color:var(--muted);font-size:12px;line-height:1.7">サブ端末が受け取ったLINEの通知を、自動で仕分け・下書きします。</p>
+    <p style="color:var(--shu);font-size:11.5px;line-height:1.7">※ LINEの読み取りは規約上グレーで凍結リスクがあります。サブアカウントでの利用を推奨。</p>`;
+}
+function renderDeskWizardDemo(s) {
+  let html = '';
+  if (s.desk_state === 'none' || s.desk_state === 'failed') {
+    html = `<p>クラウド上の仮想PCがあなたのLINEを<b>読み取り専用</b>で見張ります。このデモ盤では、LINEを読む部分だけ台本（架空の客）で再現し、それ以外は本番と同じ仕組みが動きます。</p>
+      <button class="btn" data-act="deskstart">デスクを開設する（デモ）</button>`;
+  } else if (s.desk_state === 'awaiting_line_login') {
+    html = `<div class="qrbox"><div class="qr"></div><div class="qrlabel">LINEログインQR（デモでは模擬表示）</div></div>
+      <p>本番：このQRをLINEアプリで読み、「PCでログイン」を承認します。<br>デモ：下のボタンで承認を再現します。</p>
+      <button class="btn" data-act="deskapprove">LINEアプリで承認した（デモ）</button>`;
+  } else if (s.desk_state === 'active') {
+    html = `<div class="stat">✓ デスク稼働中 — 受信を見張っています</div>
+      <p>架空の客からのLINEが約90秒かけて順に届きます。即対応は下書きを用意してから通知が鳴り、雑談はまとめ箱に静かに入ります。</p>
+      <button class="btn ghost" data-act="deskreplay">受信デモをもう一度流す</button>
+      <button class="btn ghost" data-act="deskstop">デスクを停止する</button>`;
+  } else {
+    html = `<div class="stat">状態: ${esc(s.desk_state)}</div>`;
+  }
+  html += `<p style="color:var(--shu)">注意：実際のLINE接続（道A）はLINE利用規約上グレーな領域を含みます。凍結リスクを理解し、まずはサブアカウントで検証してください。</p>`;
+  return html;
+}
+function renderDeskWizardReal(s) {
+  let html = `<div class="stat" style="margin-bottom:6px"><b>実LINE読み取りモード</b>（このMacのPC版LINEを読みます）</div>`;
+  if (s.desk_state === 'none') {
+    html += `<p>このMacで起動中のPC版LINEを、<b>読み取り専用</b>で見張ります。開設すると、LINEが読める状態か自動で確認します。</p>
+      <button class="btn" data-act="deskstart">デスクを開設する</button>`;
+  } else if (s.desk_state === 'failed') {
+    html += `<div class="stat" style="color:var(--shu)">接続できませんでした。裏側コンソールの理由を確認してください。</div>
+      <p>よくある原因：PC版LINEが起動していない／アクセシビリティ許可が未設定。手順書（REAL_LINE_SETUP.md）と <code>python3 scripts/line_probe.py</code> で確認できます。</p>
+      <button class="btn" data-act="deskstart">もう一度確認する</button>`;
+  } else if (s.desk_state === 'awaiting_line_login') {
+    html += `<div class="stat">✓ LINEを検出・読み取り疎通OK</div>
+      <p>「監視を開始」を押すと、以後このMacのLINE受信を帳場が見張ります。送信機能は持ちません。</p>
+      <button class="btn" data-act="deskapprove">監視を開始する</button>`;
+  } else if (s.desk_state === 'active') {
+    html += `<div class="stat">✓ 監視中 — 実際のLINE受信を見張っています</div>
+      <p>PC版LINEを開いたまま（またはトーク一覧が見える状態）にしておいてください。新着があると帳場に取り込まれます。</p>
+      <button class="btn ghost" data-act="deskstop">監視を停止する</button>`;
+  } else if (s.desk_state === 'session_lost') {
+    html += `<div class="stat" style="color:var(--shu)">LINEが読めなくなりました。フェイルセーフ発動中です。</div>
+      <p>PC版LINEが終了/ログアウトしていないか確認し、LINEアプリ側の通知を一時的にオンに戻してください。</p>
+      <button class="btn" data-act="deskstart">再接続する</button>`;
+  } else {
+    html += `<div class="stat">状態: ${esc(s.desk_state)}</div>`;
+  }
+  html += `<p style="color:var(--shu)">注意：実LINE読み取りはLINE利用規約上グレーな領域を含み、アカウント凍結のリスクがあります。まずは捨てて良いサブアカウントで検証してください。</p>`;
+  return html;
+}
+$('#deskbandToggle').addEventListener('click', () => {
+  const con = $('#deskConsole');
+  con.classList.toggle('open');
+  $('#deskbandToggle').textContent = '● 裏側：クラウドデスクの動き ' + (con.classList.contains('open') ? '▲' : '▼');
+});
+
+/* ---------- LINEへの受け渡し方式 ---------- */
+// 端末ごとのUI設定。PWAは自前配信なので localStorage を使う
+const HANDOFF_KEY = 'chouba-handoff';
+function getHandoff() {
+  try { return localStorage.getItem(HANDOFF_KEY) === 'share' ? 'share' : 'copy'; }
+  catch (e) { return 'copy'; }
+}
+function renderHandoff() {
+  const v = getHandoff();
+  document.querySelectorAll('.handoff-opt').forEach((b) =>
+    b.classList.toggle('on', b.dataset.handoff === v));
+}
+document.querySelectorAll('.handoff-opt').forEach((b) => {
+  b.addEventListener('click', () => {
+    try { localStorage.setItem(HANDOFF_KEY, b.dataset.handoff); } catch (e) {}
+    renderHandoff();
+    // 開いている編集・確認カードの文言も方式に合わせて描き直す（編集中の本文は保持される）
+    cardState.forEach((st, mid) => {
+      if (st.phase === 'pick') redrawCard(mid);
+    });
+    toast(b.dataset.handoff === 'share' ? '送信先選択方式にしました（実験）' : 'コピー方式にしました');
+  });
+});
+renderHandoff();
+
+/* ---------- 試しに下書き ---------- */
+$('#tryBtn').addEventListener('click', async () => {
+  const contact = $('#tryContact').value.trim();
+  const text = $('#tryText').value.trim();
+  if (!contact || !text) return toast('相手と受信メッセージを両方入れてください');
+  $('#tryBtn').disabled = true;
+  $('#tryMode').textContent = '';
+  $('#tryResult').innerHTML = '<div class="empty">下書きを考えています…</div>';
+  try {
+    const inc = await api('/api/incoming', { contact, text });
+    const res = await api(`/api/messages/${inc.id}/drafts`, {});
+    const modeLabel = { llm: '✓ AI下書き（あなたの文体）', template: 'テンプレ下書き（APIキー未設定）',
+                        prepared: 'デスクが用意した下書き' }[res.mode] || res.mode;
+    $('#tryMode').textContent = `判定：${inc.category}／${inc.reason}　・　${modeLabel}`;
+    $('#tryResult').innerHTML = (res.drafts || []).map((d) =>
+      `<div class="draft-opt"><span class="tone">${esc(d.tone || '')}</span>${esc(d.text)}</div>`).join('')
+      || '<div class="empty">下書きが空でした</div>';
+  } catch (e) {
+    $('#tryResult').innerHTML = '<div class="empty">失敗しました：' + esc(String(e.message || e)) + '</div>';
+  }
+  $('#tryBtn').disabled = false;
+});
+
+/* ---------- 文体学習 ---------- */
+$('#importBtn').addEventListener('click', async () => {
+  const f = $('#importFile').files[0];
+  const selfName = $('#selfName').value.trim();
+  if (!f) return toast('トーク履歴の .txt を選んでください');
+  if (!selfName) return toast('あなたのLINE表示名を入れてください');
+  const fd = new FormData();
+  fd.append('file', f);
+  $('#importBtn').disabled = true;
+  try {
+    const r = await fetch(`/api/profile/import?self_name=${encodeURIComponent(selfName)}`, { method: 'POST', body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || '取り込みに失敗しました');
+    const res = await r.json();
+    $('#importResult').innerHTML =
+      `あなたの発言 ${res.global_msgs} 通から学習しました。<br>` +
+      (res.registered.length ? `新規登録：${res.registered.map(esc).join('、')}<br>` : '') +
+      (res.profiled.length ? `相手別学習：${res.profiled.map(esc).join('、')}` : '');
+    toast('取り込みました');
+    loadProfile();
+  } catch (e) { toast(String(e.message || e)); }
+  $('#importBtn').disabled = false;
+});
+async function loadProfile() {
+  try {
+    const p = await api('/api/profile');
+    if (!p || !p.n_messages) { $('#profileBox').innerHTML = '<p>まだ学習データがありません。</p>'; return; }
+    $('#profileBox').innerHTML =
+      `<div class="kv"><span class="k">学習した発言数</span><span>${p.n_messages} 通</span></div>
+       <div class="kv"><span class="k">平均の長さ</span><span>${Math.round(p.avg_len)} 文字</span></div>
+       <div class="kv"><span class="k">よく使う語尾</span><span>${(p.top_endings || []).slice(0, 3).map(esc).join('　') || '—'}</span></div>
+       <div class="kv"><span class="k">よく使う絵文字</span><span>${(p.top_emojis || []).slice(0, 5).map(esc).join(' ') || '—'}</span></div>`;
+  } catch (e) { /* noop */ }
+}
+
+/* ---------- 起動 ---------- */
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+loadInbox(true);
+loadDesk();
+setInterval(loadInbox, 8000);
+setInterval(loadDesk, 5000);
+
+/* デモ: 最初からやり直す */
+(async function () {
+  try {
+    var st = await api('/api/desk/status');
+    if (st && st.mode === 'sim') {
+      var bar = document.getElementById('demoBar'); if (bar) bar.style.display = 'flex';
+    }
+  } catch (e) {}
+  var rb = document.getElementById('demoResetBtn');
+  if (rb) rb.addEventListener('click', async function () {
+    rb.disabled = true; rb.textContent = 'リセット中…';
+    try { await api('/api/demo/reset', {}); } catch (e) {}
+    try { cardState.clear(); } catch (e) {}
+    try { expanded.clear(); } catch (e) {}
+    toast('デモを最初から流します');
+    setTimeout(function () { loadInbox(true); rb.disabled = false; rb.textContent = '🔄 最初からやり直す'; }, 900);
+  });
+})();
+
+</script>
+
+<script>
+/* 触感フィードバック(可能な環境のみ): Android=Vibration API / iOS17.4+=スイッチ裏技(軽いタプティック) */
+(function(){
+  var lab, warned=false;
+  function ios(){ try{
+    if(!lab){ lab=document.createElement('label'); lab.setAttribute('aria-hidden','true');
+      lab.style.cssText='position:fixed;top:-200px;left:-200px;width:0;height:0;opacity:0;pointer-events:none';
+      var i=document.createElement('input'); i.type='checkbox'; i.setAttribute('switch',''); lab.appendChild(i);
+      document.body.appendChild(lab);
+    }
+    lab.click();
+  }catch(e){} }
+  window.haptic=function(strong){ try{
+    if(navigator.vibrate){ navigator.vibrate(strong?[12,26,12]:9); return; }
+    ios();
+  }catch(e){} };
+  document.addEventListener('click', function(ev){
+    var t=ev.target.closest('button,[data-act],[onclick],.seg span,.chip,.fp,.sendbtn,.cp,.handoff-opt,.b');
+    if(!t) return;
+    var s=((t.dataset&&t.dataset.act)||'')+' '+(t.className||'')+' '+(t.id||'');
+    var strong=/copygo|copy|send|record|orei|primary|save|deskapprove|demoReset|go\b/i.test(s);
+    window.haptic(strong);
+  }, true);
+})();
+/* データ消去(2タップ確認) */
+document.addEventListener('click', async (ev) => {
+  const el = ev.target.closest('[data-wipe]'); if (!el) return;
+  const scope = el.dataset.wipe;
+  if (el.dataset.c !== '1') {
+    el.dataset.c = '1';
+    el.textContent = scope === 'all' ? 'もう一度押すと全データが消えます' : 'もう一度押すと受信箱が空になります';
+    setTimeout(() => { el.dataset.c = '0'; el.textContent = scope === 'all' ? '全データを消去（初期化）' : '受信箱を空にする'; }, 3000);
+    return;
+  }
+  try { await api('/api/admin/wipe', { scope }); }
+  catch (e) { toast('消去に失敗しました: ' + e.message); return; }
+  el.dataset.c = '0';
+  el.textContent = scope === 'all' ? '全データを消去（初期化）' : '受信箱を空にする';
+  toast(scope === 'all' ? '全データを消去しました' : '受信箱を空にしました');
+  lastInboxJson = '';
+  loadInbox(true);
+});
+</script>
+</body>
+</html>
