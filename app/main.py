@@ -698,6 +698,50 @@ def act(mid: int, body: Action):
     return {"ok": True}
 
 
+@app.get("/api/selfname")
+def get_selfname():
+    return {"name": (db.get_profile("_selfname") or {}).get("name") or ""}
+
+
+def _infer_self_name(text: str, self_name: str, contact: str | None = None) -> str:
+    """あなたの表示名の自動判定。優先順:
+    1) 明示指定(既定値「自分」以外) 2) txtヘッダ「[LINE] 〇〇とのトーク履歴」の相手名から消去法
+    3) 送信者2名なら相手(contact/紐付け名)でない方 4) 保存済みの前回値。"""
+    import re as _re
+    from .style_profile import parse_talk
+    if self_name and self_name != "自分":
+        return self_name
+    senders = []
+    for m in parse_talk(text):
+        if m.sender not in senders:
+            senders.append(m.sender)
+    stored = (db.get_profile("_selfname") or {}).get("name") or ""
+    # 1:1のヘッダから相手名を取る
+    partner = None
+    head = text[:300]
+    _m = _re.search(r"\[LINE\] ?(.+?)とのトーク履歴", head)
+    if _m:
+        partner = _m.group(1).strip()
+    if partner and len(senders) == 2:
+        others = [s for s in senders if s != partner and partner not in s and s not in partner]
+        if len(others) == 1:
+            return others[0]
+    if contact and len(senders) == 2:
+        try:
+            from . import crm as _crm
+            knowns = set(_crm.aliases_for(contact) or []) | {contact}
+        except Exception:
+            knowns = {contact}
+        others = [s for s in senders if s not in knowns]
+        if len(others) == 1:
+            return others[0]
+    if stored and stored in senders:
+        return stored
+    if stored:
+        return stored
+    return self_name
+
+
 @app.post("/api/profile/import")
 async def import_profile(file: UploadFile, self_name: str = "自分",
                          contact: str | None = None, auto_register: bool = True):
@@ -719,7 +763,8 @@ async def import_profile(file: UploadFile, self_name: str = "自分",
             raise HTTPException(413, "ファイルが大きすぎます(最大30MB)")
     text = _buf.decode("utf-8", errors="replace")
 
-    result = {"registered": [], "profiled": []}
+    self_name = _infer_self_name(text, self_name, contact)
+    result = {"registered": [], "profiled": [], "self_name": self_name}
 
     if contact:
         # 特定相手のスレッドから本人文体 + 相手別プロファイル(カードの「この相手の履歴を取り込む」)
@@ -742,6 +787,7 @@ async def import_profile(file: UploadFile, self_name: str = "自分",
         result["profiled"].append(contact)
         result["global_msgs"] = p.n_messages
         result["contact_msgs"] = int(cp.get("my_message_count") or 0)
+        db.save_profile("_selfname", {"name": self_name})   # 次回から入力不要
         return result
 
     # 全体取り込み: 本人文体 + 全相手の自動登録&学習
@@ -750,6 +796,7 @@ async def import_profile(file: UploadFile, self_name: str = "自分",
         raise HTTPException(422, "本人のメッセージを検出できませんでした。self_name を確認してください。")
     db.save_profile("_global", p.to_dict())
     result["global_msgs"] = p.n_messages
+    db.save_profile("_selfname", {"name": self_name})   # 次回から入力不要
 
     for name in discover_contacts(text, self_name=self_name):
         cp = extract_contact_profile(text, name, self_name=self_name)
@@ -1151,6 +1198,9 @@ class ContactUpdate(BaseModel):
     founding: str | None = None
     flag_ero: int | None = None   # エロ客スイッチ(いなしモード常時ON)
     flag_koi: int | None = None   # ガチ恋スイッチ(線引きモード常時ON)
+    company: str | None = None       # 会社名(ニュース連携用)
+    company_url: str | None = None   # 会社サイトURL
+    company_note: str | None = None  # 会社・肩書きの補足(役職/業界/検索の助けになる情報)
 
 @app.post("/api/contacts/{code}")
 def contact_update(code: str, body: ContactUpdate):

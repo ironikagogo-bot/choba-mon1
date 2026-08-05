@@ -55,7 +55,7 @@ def ensure():
     with db.conn() as c:
         c.executescript(_SCHEMA)
         # 顧客に呼び方(nickname)・距離感(register)列を後付け(既にあれば無視)
-        for ddl in ("nickname TEXT DEFAULT ''", "register TEXT DEFAULT ''", "real_name TEXT DEFAULT ''", "phone TEXT DEFAULT ''", "note_pos TEXT DEFAULT ''", "note_neg TEXT DEFAULT ''", "linked INTEGER DEFAULT 1", "kind TEXT DEFAULT 'customer'", "stand TEXT DEFAULT ''", "kids_bday TEXT DEFAULT ''", "founding TEXT DEFAULT ''", "flag_ero INTEGER DEFAULT 0", "flag_koi INTEGER DEFAULT 0"):
+        for ddl in ("nickname TEXT DEFAULT ''", "register TEXT DEFAULT ''", "real_name TEXT DEFAULT ''", "phone TEXT DEFAULT ''", "note_pos TEXT DEFAULT ''", "note_neg TEXT DEFAULT ''", "linked INTEGER DEFAULT 1", "kind TEXT DEFAULT 'customer'", "stand TEXT DEFAULT ''", "kids_bday TEXT DEFAULT ''", "founding TEXT DEFAULT ''", "flag_ero INTEGER DEFAULT 0", "flag_koi INTEGER DEFAULT 0", "company TEXT DEFAULT ''", "company_url TEXT DEFAULT ''", "company_note TEXT DEFAULT ''"):
             try:
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {ddl}")
             except Exception:
@@ -282,7 +282,7 @@ def search_contacts(q: str = "", attr_key: str = "", attr_val: str = "") -> list
 
 
 # ---------- 顧客の基本項目更新(編集フォーム用) ----------
-_ALLOWED = {"rank", "nickname", "register", "note", "tags", "cycle_days", "real_name", "phone", "note_pos", "note_neg", "stand", "kids_bday", "founding", "birthday", "flag_ero", "flag_koi"}
+_ALLOWED = {"rank", "nickname", "register", "note", "tags", "cycle_days", "real_name", "phone", "note_pos", "note_neg", "stand", "kids_bday", "founding", "birthday", "flag_ero", "flag_koi", "company", "company_url", "company_note"}
 
 def update_contact(code: str, fields: dict) -> dict:
     ensure()

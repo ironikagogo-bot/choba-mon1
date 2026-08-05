@@ -423,6 +423,31 @@ function unknownCardHtml(m) {
     <button class="unksnooze" data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視（分類しない）</button>
   </div>`;
 }
+function staffGroupHtml(contact, msgs) {
+  const last = msgs[msgs.length - 1];
+  if (msgs.length === 1) return staffCardHtml(last, last._u ? 'u' : '');
+  const _u = msgs.find((m) => m._u);
+  const alert = _u
+    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>店内・要対応<span class="el">${fmtElapsed(_u.ts)}</span></div>`
+    : '';
+  const items = msgs.map((m) => isMediaOnly(m)
+    ? `<div class="msg mini mm">${esc(mediaMini(m))}</div>`
+    : `<div class="msg mini">${esc(m.text)}</div>`);
+  return `<div class="card staff" id="card-${last.id}">
+    ${alert}
+    <div class="row"><span class="code">${esc(contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(last.reason || '')}</span></div>
+    <div class="thread">${items.join('')}</div>
+    <div class="quickrow">
+      <button data-act="quick" data-mid="${last.id}" data-text="了解です！">了解です</button>
+      <button data-act="quick" data-mid="${last.id}" data-text="後ほどご連絡します。">後ほど連絡</button>
+      <button data-act="quick" data-mid="${last.id}" data-text="おつかれさまです！">おつかれさま</button>
+      <button data-act="quick" data-mid="${last.id}" data-text="今向かっています！">向かってます</button>
+      <button data-act="quick" data-mid="${last.id}" data-text="確認します！">確認します</button>
+    </div>
+    <div class="acts"><button data-act="openline" data-mid="${last.id}">LINEを見る</button><button data-act="deferred" data-mid="${last.id}">後ほど対応</button></div>
+  </div>`;
+}
+
 function staffCardHtml(m, cls) {
   if (isMediaOnly(m)) return mediaCardHtml(m);
   const alert = (cls === 'u')
@@ -581,7 +606,11 @@ async function loadInbox(force) {
   const _bStaff = data.batch.filter(_isStaff);
   const _bHtml = gB.map(groupCard2).join('') + _bCust.map((m) => msgCardHtml(m, '')).join('');
   $('#batch').innerHTML = _bHtml || '<div class="empty">まとめ待ちはありません。</div>';
-  const _staffHtml = _uStaff.map((m) => staffCardHtml(m, 'u')).concat(_bStaff.map((m) => staffCardHtml(m, ''))).join('');
+  const _sBy = {};
+  _uStaff.forEach((m) => { (_sBy[m.contact] = _sBy[m.contact] || []).push({...m, _u: 1}); });
+  _bStaff.forEach((m) => { (_sBy[m.contact] = _sBy[m.contact] || []).push(m); });
+  Object.values(_sBy).forEach((l) => l.sort((a, b) => (a.ts || 0) - (b.ts || 0)));
+  const _staffHtml = Object.keys(_sBy).map((c) => staffGroupHtml(c, _sBy[c])).join('');
   $('#staff').innerHTML = _staffHtml || '<div class="empty">店内の連絡はありません。</div>';
   $('#sHint').textContent = (_uStaff.length + _bStaff.length) ? `${_uStaff.length + _bStaff.length}件` : '';
   const _uN = gU.length + _uCust.length;

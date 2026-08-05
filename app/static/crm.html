@@ -216,8 +216,8 @@ async function viewEdit(code){
   var isNew=!code;
   EF_ISNEW=isNew; EF_MORE=false;
   if(!DEFS.length){try{DEFS=(await api("/api/attrs")).defs||[]}catch(e){}}
-  if(isNew){ EF={code:"",rank:"B",nickname:"",register:"",tags:"",note:"",real_name:"",phone:"",note_pos:"",note_neg:"",stand:"",birthday:"",kids_bday:"",founding:"",kind:"customer",flag_ero:0,flag_koi:0,aliases:[],attrs:{}}; }
-  else{ try{var d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail");EF={code:d.code,rank:d.rank||"B",nickname:d.nickname||"",register:(d.register==="mix"||d.register==="casual")?"":(d.register||""),tags:d.tags||"",note:d.note||"",real_name:d.real_name||"",phone:d.phone||"",note_pos:d.note_pos||"",note_neg:d.note_neg||"",stand:d.stand||"",birthday:d.birthday||"",kids_bday:d.kids_bday||"",founding:d.founding||"",kind:d.kind||"customer",flag_ero:Number(d.flag_ero)||0,flag_koi:Number(d.flag_koi)||0,aliases:d.aliases||[],attrs:d.attrs||{}};}catch(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>';return;} }
+  if(isNew){ EF={code:"",rank:"B",nickname:"",register:"",tags:"",note:"",real_name:"",phone:"",note_pos:"",note_neg:"",stand:"",birthday:"",kids_bday:"",founding:"",kind:"customer",flag_ero:0,flag_koi:0,company:"",company_url:"",company_note:"",aliases:[],attrs:{}}; }
+  else{ try{var d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail");EF={code:d.code,rank:d.rank||"B",nickname:d.nickname||"",register:(d.register==="mix"||d.register==="casual")?"":(d.register||""),tags:d.tags||"",note:d.note||"",real_name:d.real_name||"",phone:d.phone||"",note_pos:d.note_pos||"",note_neg:d.note_neg||"",stand:d.stand||"",birthday:d.birthday||"",kids_bday:d.kids_bday||"",founding:d.founding||"",kind:d.kind||"customer",flag_ero:Number(d.flag_ero)||0,flag_koi:Number(d.flag_koi)||0,company:d.company||"",company_url:d.company_url||"",company_note:d.company_note||"",aliases:d.aliases||[],attrs:d.attrs||{}};}catch(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>';return;} }
   paintEdit();
 }
 function paintEdit(){
@@ -261,7 +261,7 @@ function paintEdit(){
     +'</div>'
     +(isNew?'':'<div class="glabel">📖 この相手のトーク履歴を取り込む（いちばん効く設定）</div>'
       +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの「トーク履歴を送信」で出た .txt を入れると、この相手への口調を覚えて下書きが一気にあなたらしくなります。txt内の表示名は自動でこのカードに紐付けされます。</div>'
-      +'<div class="fg"><div class="fi"><label>あなたの表示名</label><input id="ef_selfname" value="'+esc(window.SELFNAME||"")+'" placeholder="トーク内でのあなたの名前"></div>'
+      +'<div class="fg"><div class="fi"><label>あなたの表示名（空欄=自動判定）</label><input id="ef_selfname" value="'+esc(window.SELFNAME||"")+'" placeholder="空欄でOK・初回だけ自動で覚えます"></div>'
       +'<div class="fi"><input type="file" id="ef_talkfile" accept=".txt" style="text-align:left;font-size:12px"><button class="btn mini" onclick="importTalk()">取り込む</button></div></div>')
     +'<button class="morebtn" onclick="EF_MORE=!EF_MORE;renderEdit()">'+(EF_MORE?'▴ 詳しく設定を閉じる':'▾ 詳しく設定（任意・空欄でも全部動きます）')+'</button>'
     +'<div style="display:'+(EF_MORE?'block':'none')+'">'
@@ -276,6 +276,11 @@ function paintEdit(){
     +'<div class="fi"><label>誕生日（月-日）</label><input id="ef_bday" value="'+esc(EF.birthday)+'" placeholder="例: 07-20" inputmode="numeric"></div>'
     +'<div class="fi"><label>お子様・お孫様の誕生日</label><input id="ef_kids" value="'+esc(EF.kids_bday)+'" placeholder="例: 長男:03-15, お孫さん:07-28"></div>'
     +'<div class="fi"><label>会社の創立記念日（月-日）</label><input id="ef_found" value="'+esc(EF.founding)+'" placeholder="例: 04-01（社長・オーナー様に）"></div>'
+    +'</div>'
+    +'<div class="glabel">📰 会社・ニュース連携（この方の話題を拾うために使います）</div><div class="fg">'
+    +'<div class="fi"><label>会社名</label><input id="ef_company" value="'+esc(EF.company)+'" placeholder="例: 〇〇建設"></div>'
+    +'<div class="fi"><label>会社サイトURL</label><input id="ef_curl" value="'+esc(EF.company_url)+'" placeholder="https://..." inputmode="url"></div>'
+    +'<div class="fi"><label>補足（役職・業界など）</label><input id="ef_cnote" value="'+esc(EF.company_note)+'" placeholder="例: 代表取締役／不動産デベロッパー"></div>'
     +'</div>'
     +(isNew?'':'<div class="glabel">🔗 LINE紐付け</div>'
       +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの顧客に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
@@ -299,6 +304,9 @@ function syncEF(){
   if(g("ef_note")!==undefined)EF.note=g("ef_note");
   if(g("ef_real")!==undefined)EF.real_name=g("ef_real");
   if(g("ef_phone")!==undefined)EF.phone=g("ef_phone");
+  if(g("ef_company")!==undefined)EF.company=g("ef_company");
+  if(g("ef_curl")!==undefined)EF.company_url=g("ef_curl");
+  if(g("ef_cnote")!==undefined)EF.company_note=g("ef_cnote");
   if(g("ef_pos")!==undefined)EF.note_pos=g("ef_pos");
   if(g("ef_neg")!==undefined)EF.note_neg=g("ef_neg");
   if(g("ef_bday")!==undefined)EF.birthday=g("ef_bday");
@@ -324,14 +332,14 @@ async function importTalk(){
   var f=(document.getElementById("ef_talkfile")||{}).files; f=f&&f[0];
   var sn=((document.getElementById("ef_selfname")||{}).value||"").trim();
   if(!f){toast("先に .txt を選んでください");return;}
-  if(!sn){toast("あなたの表示名を入れてください（txt内のあなたの名前）");return;}
   if(!EF.code){toast("先に名前を入れて保存してください");return;}
-  window.SELFNAME=sn;
+  if(sn){window.SELFNAME=sn;}
   var fd=new FormData(); fd.append("file",f);
   try{
-    var r=await fetch("/api/profile/import?contact="+encodeURIComponent(EF.code)+"&self_name="+encodeURIComponent(sn),{method:"POST",body:fd});
+    var r=await fetch("/api/profile/import?contact="+encodeURIComponent(EF.code)+(sn?("&self_name="+encodeURIComponent(sn)):""),{method:"POST",body:fd});
     var j=await r.json();
     if(!r.ok) throw new Error(j.detail||"取り込みに失敗しました");
+    if(j.self_name){window.SELFNAME=j.self_name;}
     if(j.alias_added&&EF.aliases.indexOf(j.alias_added)<0){EF.aliases.push(j.alias_added);}
     toast("覚えました（この相手への実例 "+(j.contact_msgs||0)+" 件"+(j.alias_added?"・紐付け: "+j.alias_added:"")+"）");
     paintEdit();
@@ -347,7 +355,7 @@ async function saveEdit(isNew){
       toast("呼び名を「"+EF.code+"」に変更しました");
     }
     if(isNew){ await api("/api/contacts","POST",{code:EF.code,rank:EF.rank,tags:EF.tags,note:EF.note}); }
-    await api("/api/contacts/"+encodeURIComponent(EF.code),"POST",{rank:EF.rank,nickname:EF.nickname,register:EF.register,note:EF.note,tags:EF.tags,real_name:EF.real_name,phone:EF.phone,note_pos:EF.note_pos,note_neg:EF.note_neg,stand:EF.stand,birthday:EF.birthday,kids_bday:EF.kids_bday,founding:EF.founding,flag_ero:Number(EF.flag_ero)||0,flag_koi:Number(EF.flag_koi)||0});
+    await api("/api/contacts/"+encodeURIComponent(EF.code),"POST",{rank:EF.rank,nickname:EF.nickname,register:EF.register,note:EF.note,tags:EF.tags,real_name:EF.real_name,phone:EF.phone,note_pos:EF.note_pos,note_neg:EF.note_neg,stand:EF.stand,birthday:EF.birthday,kids_bday:EF.kids_bday,founding:EF.founding,flag_ero:Number(EF.flag_ero)||0,flag_koi:Number(EF.flag_koi)||0,company:EF.company,company_url:EF.company_url,company_note:EF.company_note});
     try{ await api("/api/contacts/"+encodeURIComponent(EF.code)+"/kind","POST",{kind:EF.kind}); }catch(e){}
     for(var k in EF.attrs){ if(EF.attrs[k]!=="") await api("/api/contacts/"+encodeURIComponent(EF.code)+"/attrs","POST",{key:k,value:EF.attrs[k]}); }
     toast("保存しました");
@@ -458,6 +466,7 @@ route();
     window.haptic(strong);
   }, true);
 })();
+api("/api/selfname").then(function(r){ if(r&&r.name&&!window.SELFNAME){window.SELFNAME=r.name;} }).catch(function(){});
 </script>
 
 </body>

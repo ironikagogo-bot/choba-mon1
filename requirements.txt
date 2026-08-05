@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn>=0.29
 requests>=2.31
 python-multipart>=0.0.9
+pywebpush>=2.0
+py-vapid>=1.9
