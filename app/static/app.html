@@ -141,6 +141,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
 .thread .msg + .msg{border-top:none;padding-top:6px}
 .thread .msg.mini{font-size:12px;line-height:1.45;padding:4px 9px;margin-bottom:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap}
 .thread .msg.mini.mm{color:#8D8674;background:#F4EFE4;font-size:11px;padding:3px 9px}
+.thread .msg.mini.own{background:#E9F5E1;color:#3d5c33;margin-left:18%;border-radius:10px 10px 3px 10px}
 .roldbtn{display:block;width:100%;border:none;background:none;color:#8D8674;font-size:11px;padding:2px 0 6px;text-align:left;font-family:inherit}
 .rcnt{font-size:10px;color:var(--gold);letter-spacing:.04em;white-space:nowrap}
 .eroalarm{margin-top:8px;padding:8px 10px;border:1px dashed #C99;border-radius:9px;background:#FBF3F0;font-size:11.5px;color:#A0524A;line-height:1.6}
@@ -336,6 +337,7 @@ function draftAreaHtml(mid) {
   if (!st || st.phase === 'idle') {
     return `<button class="btn" data-act="mkdraft" data-mid="${mid}">下書きをつくる</button>
             <div class="acts">
+              <button data-act="selfgo" data-mid="${mid}">✍️ 自分で書く→LINE</button>
               <button data-act="stamped" data-mid="${mid}">スタンプで返す</button>
               <button data-act="deferred" data-mid="${mid}">あとで</button>
               <button data-act="skipped" data-mid="${mid}">対応不要</button>
@@ -353,7 +355,8 @@ function draftAreaHtml(mid) {
                 <button class="btn shu" data-act="copygo" data-mid="${mid}" data-i="${i}">${label}</button>
               </div>`;
     }).join('');
-    return blocks + `<button class="btn ghost" data-act="cancel" data-mid="${mid}">閉じる</button>`;
+    return blocks + `<button class="btn ghost" data-act="selfgo" data-mid="${mid}">✍️ どれも使わず自分で書く→LINE</button>
+      <button class="btn ghost" data-act="cancel" data-mid="${mid}">閉じる</button>`;
   }
   return '';
 }
@@ -478,23 +481,29 @@ function mediaMini(m) {
   return '📎 ' + (mt ? mt[1] : '通知');
 }
 function rallyGroupHtml(contact, msgs) {
-  if (msgs.every(isMediaOnly)) return mediaCardHtml(msgs[msgs.length - 1]);
-  const last = msgs[msgs.length - 1];
-  const items = msgs.map((m) => isMediaOnly(m)
-    ? `<div class="msg mini mm">${esc(mediaMini(m))}</div>`
-    : `<div class="msg mini">${esc(m.text)}</div>`);
-  const MAX = 3;
+  const inc = msgs.filter((m) => !m.own);        // 受信(未対応)
+  const ownN = msgs.length - inc.length;         // 自分の返信(帳場経由)
+  if (!inc.length) return '';
+  if (inc.every(isMediaOnly) && !ownN) return mediaCardHtml(inc[inc.length - 1]);
+  const last = inc[inc.length - 1];
+  const items = msgs.map((m) => m.own
+    ? `<div class="msg mini own">${esc(m.text)}</div>`
+    : (isMediaOnly(m)
+      ? `<div class="msg mini mm">${esc(mediaMini(m))}</div>`
+      : `<div class="msg mini">${esc(m.text)}</div>`));
+  const MAX = 4;
   let older = '', btn = '';
   let recent = items.join('');
   if (items.length > MAX) {
     older = `<div id="rold-${last.id}" style="display:none">${items.slice(0, items.length - MAX).join('')}</div>`;
-    btn = `<button class="roldbtn" data-act="rold" data-mid="${last.id}">前の${items.length - MAX}通を表示</button>`;
+    btn = `<button class="roldbtn" data-act="rold" data-mid="${last.id}">前の${items.length - MAX}件を表示</button>`;
     recent = items.slice(items.length - MAX).join('');
   }
+  const cnt = ownN ? `受信${inc.length}・返信${ownN}` : `連投${inc.length}通・未返信`;
   return `<div class="card r" id="card-${last.id}">
-    <div class="row"><span class="code">${esc(contact)}</span>${rankChip(last.rank)}<span class="rcnt">連投${msgs.length}通・1返信</span><span class="time">${fmtTime(last.ts)}</span></div>
+    <div class="row"><span class="code">${esc(contact)}</span>${rankChip(last.rank)}<span class="rcnt">${cnt}</span><span class="time">${fmtTime(last.ts)}</span></div>
     <div class="thread">${btn}${older}${recent}</div>
-    ${eroAlarmHtml({...last, text: msgs.map((x) => x.text).join(' ')})}
+    ${eroAlarmHtml({...last, text: inc.map((x) => x.text).join(' ')})}
     <div class="draft-area">${draftAreaHtml(last.id)}</div>
   </div>`;
 }
@@ -638,6 +647,14 @@ document.addEventListener('click', async (ev) => {
     }
     loadInbox(true);
   }
+  if (act === 'selfgo') {  // 下書きを使わず自分で書く: 対応済みにしてLINEへ(コピーなし)
+    try { await api(`/api/messages/${mid}/action`, { action: 'replied' }); } catch (e) {}
+    cardState.delete(mid);
+    toast('LINEでそのまま書いて送ってください');
+    setTimeout(() => { location.href = 'line://nv/chat'; }, 400);
+    loadInbox(true);
+    return;
+  }
   if (act === 'quick') {
     const text = el.dataset.text || '';
     try { await navigator.clipboard.writeText(text); } catch (e) { return toast('コピーできませんでした。長押しでコピーしてください'); }
@@ -651,8 +668,9 @@ document.addEventListener('click', async (ev) => {
     try {
       await api(`/api/messages/${mid}/action`, { action: act });
       cardState.delete(mid);
-      toast({ replied: '記録しました', stamped: 'スタンプ対応で記録しました',
+      toast({ replied: '記録しました', stamped: 'スタンプを選んで送ってください',
               deferred: 'あとで箱に移しました', skipped: '対応不要にしました' }[act]);
+      if (act === 'stamped') setTimeout(() => { location.href = 'line://nv/chat'; }, 400);
       loadInbox(true);
     } catch (e) { toast('記録に失敗しました'); }
   }
@@ -972,6 +990,10 @@ loadInbox(true);
 loadDesk();
 setInterval(loadInbox, 8000);
 setInterval(loadDesk, 5000);
+/* LINEから戻ってきた瞬間に最新化(対応済みカードの残像を消す) */
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { loadInbox(true); loadDesk(); }
+});
 
 /* デモ: 最初からやり直す */
 (async function () {

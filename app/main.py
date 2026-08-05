@@ -533,6 +533,19 @@ def inbox():
             out["rally"].setdefault(m["contact"], []).append(m)
         else:
             out["batch"].append(m)
+    # ラリーに自分の返信(帳場経由)を時系列で挟む=「連投」ではなく実際の往復として見せる
+    for _contact, _lst in out["rally"].items():
+        try:
+            _first = min((x["ts"] or 0) for x in _lst)
+            with db.conn() as c:
+                _rows = c.execute(
+                    "SELECT text, ts FROM sent_replies WHERE contact=? AND ts>=? ORDER BY ts ASC LIMIT 10",
+                    (_contact, _first - 60)).fetchall()
+            for _t, _ts in _rows:
+                _lst.append({"own": 1, "text": _t, "ts": _ts})
+            _lst.sort(key=lambda x: x.get("ts") or 0)
+        except Exception:
+            pass
     return out
 
 
@@ -591,6 +604,16 @@ def act(mid: int, body: Action):
     if body.action not in ("replied", "stamped", "deferred", "skipped"):
         raise HTTPException(400, "bad action")
     db.set_status(mid, body.action)
+    # ラリー連投対策: 返信/スタンプは「その相手との未対応スレッド全体」への対応とみなして閉じる。
+    # これをしないと連投の残り(古い通)が open のまま残り、コピペ後も同じ会話がカードに再表示され続ける。
+    if body.action in ("replied", "stamped"):
+        try:
+            for _m in db.open_messages():
+                if (_m["contact"] == msg["contact"] and _m["id"] != mid
+                        and (_m["ts"] or 0) <= (msg["ts"] or 0)):
+                    db.set_status(_m["id"], body.action)
+        except Exception:
+            pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる
     if body.action == "replied" and (body.text or "").strip():
         try:

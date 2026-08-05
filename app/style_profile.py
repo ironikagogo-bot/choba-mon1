@@ -92,7 +92,7 @@ def extract_profile(text: str, self_name: str = "自分") -> Profile:
     p.top_endings = [e for e, _ in endings.most_common(5)]
     p.top_emojis = [e for e, _ in emojis.most_common(5)]
     # few-shot 実例: 幅広い長さの「らしい」メッセージを多めに(声を吸収させる用)
-    p.samples = [m.text for m in msgs if 4 <= len(m.text) <= 90][:16]
+    p.samples = [m.text for m in msgs if 4 <= len(m.text) <= 90][-200:][::-1]  # 直近200文・新しい順
     return p
 
 
@@ -132,7 +132,7 @@ def extract_contact_profile(text: str, contact_name: str, self_name: str = "自�
     for h in ["さん", "会長", "社長", "専務", "常務", "部長", "先生", "様", "君", "ちゃん"]:
         if any(h in t for t in my_to_this):
             honorifics.append(h)
-    samples = [t for t in my_to_this if 4 <= len(t) <= 90][:14]
+    samples = [t for t in my_to_this if 4 <= len(t) <= 90][-200:][::-1]  # 直近200文・新しい順
     return {
         "contact": contact_name,
         "my_message_count": len(my_to_this),
@@ -155,16 +155,28 @@ def learn_from_sent(contact: str, text: str, edited: int = 0, edit_ratio: int = 
     cp = db.get_profile(contact) or {}
     samples = [x for x in (cp.get("my_samples_to_them") or []) if x != t]
     samples.insert(0, t)
-    cp["my_samples_to_them"] = samples[:30]
+    cp["my_samples_to_them"] = samples[:200]
     cp["my_message_count"] = int(cp.get("my_message_count") or 0) + 1
     db.save_profile(contact, cp)
     g = db.get_profile("_global") or {}
     if g.get("n_messages"):  # .txt取り込み済みの時だけ(空プロファイルに数値キーが無くブロック生成が壊れるため)
         gs = [x for x in (g.get("samples") or []) if x != t]
         gs.insert(0, t)
-        g["samples"] = gs[:60]
+        g["samples"] = gs[:200]
         db.save_profile("_global", g)
     db.add_sent_reply(contact, t, edited=edited, edit_ratio=edit_ratio)
+
+
+def _pick_samples(samples: list, recent: int, spread: int) -> list:
+    """実例の選抜: 新しい順リストから「直近recent件」+「残りから等間隔spread件(場面の多様性用)」。"""
+    if not samples:
+        return []
+    head = samples[:recent]
+    rest = samples[recent:]
+    if not rest or spread <= 0:
+        return head
+    step = max(1, len(rest) // spread)
+    return head + rest[::step][:spread]
 
 
 def contact_profile_block(cp: dict) -> str:
@@ -176,7 +188,7 @@ def contact_profile_block(cp: dict) -> str:
         lines.append(f"この相手への呼び方・敬称: {'、'.join(cp['honorifics_to_them'])}")
     if cp.get("my_samples_to_them"):
         lines.append("★この相手に本人が実際に送った文(最重要・この距離感/崩し方/言い回しをそのまま真似る):\n"
-                     + "\n".join(f"「{s}」" for s in cp["my_samples_to_them"][:12]))
+                     + "\n".join(f"「{s}」" for s in _pick_samples(cp["my_samples_to_them"], 40, 20)))
     return "この相手専用のプロファイル:\n" + "\n".join(lines) if lines else ""
 
 
@@ -197,5 +209,5 @@ def profile_prompt_block(profile: dict) -> str:
     if profile.get("samples"):
         block += ("\n\n★本人が実際に書いた文(最重要・これが本人の『声』。"
                   "言い回し・崩し・句読点の少なさ・端折り方をそのまま真似る):\n")
-        block += "\n".join(f"「{s}」" for s in profile["samples"][:12])
+        block += "\n".join(f"「{s}」" for s in _pick_samples(profile["samples"], 20, 10))
     return block
