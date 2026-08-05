@@ -3,13 +3,12 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# http-ece(pywebpush依存)のビルド失敗を避ける
-ENV SETUPTOOLS_USE_DISTUTILS=stdlib \
-    PIP_NO_CACHE_DIR=1 \
+ENV PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
