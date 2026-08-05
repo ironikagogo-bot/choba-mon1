@@ -135,16 +135,20 @@ function sitRowHtml(s){
   var nm=mainName(s.main_contact);
   var done=(s.sent_count||0)>=(s.member_count||0)&&(s.member_count||0)>0;
   var pill=done?'<span class="pill">御礼済み</span>':'<span class="pill part">'+(s.sent_count||0)+'/'+(s.member_count||0)+'</span>';
+  var sl=STYPE_SHORT[s.stype||""]||"お席";
+  var vn=(s.venue||"").trim();
   return '<div class="sitrow" data-sit="'+s.id+'"><div class="dt">'+esc(s.date_label||"—")+'</div>'
-    +'<div style="flex:1;min-width:0"><div class="nm">'+esc(nm)+' <span style="font-family:Zen Kaku Gothic New;font-size:11px;color:var(--muted)">のお席</span></div>'
+    +'<div style="flex:1;min-width:0"><div class="nm">'+esc(nm)+' <span style="font-family:Zen Kaku Gothic New;font-size:11px;color:var(--muted)">の'+sl+(vn?'・'+esc(vn):'')+'</span></div>'
     +'<div class="sub">メンバー'+(s.member_count||0)+'名 '+pill+'</div></div><div class="go">›</div></div>';
 }
 function mainName(code){var c=contactsCache.filter(function(x){return x.code===code;})[0];return c?((c.nickname||"").trim()||c.code):code;}
 
 /* ---------------- RECORD ---------------- */
-var rec={main:"",mainStand:"equal",members:[],dateLabel:""};
+var rec={main:"",mainStand:"equal",members:[],dateLabel:"",stype:"",venue:""};
+var STYPE_LABEL={"":"お席（店内）",dohan:"同伴",after:"アフター",gaiso:"店外（食事・ゴルフ等）"};
+var STYPE_SHORT={"":"お席",dohan:"同伴",after:"アフター",gaiso:"店外"};
 function record(){
-  rec={main:"",mainStand:"equal",members:[],dateLabel:"今夜"};
+  rec={main:"",mainStand:"equal",members:[],dateLabel:"今夜",stype:"",venue:""};
   Promise.all([api("/api/contacts"),api("/api/roster?kinds=peer,excolleague,staff")]).then(function(res){
     contactsCache=res[0]||[]; rosterCache=(res[1]||{}).roster||[];
     drawRecord();
@@ -160,6 +164,9 @@ function drawRecord(){
   h+='<div class="bkbar"><button class="bk" data-go="home">‹ 実績へ</button></div>';
   h+='<div class="sec"><span class="bar"></span><span>お席を記録</span><div class="rule"></div></div>';
   h+='<label class="f">いつのお席</label><input class="tf" id="dlab" value="'+esc(rec.dateLabel)+'">';
+  h+='<label class="f">種類</label><div class="chips">'
+    +Object.keys(STYPE_LABEL).map(function(k){var on=rec.stype===k;return '<button class="chip'+(on?" on":"")+'" data-stype="'+k+'">'+STYPE_LABEL[k]+'</button>';}).join("")+'</div>';
+  h+='<label class="f">行ったお店・場所（任意）</label><input class="tf" id="venue" value="'+esc(rec.venue)+'" placeholder="例: 鮨さいとう / ○○カントリー">';
   h+='<label class="f">主賓客（お席の主役）</label><div class="chips">'
     +custs.map(function(c){var on=rec.main===c.code;return '<button class="chip'+(on?" on":"")+'" data-main="'+esc(c.code)+'">'+esc(dispName(c.code))+'</button>';}).join("")+'</div>';
   h+='<label class="f">同席メンバーを足す（タップで追加）</label>';
@@ -173,6 +180,7 @@ function drawRecord(){
   h+='<button class="btn shu" style="margin-top:12px" data-record="1">この席を記録する</button>';
   app.innerHTML=h;
   document.getElementById("dlab").addEventListener("input",function(e){rec.dateLabel=e.target.value;});
+  var _ve=document.getElementById("venue"); if(_ve){_ve.addEventListener("input",function(e){rec.venue=e.target.value;});}
 }
 function chipList(arr,cls){
   return arr.map(function(c){
@@ -238,6 +246,7 @@ document.addEventListener("click",function(ev){
   if(t.dataset.role){ var m=rec.members.filter(function(x){return x.contact===t.dataset.role;})[0]; if(m){ var i=ROLE_CYCLE.indexOf(m.role); m.role=ROLE_CYCLE[(i+1)%ROLE_CYCLE.length]; drawRecord(); } return; }
   if(t.dataset.stand){ var m2=rec.members.filter(function(x){return x.contact===t.dataset.stand;})[0]; if(m2){ var j=STAND_CYCLE.indexOf(m2.stand); m2.stand=STAND_CYCLE[(j+1)%STAND_CYCLE.length]; drawRecord(); } return; }
   if(t.dataset.rm){ rec.members=rec.members.filter(function(x){return x.contact!==t.dataset.rm;}); drawRecord(); return; }
+  if(t.dataset.stype!==undefined){ rec.stype=t.dataset.stype; drawRecord(); return; }
   if(t.dataset.record){ doRecord(); return; }
   if(t.dataset.send){ doSend(t.dataset.send,t.dataset.text); return; }
 });
@@ -245,7 +254,7 @@ function doRecord(){
   if(!rec.main){ toast("主賓客を選んでください"); return; }
   var members=[{contact:rec.main,role:"customer",stand:rec.mainStand}].concat(rec.members);
   var seen={}; members=members.filter(function(m){if(seen[m.contact])return false;seen[m.contact]=true;return true;});
-  post("/api/sittings",{date_label:rec.dateLabel,main:rec.main,members:members}).then(function(r){
+  post("/api/sittings",{date_label:rec.dateLabel,main:rec.main,stype:rec.stype,venue:rec.venue,members:members}).then(function(r){
     toast("お席を記録しました"); nav("orei",r.id);
   });
 }

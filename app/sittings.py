@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS sittings(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   date_label TEXT DEFAULT '',
   main_contact TEXT DEFAULT '',
+  stype TEXT DEFAULT '',       -- ''=お席(店内) / dohan=同伴 / after=アフター / gaiso=店外(食事・ゴルフ等)
+  venue TEXT DEFAULT '',       -- 行ったお店・場所(任意)
   created_ts REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sitting_members(
@@ -33,6 +35,11 @@ def ensure():
         return
     with db.conn() as c:
         c.executescript(_SCHEMA)
+        for ddl in ("stype TEXT DEFAULT ''", "venue TEXT DEFAULT ''"):
+            try:
+                c.execute(f"ALTER TABLE sittings ADD COLUMN {ddl}")
+            except Exception:
+                pass
     _READY = True
 
 
@@ -40,15 +47,17 @@ ROLE_LABEL = {"customer": "主賓客", "intro": "紹介者", "peer": "同業者"
               "after": "アフター", "help": "ヘルプ", "report": "担当ママへ共有"}
 
 
-def create_sitting(date_label: str, main: str, members: list) -> int:
+def create_sitting(date_label: str, main: str, members: list,
+                   stype: str = "", venue: str = "") -> int:
     """members = [{contact, role, stand}]。主賓客は role=customer で含める。
-    来店/紹介の実績イベントも自動記録。"""
+    stype: ''=お席(店内)/dohan=同伴/after=アフター/gaiso=店外。venue=行ったお店(任意)。
+    来店/同伴/紹介の実績イベントも自動記録。"""
     ensure()
     now = time.time()
     with db.conn() as c:
         cur = c.execute(
-            "INSERT INTO sittings(date_label, main_contact, created_ts) VALUES(?,?,?)",
-            (date_label or "", main or "", now))
+            "INSERT INTO sittings(date_label, main_contact, stype, venue, created_ts) VALUES(?,?,?,?,?)",
+            (date_label or "", main or "", stype or "", venue or "", now))
         sid = cur.lastrowid
         for m in members or []:
             code = (m.get("contact") or "").strip()
@@ -57,10 +66,13 @@ def create_sitting(date_label: str, main: str, members: list) -> int:
             c.execute("INSERT INTO sitting_members(sitting_id,contact,role,stand,sent) "
                       "VALUES(?,?,?,?,0)",
                       (sid, code, m.get("role", "peer"), m.get("stand", "equal")))
-    # 実績イベント(入力ゼロ): 主賓客の来店 + 紹介
+    # 実績イベント(入力ゼロ): 主賓客の来店/同伴 + 紹介
     if main:
         try:
-            db.set_last_visit(main)
+            if stype in ("", "dohan"):   # 店内お席・同伴(店内に着地)は来店扱い
+                db.set_last_visit(main)
+            if stype == "dohan":
+                db.add_event(main, "dohan", f"{main} 同伴" + (f"({venue})" if venue else ""), "confirmed")
         except Exception:
             pass
     for m in members or []:
@@ -109,9 +121,22 @@ def _name(code: str) -> str:
     return (c.get("nickname") or "").strip() or code
 
 
-def orei_text(role: str, stand: str, name: str, main: str) -> str:
-    """役割×立場のテンプレ御礼（即時・generic上等）。"""
+def orei_text(role: str, stand: str, name: str, main: str,
+              stype: str = "", venue: str = "") -> str:
+    """役割×立場のテンプレ御礼（即時・generic上等）。stype/venueで店外系の文面に切替。"""
+    _v = (venue or "").strip()
     if role == "customer":
+        if stype == "dohan":
+            _h = (f"{_v}、とても美味しかったです！" if _v else "")
+            if stand == "senior":
+                return f"{name}、本日は同伴にお付き合いくださりありがとうございました。{_h}そのあとのお席まで、楽しい夜でした。またご一緒できますように。"
+            return f"{name}、今日は同伴ありがとうございました！{_h}そのあとのお席も楽しかったです。また行きましょうね。"
+        if stype == "after":
+            _h = (f"{_v}、" if _v else "")
+            return f"{name}、今夜は{_h}アフターまでありがとうございました！ゆっくりお話できて嬉しかったです。おやすみなさい。"
+        if stype == "gaiso":
+            _h = (f"{_v}、" if _v else "")
+            return f"{name}、今日は{_h}ご一緒させていただきありがとうございました！とても楽しかったです。今度はお店にもぜひ。"
         if stand == "senior":
             return f"{name}、本日はお越しくださり誠にありがとうございました。またお目にかかれますよう、心よりお待ちしております。"
         return f"{name}、本日はありがとうございました。またお会いできる日を楽しみにしております。"
@@ -147,7 +172,8 @@ def generate_orei(sid: int) -> list:
             "role": m["role"], "role_label": ROLE_LABEL.get(m["role"], m["role"]),
             "stand": m.get("stand", "equal"),
             "sent": m.get("sent", 0),
-            "text": orei_text(m["role"], m.get("stand", "equal"), nm, main),
+            "text": orei_text(m["role"], m.get("stand", "equal"), nm, main,
+                              s.get("stype", "") or "", s.get("venue", "") or ""),
         })
     out.sort(key=lambda x: order.get(x["stand"], 1))
     return out
