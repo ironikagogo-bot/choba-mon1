@@ -517,28 +517,23 @@ def inbox():
     # (短文の本物の連投を巻き込まないよう10字以上のみ対象)
     urgent_keys = {(m["contact"], (m["text"] or "").strip())
                    for m in kept if m["category"] == "urgent"}
-    # v57 2欄化: ラリー欄を廃止。全欄「1相手1カード」。
-    # 置き場所の決定: 即対応(urgentあり) / 会話中(直近の自分の返信への続き) / まとめ箱。
-    # 店内(kind=staff)と未紐付け(unlinked)は従来どおりメッセージ単位で urgent/batch 配列に残す。
-    TALK_WINDOW = int(os.environ.get("CHOUBA_TALK_WINDOW_MIN", "45")) * 60
-    _now = time.time()
-    _groupable = []
     for m in kept:
         _c = db.get_contact(m["contact"]) or {}
         m["rank"] = _c.get("rank", "B")
         m["unlinked"] = 1 if (_c.get("linked") == 0) else 0
         m["kind"] = _c.get("kind") or "customer"
         m["flag_ero"] = int(_c.get("flag_ero") or 0)
-        if m["category"] == "rally":
+        if m["category"] == "urgent":
+            out["urgent"].append(m)
+        elif m["category"] == "rally":
             key = (m["contact"], (m["text"] or "").strip())
             if len(key[1]) >= 10 and key in urgent_keys:
                 db.set_status(m["id"], "skipped")
                 continue
-        if m["kind"] == "staff" or m["unlinked"]:
-            (out["urgent"] if m["category"] == "urgent" else out["batch"]).append(m)
+            out["rally"].setdefault(m["contact"], []).append(m)
         else:
-            _groupable.append(m)
-    # あとでにした分(deferred)もその相手のカードに合流(未紐付け/店内は従来どおりまとめ箱配列へ)
+            out["batch"].append(m)
+    # 「あとで」にした分はまとめ箱に残す(=あとで箱の実体。夜のまとめ返信で一緒に片付ける)
     try:
         with db.conn() as c:
             _defs = [dict(r) for r in c.execute(
@@ -549,36 +544,13 @@ def inbox():
             m["unlinked"] = 1 if (_c.get("linked") == 0) else 0
             m["kind"] = _c.get("kind") or "customer"
             m["flag_ero"] = int(_c.get("flag_ero") or 0)
-            m["deferred"] = 1
-            if m["kind"] == "staff" or m["unlinked"]:
-                m["reason"] = "あとでにした分"
-                out["batch"].append(m)
-            else:
-                _groupable.append(m)
+            m["reason"] = "あとでにした分"
+            out["batch"].append(m)
+        out["batch"].sort(key=lambda x: x.get("ts") or 0)
     except Exception:
         pass
-    # 相手ごとに束ねる
-    _by = {}
-    for m in sorted(_groupable, key=lambda x: x.get("ts") or 0):
-        _by.setdefault(m["contact"], []).append(m)
-    groups = []
-    for _contact, _lst in _by.items():
-        _open = [x for x in _lst if not x.get("deferred")]
-        _base = _open or _lst
-        # 会話中判定: 直近の自分の返信がTALK_WINDOW内 かつ その後に受信がある
-        _mode = "batch"
-        if any(x["category"] == "urgent" for x in _base):
-            _mode = "urgent"
-        else:
-            try:
-                with db.conn() as c:
-                    _r = c.execute("SELECT ts FROM sent_replies WHERE contact=? ORDER BY ts DESC LIMIT 1",
-                                   (_contact,)).fetchone()
-                if _r and (_now - (_r["ts"] or 0)) <= TALK_WINDOW and                         any((x.get("ts") or 0) >= (_r["ts"] or 0) for x in _base):
-                    _mode = "talk"
-            except Exception:
-                pass
-        # 自分の返信(帳場経由)を時系列で挟む
+    # ラリーに自分の返信(帳場経由)を時系列で挟む=「連投」ではなく実際の往復として見せる
+    for _contact, _lst in out["rally"].items():
         try:
             _first = min((x["ts"] or 0) for x in _lst)
             with db.conn() as c:
@@ -590,16 +562,6 @@ def inbox():
             _lst.sort(key=lambda x: x.get("ts") or 0)
         except Exception:
             pass
-        _last = [x for x in _lst if not x.get("own")][-1]
-        groups.append({"contact": _contact, "mode": _mode,
-                       "rank": _last.get("rank", "B"), "kind": _last.get("kind", "customer"),
-                       "flag_ero": _last.get("flag_ero", 0),
-                       "has_deferred": 1 if any(x.get("deferred") for x in _lst) else 0,
-                       "first_ts": min((x.get("ts") or 0) for x in _lst if not x.get("own")),
-                       "msgs": _lst})
-    groups.sort(key=lambda g: g["first_ts"])
-    out["groups"] = groups
-    out["batch"].sort(key=lambda x: x.get("ts") or 0)
     return out
 
 
