@@ -259,6 +259,10 @@ function paintEdit(){
     +'</div></div>'
     +'<div style="font-size:10.5px;color:#8D8674;padding:9px 16px 12px;line-height:1.75">確認する＝下ネタを検知したら受信箱で「いなしにする？」と聞く（既定）／いなし＝常に乗らず・拒まず受け流す／ノリOK＝この相手のノリは芸なので何もしない。ガチ恋ON＝恋愛の燃料を足さず、突き放しもせず、距離一定で返す。</div>'
     +'</div>'
+    +(isNew?'':'<div class="glabel">📖 この相手のトーク履歴を取り込む（いちばん効く設定）</div>'
+      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの「トーク履歴を送信」で出た .txt を入れると、この相手への口調を覚えて下書きが一気にあなたらしくなります。txt内の表示名は自動でこのカードに紐付けされます。</div>'
+      +'<div class="fg"><div class="fi"><label>あなたの表示名</label><input id="ef_selfname" value="'+esc(window.SELFNAME||"")+'" placeholder="トーク内でのあなたの名前"></div>'
+      +'<div class="fi"><input type="file" id="ef_talkfile" accept=".txt" style="text-align:left;font-size:12px"><button class="btn mini" onclick="importTalk()">取り込む</button></div></div>')
     +'<button class="morebtn" onclick="EF_MORE=!EF_MORE;renderEdit()">'+(EF_MORE?'▴ 詳しく設定を閉じる':'▾ 詳しく設定（任意・空欄でも全部動きます）')+'</button>'
     +'<div style="display:'+(EF_MORE?'block':'none')+'">'
     +'<div class="glabel">名前・連絡先</div><div class="fg">'
@@ -277,10 +281,6 @@ function paintEdit(){
       +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの顧客に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
       +'<div class="fg">'+(aliasList||'<div class="aliasrow" style="color:#9aa1aa">未紐付け</div>')
       +'<div class="fi"><input id="ef_alias" placeholder="LINE表示名を追加"><button class="btn mini" onclick="addAlias()">追加</button></div></div>')
-    +(isNew?'':'<div class="glabel">📖 この相手のトーク履歴を取り込む</div>'
-      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの「トーク履歴を送信」で出た .txt を入れると、この相手への口調を覚えます。txt内の表示名は自動でこのカードに紐付けされます。</div>'
-      +'<div class="fg"><div class="fi"><label>あなたの表示名</label><input id="ef_selfname" value="'+esc(window.SELFNAME||"")+'" placeholder="トーク内でのあなたの名前"></div>'
-      +'<div class="fi"><input type="file" id="ef_talkfile" accept=".txt" style="text-align:left;font-size:12px"><button class="btn mini" onclick="importTalk()">取り込む</button></div></div>')
     +(attrItems?'<div class="glabel">ユーザー定義属性</div><div class="fg">'+attrItems+'</div>':'')
     +'<div class="glabel" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→下書きで活かす）</div><div class="fg"><div class="fi"><textarea id="ef_pos" placeholder="例: 酒癖よし、日本酒好き、聞き上手">'+esc(EF.note_pos)+'</textarea></div></div>'
     +'<div class="glabel" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には絶対出しません）</div><div class="fg"><div class="fi"><textarea id="ef_neg" placeholder="例: ケチ、恐妻家">'+esc(EF.note_neg)+'</textarea></div></div>'

@@ -533,6 +533,22 @@ def inbox():
             out["rally"].setdefault(m["contact"], []).append(m)
         else:
             out["batch"].append(m)
+    # 「あとで」にした分はまとめ箱に残す(=あとで箱の実体。夜のまとめ返信で一緒に片付ける)
+    try:
+        with db.conn() as c:
+            _defs = [dict(r) for r in c.execute(
+                "SELECT * FROM messages WHERE status='deferred' ORDER BY ts ASC LIMIT 30")]
+        for m in _defs:
+            _c = db.get_contact(m["contact"]) or {}
+            m["rank"] = _c.get("rank", "B")
+            m["unlinked"] = 1 if (_c.get("linked") == 0) else 0
+            m["kind"] = _c.get("kind") or "customer"
+            m["flag_ero"] = int(_c.get("flag_ero") or 0)
+            m["reason"] = "あとでにした分"
+            out["batch"].append(m)
+        out["batch"].sort(key=lambda x: x.get("ts") or 0)
+    except Exception:
+        pass
     # ラリーに自分の返信(帳場経由)を時系列で挟む=「連投」ではなく実際の往復として見せる
     for _contact, _lst in out["rally"].items():
         try:
@@ -608,7 +624,10 @@ def act(mid: int, body: Action):
     # これをしないと連投の残り(古い通)が open のまま残り、コピペ後も同じ会話がカードに再表示され続ける。
     if body.action in ("replied", "stamped"):
         try:
-            for _m in db.open_messages():
+            with db.conn() as c:
+                _thread = [dict(r) for r in c.execute(
+                    "SELECT id, contact, ts FROM messages WHERE status IN ('open','deferred')")]
+            for _m in _thread:
                 if (_m["contact"] == msg["contact"] and _m["id"] != mid
                         and (_m["ts"] or 0) <= (msg["ts"] or 0)):
                     db.set_status(_m["id"], body.action)

@@ -35,7 +35,7 @@ h1{font-family:'Shippori Mincho',serif;font-size:19px;letter-spacing:.38em;margi
 .sec .hint{font-size:10px;color:var(--muted);letter-spacing:0}
 /* カード */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px;margin:0 16px 10px;box-shadow:0 1px 3px rgba(60,50,30,.06)}
-.card.u{border-left:3px solid var(--shu)}
+.card.u{border:2px solid var(--shu);background:#FDF0EC}.card.u.hot{border-color:#7d1f16;background:#FBE4DC}.card.u.hot .alertbar{background:#7d1f16}.card.u .msg{font-weight:600;font-size:15px}.alertbar .el.chip{background:rgba(255,255,255,.22);border-radius:10px;padding:1px 9px;font-weight:700;opacity:1}
 .card.r{border-left:3px solid var(--gold)}
 .row{display:flex;align-items:center;gap:8px}
 .code{font-family:'Shippori Mincho',serif;font-size:15px}
@@ -361,6 +361,12 @@ function draftAreaHtml(mid) {
   return '';
 }
 
+function fmtNeglect(ts) {
+  const mn = Math.max(0, Math.floor((Date.now() / 1000 - ts) / 60));
+  if (mn < 60) return mn + '分 放置';
+  if (mn < 1440) return Math.floor(mn / 60) + '時間 放置';
+  return Math.floor(mn / 1440) + '日 放置';
+}
 function fmtElapsed(ts) {
   const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));
   if (s < 60) return 'たった今';
@@ -450,8 +456,9 @@ function msgCardHtml(m, cls) {
   if (m.unlinked) return unknownCardHtml(m);
   if (m.kind === 'staff') return staffCardHtml(m, cls);
   if (cls === 'u') {
-    return `<div class="card u" id="card-${m.id}">
-      <div class="alertbar"><span class="pulse"></span>要即返信${m.rank === 'S' ? '・S客' : ''}<span class="el">${fmtElapsed(m.ts)}</span></div>
+    const _hot = (Date.now() / 1000 - m.ts) >= 3600;
+    return `<div class="card u${_hot ? ' hot' : ''}" id="card-${m.id}">
+      <div class="alertbar"><span class="pulse"></span>要即返信${m.rank === 'S' ? '・S客' : ''}<span class="el chip">${fmtNeglect(m.ts)}</span></div>
       <div class="row"><span class="code">${esc(m.contact)}</span>${rankChip(m.rank)}<span class="reason">${esc(m.reason)}</span></div>
       <div class="msg">${esc(m.text)}</div>
       ${eroAlarmHtml(m)}
