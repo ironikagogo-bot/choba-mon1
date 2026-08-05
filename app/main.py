@@ -1415,17 +1415,25 @@ def seki_suggest(main: str = ""):
         sc += {"S": 0.5, "A": 0.25}.get(ct.get("rank") or "B", 0.0)
         if code in bolt:
             sc += 1.5
+        # 店内・同業者はデータが無くても候補に残す(御礼の同席入力で必ず使うため)
+        if kind == "staff":
+            sc = max(sc, 0.35)
+        elif kind in ("peer", "excolleague"):
+            sc = max(sc, 0.3)
         if sc <= 0.2:
             continue
         if not role:
-            role = {"customer": "guest", "peer": "peer", "excolleague": "peer", "staff": "help"}.get(kind, "guest")
+            if kind == "staff":
+                role = "report" if ("担当" in code or "ママ" in code) else "help"
+            else:
+                role = {"customer": "guest", "peer": "peer", "excolleague": "peer"}.get(kind, "guest")
         if not reasons:
             reasons.append({"peer": "同業者", "excolleague": "同業者", "staff": "店内"}.get(kind, ""))
         members.append({"code": code, "kind": kind, "role": role, "score": round(sc, 2),
                         "bolt": 1 if code in bolt else 0,
                         "reason": "・".join([r for r in reasons if r])[:34]})
     members.sort(key=lambda x: -x["score"])
-    return {"mains": mains[:8], "members": members[:10]}
+    return {"mains": mains[:8], "members": members[:14]}
 
 @app.post("/api/sittings/{sid}/sent")
 def sitting_sent(sid: int, body: SentIn):

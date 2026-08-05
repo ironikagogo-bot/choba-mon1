@@ -277,6 +277,9 @@ function orei(sid){
       +'<div class="progbar"><div class="fill" id="ofill" style="width:'+(total?sent/total*100:0)+'%"></div></div>'
       +'<div class="s" id="ocount" style="margin-top:6px"><b>'+sent+'</b> / '+total+' 送信済み</div></div>';
     h+='<div id="olist">'+list.map(oreiRow).join("")+'</div>';
+    if(total&&sent>=total){ h+='<div class="empty" style="text-align:center;color:#5E8A5D;font-weight:700">✓ 全員に送りました</div>'; }
+    h+='<button class="btn" style="margin-top:14px" data-go="home">‹ 実績トップへ戻る</button>';
+    h+='<button class="btn ghost" style="margin-top:8px" data-go="record">＋ 続けて別のお席を記録</button>';
     app.innerHTML=h;
     app._sid=sid; app._total=total;
   });
