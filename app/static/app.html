@@ -114,6 +114,7 @@ nav button.on .ico svg{stroke-width:2}
 nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);color:#fff;font-size:9px;font-weight:700;border-radius:8px;min-width:15px;height:15px;line-height:15px;text-align:center;padding:0 3px}
 .embed{width:100%;height:calc(100dvh - var(--nav-h) - env(safe-area-inset-bottom) - 26px);border:none;display:block;background:var(--bg)}
 .toast{position:fixed;bottom:calc(var(--nav-h) + env(safe-area-inset-bottom) + 14px);left:50%;transform:translateX(-50%);width:min(380px,88%);background:rgba(43,40,35,.92);color:#fff;border-radius:8px;padding:10px 14px;font-size:12px;text-align:center;z-index:50;display:none}
+body.lockscroll{overflow:hidden;height:100dvh}
 .view{display:none}
 .view.on{display:block}
 .ios-guide{border:1px solid var(--gold);border-radius:8px;background:#FBF7EA;padding:12px;font-size:12px;line-height:2;margin-top:8px}
@@ -189,6 +190,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
   <!-- 受信箱 -->
   <section class="view on" id="view-inbox">
     <div class="demobar" id="demoBar" style="display:none"><span class="t">デモ体験中 — いつでも最初からやり直せます</span><button id="demoResetBtn">🔄 最初からやり直す</button></div>
+    <div id="netaBox" style="display:none"></div>
     <div class="sec shu"><div class="bar"></div><span>即対応</span><div class="rule"></div><span class="hint" id="uHint"></span></div>
     <div id="urgent"></div>
     <div class="sec"><div class="bar"></div><span>まとめ箱</span><div class="rule"></div><span class="hint" id="bHint"></span></div>
@@ -325,6 +327,10 @@ document.querySelectorAll('nav button').forEach((b) => {
     if (b.dataset.view === 'contacts') loadContacts();
     if (b.dataset.view === 'events') loadEvents();
     if (b.dataset.view === 'settings') { refreshPushStatus(); loadProfile(); loadDesk(); }
+    /* iframe埋め込みタブでは外側ページのスクロールを止める(内側と外側の二重スクロールが
+       噛み合って「詰まる」問題の対策)。受信箱・設定は従来どおり外側スクロール */
+    document.body.classList.toggle('lockscroll',
+      ['announce', 'contacts', 'events'].includes(b.dataset.view));
     window.scrollTo(0, 0);
   });
 });
@@ -594,6 +600,30 @@ function rallyGroupHtml(contact, msgs) {
   </div>`;
 }
 
+
+/* 📰 今日のネタ帳(会社ニュース連携) */
+async function loadNeta() {
+  const box = $('#netaBox');
+  if (!box) return;
+  let items = [];
+  try { items = (await api('/api/news')).items || []; } catch (e) { return; }
+  if (!items.length) { box.style.display = 'none'; return; }
+  const rows = items.slice(0, 5).map((n) => `
+    <div style="background:#fff;border:1px solid #E4DCCB;border-radius:11px;padding:9px 12px;margin-top:7px">
+      <div style="display:flex;align-items:center;gap:7px;font-size:12px">
+        <b>${esc(n.contact)}</b><span style="color:#98876a;font-size:10.5px">${esc(n.company)}</span>
+        <button data-act="netadel" data-nid="${n.id}" style="margin-left:auto;border:none;background:none;color:#b0a488;font-size:14px">✕</button>
+      </div>
+      <div style="font-size:12.5px;margin-top:3px">${n.link ? `<a href="${esc(n.link)}" target="_blank" rel="noopener" style="color:#3d3122">${esc(n.title)}</a>` : esc(n.title)}</div>
+      ${n.opener ? `<div style="font-size:12px;color:#5E8A5D;background:#F0F6EC;border-radius:8px;padding:6px 9px;margin-top:5px">💬 ${esc(n.opener)}</div>
+      <button class="btn ghost" data-act="netacopy" data-text="${esc(n.opener)}" style="margin-top:6px;padding:7px">この一言をコピー</button>` : ''}
+    </div>`).join('');
+  box.innerHTML = `
+    <div class="sec" style="color:#6b5d45"><div class="bar" style="background:#A8892F"></div><span>📰 今日のネタ帳</span><div class="rule"></div><span class="hint">${items.length}件</span></div>
+    ${rows}`;
+  box.style.display = 'block';
+}
+
 let lastInboxJson = '';
 async function loadInbox(force) {
   let data;
@@ -734,6 +764,15 @@ document.addEventListener('click', async (ev) => {
       setTimeout(() => { location.href = 'line://nv/chat'; }, 400);
     }
     loadInbox(true);
+  }
+  if (act === 'netacopy') {
+    try { await navigator.clipboard.writeText(el.dataset.text || ''); toast('コピーしました'); } catch (e) { toast('コピーできませんでした'); }
+    return;
+  }
+  if (act === 'netadel') {
+    try { await api(`/api/news/${el.dataset.nid}/dismiss`, {}); } catch (e) {}
+    loadNeta();
+    return;
   }
   if (act === 'selfgo') {  // 下書きを使わず自分で書く: 対応済みにしてLINEへ(コピーなし)
     try { await api(`/api/messages/${mid}/action`, { action: 'replied' }); } catch (e) {}
@@ -1076,6 +1115,8 @@ async function loadProfile() {
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 loadInbox(true);
 loadDesk();
+loadNeta();
+setInterval(loadNeta, 30 * 60 * 1000);
 setInterval(loadInbox, 8000);
 setInterval(loadDesk, 5000);
 /* LINEから戻ってきた瞬間に最新化(対応済みカードの残像を消す) */

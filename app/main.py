@@ -21,6 +21,13 @@ from .provisioning import linking, MockProvisioner, DeskState
 app = FastAPI(title="帳場 pilot API")
 db.init()
 linking.init()
+if not config.DEMO:
+    try:
+        from . import news as _news
+        _news.ensure()
+        _news.start_scheduler()
+    except Exception:
+        pass
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -74,6 +81,7 @@ def _feature_of(method: str, path: str):
     if method != "POST":
         return None
     static = {"/api/quickdraft": "quickdraft", "/api/admin/wipe": "wipe",
+              "/api/news/refresh": "news_refresh",
               "/api/transfer": "transfer", "/api/inbox/classify": "classify",
               "/api/profile/import": "talk_import", "/api/sittings": "seki_record",
               "/api/campaign/generate": "campaign_generate"}
@@ -110,6 +118,7 @@ FEATURE_LABELS = {
     "talk_import": "トーク履歴取り込み", "classify": "未登録の仕分け", "alias_add": "紐付け追加",
     "alias_remove": "紐付け解除", "kind_change": "種別変更", "contact_edit": "カード編集",
     "contact_delete": "連絡先削除", "transfer": "移籍", "wipe": "データ消去",
+    "news_refresh": "ネタ帳の更新",
 }
 
 
@@ -695,6 +704,24 @@ def act(mid: int, body: Action):
             db.add_event(msg["contact"], "visit", f"{msg['contact']} 来店(仮)", "tentative")
         elif ("同伴" in _r) or ("アフター" in _r):
             db.add_event(msg["contact"], "dohan", f"{msg['contact']} 同伴(仮)", "tentative")
+    return {"ok": True}
+
+
+# ---------- 📰 会社ニュース連携(ネタ帳) ----------
+@app.get("/api/news")
+def news_list():
+    from . import news
+    return {"items": news.list_items()}
+
+@app.post("/api/news/refresh")
+def news_refresh():
+    from . import news
+    return news.refresh(force=True)
+
+@app.post("/api/news/{nid}/dismiss")
+def news_dismiss(nid: int):
+    from . import news
+    news.dismiss(nid)
     return {"ok": True}
 
 
