@@ -1278,6 +1278,105 @@ def sitting_orei(sid: int):
         raise HTTPException(404)
     return {"orei": sittings.generate_orei(sid)}
 
+@app.get("/api/seki/suggest")
+def seki_suggest(main: str = ""):
+    """お席記録のサジェスト(本文不使用・件数と記録のみ)。
+    mains: 主賓候補=そろそろ度(周期×経過)3 + 曜日癖1 + やり取り量2 + ランク + ⚡今夜LINE2。
+    members: mainとの同席共起3(過去の役割も推測) + やり取り量1.5 + ランク + ⚡1.5。"""
+    import datetime
+    from . import sittings as _sit
+    _sit.ensure()
+    now = time.time()
+    with db.conn() as c:
+        _contacts = [dict(r) for r in c.execute(
+            "SELECT code, rank, kind, cycle_days, last_visit_ts FROM contacts WHERE linked!=0")]
+        traffic = {r["contact"]: r["n"] for r in c.execute(
+            "SELECT contact, COUNT(*) n FROM messages WHERE ts>=? GROUP BY contact", (now - 14 * 86400,))}
+        bolt = {r["contact"] for r in c.execute(
+            "SELECT DISTINCT contact FROM messages WHERE ts>=?", (now - 12 * 3600,))}
+        sits = [dict(r) for r in c.execute("SELECT id, main_contact, created_ts FROM sittings")]
+        mems = [dict(r) for r in c.execute("SELECT sitting_id, contact, role FROM sitting_members")]
+    by_sit = {}
+    for m in mems:
+        by_sit.setdefault(m["sitting_id"], []).append(m)
+    today_wd = datetime.datetime.now().weekday()
+
+    mains = []
+    for ct in _contacts:
+        if (ct.get("kind") or "customer") != "customer":
+            continue
+        code = ct["code"]
+        sc, reasons = 0.0, []
+        cyc, lv = (ct.get("cycle_days") or 0), (ct.get("last_visit_ts") or 0)
+        if cyc and lv:
+            due = (now - lv) / 86400 / cyc
+            if due >= 0.8:
+                sc += 3
+                reasons.append(f"そろそろ来る頃（{int((now-lv)/86400)}日経過）")
+        my_sits = [s for s in sits if s["main_contact"] == code]
+        if sum(1 for s in my_sits
+               if datetime.datetime.fromtimestamp(s["created_ts"]).weekday() == today_wd) >= 2:
+            sc += 1
+            reasons.append("この曜日に来がち")
+        tr = traffic.get(code, 0)
+        if tr:
+            sc += min(tr / 5.0, 1.0) * 2
+            if tr >= 8:
+                reasons.append("最近やり取りが厚い")
+        sc += {"S": 1.0, "A": 0.5}.get(ct.get("rank") or "B", 0.0)
+        if code in bolt:
+            sc += 2
+        if not reasons:
+            _r = {"S": "S客", "A": "A客"}.get(ct.get("rank") or "B", "")
+            if _r:
+                reasons.append(_r)
+        mains.append({"code": code, "score": round(sc, 2), "bolt": 1 if code in bolt else 0,
+                      "reason": "・".join(reasons)[:34]})
+    mains.sort(key=lambda x: -x["score"])
+
+    members = []
+    main_sids = {s["id"] for s in sits if main and s["main_contact"] == main}
+    cooc, role_pref = {}, {}
+    for sid in main_sids:
+        for m in by_sit.get(sid, []):
+            if m["contact"] == main:
+                continue
+            cooc[m["contact"]] = cooc.get(m["contact"], 0) + 1
+            role_pref.setdefault(m["contact"], {})
+            role_pref[m["contact"]][m["role"]] = role_pref[m["contact"]].get(m["role"], 0) + 1
+    for ct in _contacts:
+        code = ct["code"]
+        if code == main:
+            continue
+        kind = ct.get("kind") or "customer"
+        sc, reasons, role = 0.0, [], None
+        cc = cooc.get(code, 0)
+        if cc:
+            sc += min(cc, 3)
+            rp = max(role_pref[code], key=role_pref[code].get)
+            role = rp
+            _tag = {"intro": "紹介者だった", "after": "アフターで", "help": "ヘルプ"}.get(rp, "")
+            reasons.append(f"同席{cc}回" + (f"（{_tag}）" if _tag else ""))
+        tr = traffic.get(code, 0)
+        if tr:
+            sc += min(tr / 5.0, 1.0) * 1.5
+            if tr >= 8 and not reasons:
+                reasons.append("最近やり取りが厚い")
+        sc += {"S": 0.5, "A": 0.25}.get(ct.get("rank") or "B", 0.0)
+        if code in bolt:
+            sc += 1.5
+        if sc <= 0.2:
+            continue
+        if not role:
+            role = {"customer": "guest", "peer": "peer", "excolleague": "peer", "staff": "help"}.get(kind, "guest")
+        if not reasons:
+            reasons.append({"peer": "同業者", "excolleague": "同業者", "staff": "店内"}.get(kind, ""))
+        members.append({"code": code, "kind": kind, "role": role, "score": round(sc, 2),
+                        "bolt": 1 if code in bolt else 0,
+                        "reason": "・".join([r for r in reasons if r])[:34]})
+    members.sort(key=lambda x: -x["score"])
+    return {"mains": mains[:8], "members": members[:10]}
+
 @app.post("/api/sittings/{sid}/sent")
 def sitting_sent(sid: int, body: SentIn):
     from . import sittings

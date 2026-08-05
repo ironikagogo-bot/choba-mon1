@@ -83,6 +83,9 @@ input.tf{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 
 .sentmark{width:100%;margin-top:8px;padding:9px;border-radius:7px;font-size:12.5px;font-weight:800;text-align:center;color:var(--ok);background:var(--oksoft);border:1px solid #C4D8C0}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:rgba(43,40,35,.94);color:#fff;border-radius:8px;padding:10px 14px;font-size:12px;z-index:9;display:none}
 .hint{font-size:11px;color:var(--muted);line-height:1.6;background:var(--goldsoft);border-radius:8px;padding:9px 11px;margin-top:8px}
+.chip.sug{text-align:left;border-color:#d8c48e;background:#FFFDF6}
+.chip .why{display:block;font-size:8.5px;color:#a8905a;margin-top:1px;font-weight:400}
+.chip .why .bolt{color:#c07b2a;font-weight:700;font-style:normal}
 </style></head>
 <body>
 <div id="app"></div>
@@ -147,8 +150,40 @@ function mainName(code){var c=contactsCache.filter(function(x){return x.code===c
 
 /* ---------------- RECORD ---------------- */
 var rec={main:"",mainStand:"equal",members:[],dateLabel:"",stype:"",venue:"",dohanVenue:"",afterVenue:""};
+var SUG={mains:[],members:[]};
+var REC_FOLD=false;
+var ROLE2CLS={intro:"intro",guest:"guest",peer:"peer",after:"afterhost",help:"staff",report:"staff",customer:"guest"};
+function fetchSug(){
+  api("/api/seki/suggest"+(rec.main?("?main="+encodeURIComponent(rec.main)):"")).then(function(r){
+    SUG=r||{mains:[],members:[]}; drawRecord();
+  }).catch(function(){});
+}
+function sugChipMain(m){
+  var on=rec.main===m.code;
+  return '<button class="chip sug'+(on?" on":"")+'" data-main="'+esc(m.code)+'">'+esc(dispName(m.code))
+    +'<span class="why">'+esc(m.reason||"")+(m.bolt?' <b class="bolt">＋⚡今夜LINE</b>':'')+'</span></button>';
+}
+function sugChipMem(m){
+  var on=rec.members.some(function(x){return x.contact===m.code;});
+  var cls=ROLE2CLS[m.role]||"guest";
+  return '<button class="chip sug'+(on?" on":"")+'" data-add="'+esc(m.code)+'" data-cls="'+cls+'">'+esc(dispName(m.code))
+    +'<span class="why">'+esc(m.reason||"")+(m.bolt?' <b class="bolt">＋⚡今夜LINE</b>':'')+'</span></button>';
+}
+function searchChips(q,pool,attr){
+  q=(q||"").trim();
+  if(!q) return "";
+  return pool.filter(function(c){
+    return c.code.indexOf(q)>=0||((c.nickname||"").indexOf(q)>=0);
+  }).slice(0,12).map(function(c){
+    var on=(attr==="main")?(rec.main===c.code):rec.members.some(function(x){return x.contact===c.code;});
+    var cls=(attr==="main")?"":({peer:"peer",excolleague:"peer",staff:"staff"}[c.kind]||"guest");
+    return '<button class="chip'+(on?" on":"")+'" data-'+(attr==="main"?'main':'add')+'="'+esc(c.code)+'"'
+      +(attr==="main"?'':' data-cls="'+cls+'"')+'>'+esc(dispName(c.code))+'</button>';
+  }).join("");
+}
 function record(){
   rec={main:"",mainStand:"equal",members:[],dateLabel:"今夜",stype:"",venue:"",dohanVenue:"",afterVenue:""};
+  SUG={mains:[],members:[]}; REC_FOLD=false; fetchSug();
   Promise.all([api("/api/contacts"),api("/api/roster?kinds=peer,excolleague,staff")]).then(function(res){
     contactsCache=res[0]||[]; rosterCache=(res[1]||{}).roster||[];
     drawRecord();
@@ -169,15 +204,28 @@ function drawRecord(){
   if(rec.stype==="gaiso"){ h+='<label class="f">行った場所</label><input class="tf" id="venue" value="'+esc(rec.venue)+'" placeholder="例: ○○カントリー / 鮨さいとう">'; }
   h+='<label class="f">同伴のお店（あれば・空欄=同伴なし）</label><input class="tf" id="dvenue" value="'+esc(rec.dohanVenue)+'" placeholder="例: 鮨さいとう">';
   h+='<label class="f">アフターのお店（あれば・空欄=アフターなし）</label><input class="tf" id="avenue" value="'+esc(rec.afterVenue)+'" placeholder="例: BAR ○○">';
-  h+='<label class="f">主賓客（お席の主役）</label><div class="chips">'
-    +custs.map(function(c){var on=rec.main===c.code;return '<button class="chip'+(on?" on":"")+'" data-main="'+esc(c.code)+'">'+esc(dispName(c.code))+'</button>';}).join("")+'</div>';
-  h+='<label class="f">同席メンバーを足す（タップで追加）</label>';
+  var _mainChips = SUG.mains.length
+    ? SUG.mains.map(sugChipMain).join("")
+    : custs.slice(0,10).map(function(c){var on=rec.main===c.code;return '<button class="chip'+(on?" on":"")+'" data-main="'+esc(c.code)+'">'+esc(dispName(c.code))+'</button>';}).join("");
+  h+='<label class="f">主賓客（お席の主役）'+(SUG.mains.length?'<span style="font-weight:400"> — 記録から「そろそろ・よく来る」順</span>':'')+'</label>';
+  h+='<div class="chips">'+_mainChips+'</div>';
+  h+='<input class="tf" id="msearch" placeholder="🔍 名前で探す（全員から）" autocomplete="off" style="margin-top:8px">';
+  h+='<div class="chips" id="msres" style="margin-top:6px"></div>';
+  var _selfSel=function(m){return m.code!==rec.main;};
+  var _memChips=(SUG.members||[]).filter(_selfSel).map(sugChipMem).join("");
+  h+='<label class="f">同席メンバー'+(rec.main&&SUG.members.length?'<span style="font-weight:400"> — '+esc(dispName(rec.main))+'と過去よく一緒の順</span>':'（タップで追加）')+'</label>';
+  if(_memChips){ h+='<div class="chips">'+_memChips+'</div>'; }
+  h+='<input class="tf" id="gsearch" placeholder="🔍 名前で探す（全員から）" autocomplete="off" style="margin-top:8px">';
+  h+='<div class="chips" id="gsres" style="margin-top:6px"></div>';
+  h+='<button class="morebtn" data-foldall="1" style="margin-top:8px">'+(REC_FOLD?'▴ 一覧を閉じる':'▾ 一覧から選ぶ（顧客・同業者・店内）')+'</button>';
   var _others=custs.filter(function(c){return c.code!==rec.main;});
+  h+='<div style="display:'+(REC_FOLD?'block':'none')+'">';
   h+='<div class="grp">紹介者（主賓を連れてきた人）</div><div class="chips">'+chipList(_others,"intro")+'</div>';
   h+='<div class="grp">同席した顧客</div><div class="chips">'+chipList(_others,"guest")+'</div>';
   h+='<div class="grp">同業者（店外）</div><div class="chips">'+chipList(peers,"peer")+'</div>';
   h+='<div class="grp">アフター先のお店の人（御礼を送る慣例）</div><div class="chips">'+chipList(peers,"afterhost")+'</div>';
   h+='<div class="grp">店内（ヘルプ・担当ママ）</div><div class="chips">'+chipList(staff,"staff")+'</div>';
+  h+='</div>';
   h+='<div class="sec"><span class="bar"></span><span>選択中メンバー</span><div class="rule"></div></div>';
   if(!rec.members.length){ h+='<div class="empty">上のチップをタップして追加してください。役割・立場はチップをタップで切替できます。</div>'; }
   else { h+=rec.members.map(memHtml).join(""); }
@@ -188,6 +236,14 @@ function drawRecord(){
   var _ve=document.getElementById("venue"); if(_ve){_ve.addEventListener("input",function(e){rec.venue=e.target.value;});}
   var _dv=document.getElementById("dvenue"); if(_dv){_dv.addEventListener("input",function(e){rec.dohanVenue=e.target.value;});}
   var _av=document.getElementById("avenue"); if(_av){_av.addEventListener("input",function(e){rec.afterVenue=e.target.value;});}
+  var _ms=document.getElementById("msearch");
+  if(_ms){_ms.addEventListener("input",function(e){
+    document.getElementById("msres").innerHTML=searchChips(e.target.value,custs,"main");
+  });}
+  var _gs=document.getElementById("gsearch");
+  if(_gs){_gs.addEventListener("input",function(e){
+    document.getElementById("gsres").innerHTML=searchChips(e.target.value,custs.concat(peers).concat(staff),"add");
+  });}
 }
 function chipList(arr,cls){
   return arr.map(function(c){
@@ -239,12 +295,13 @@ function oreiRow(p){
 
 /* ---------------- events ---------------- */
 document.addEventListener("click",function(ev){
-  var t=ev.target.closest("[data-go],[data-main],[data-add],[data-role],[data-stand],[data-rm],[data-record],[data-sit],[data-send],[data-anni],[data-stype]");
+  var t=ev.target.closest("[data-go],[data-main],[data-add],[data-role],[data-stand],[data-rm],[data-record],[data-sit],[data-send],[data-anni],[data-stype],[data-foldall]");
   if(!t) return;
   if(t.dataset.go){ nav(t.dataset.go); return; }
   if(t.dataset.sit){ nav("orei",Number(t.dataset.sit)); return; }
   if(t.hasOwnProperty("dataset")&&t.dataset.anni!==undefined){ copyText(t.dataset.anni); var a=t.closest(".anni"); if(a){a.classList.add("done");} t.textContent="済"; t.classList.add("ok"); toast("お祝いをコピーしました"); return; }
-  if(t.dataset.main!==undefined){ rec.main=t.dataset.main; rec.mainStand=stdOf(t.dataset.main); drawRecord(); return; }
+  if(t.dataset.foldall){ REC_FOLD=!REC_FOLD; drawRecord(); return; }
+  if(t.dataset.main!==undefined){ rec.main=t.dataset.main; rec.mainStand=stdOf(t.dataset.main); drawRecord(); fetchSug(); return; }
   if(t.dataset.add!==undefined){
     var code=t.dataset.add, cls=t.dataset.cls;
     var idx=rec.members.map(function(m){return m.contact;}).indexOf(code);
