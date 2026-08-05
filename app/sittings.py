@@ -14,8 +14,10 @@ CREATE TABLE IF NOT EXISTS sittings(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   date_label TEXT DEFAULT '',
   main_contact TEXT DEFAULT '',
-  stype TEXT DEFAULT '',       -- ''=お席(店内) / dohan=同伴 / after=アフター / gaiso=店外(食事・ゴルフ等)
-  venue TEXT DEFAULT '',       -- 行ったお店・場所(任意)
+  stype TEXT DEFAULT '',       -- ''=店内お席あり / gaiso=店外のみ(食事・ゴルフ等)
+  venue TEXT DEFAULT '',       -- 店外のみの行き先(任意)
+  dohan_venue TEXT DEFAULT '', -- 同伴のお店(空=同伴なし)
+  after_venue TEXT DEFAULT '', -- アフターのお店(空=アフターなし)
   created_ts REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sitting_members(
@@ -35,7 +37,8 @@ def ensure():
         return
     with db.conn() as c:
         c.executescript(_SCHEMA)
-        for ddl in ("stype TEXT DEFAULT ''", "venue TEXT DEFAULT ''"):
+        for ddl in ("stype TEXT DEFAULT ''", "venue TEXT DEFAULT ''",
+                    "dohan_venue TEXT DEFAULT ''", "after_venue TEXT DEFAULT ''"):
             try:
                 c.execute(f"ALTER TABLE sittings ADD COLUMN {ddl}")
             except Exception:
@@ -43,21 +46,25 @@ def ensure():
     _READY = True
 
 
-ROLE_LABEL = {"customer": "主賓客", "intro": "紹介者", "peer": "同業者",
-              "after": "アフター", "help": "ヘルプ", "report": "担当ママへ共有"}
+ROLE_LABEL = {"customer": "主賓客", "intro": "紹介者", "guest": "同席顧客", "peer": "同業者",
+              "after": "アフター先のお店", "help": "ヘルプ", "report": "担当ママへ共有"}
 
 
 def create_sitting(date_label: str, main: str, members: list,
-                   stype: str = "", venue: str = "") -> int:
+                   stype: str = "", venue: str = "",
+                   dohan_venue: str = "", after_venue: str = "") -> int:
     """members = [{contact, role, stand}]。主賓客は role=customer で含める。
-    stype: ''=お席(店内)/dohan=同伴/after=アフター/gaiso=店外。venue=行ったお店(任意)。
+    stype: ''=店内お席あり / gaiso=店外のみ。venue=店外のみの行き先。
+    dohan_venue/after_venue: 同伴・アフターのお店(空=なし)。同じ夜に両方あってよい。
     来店/同伴/紹介の実績イベントも自動記録。"""
     ensure()
     now = time.time()
     with db.conn() as c:
         cur = c.execute(
-            "INSERT INTO sittings(date_label, main_contact, stype, venue, created_ts) VALUES(?,?,?,?,?)",
-            (date_label or "", main or "", stype or "", venue or "", now))
+            "INSERT INTO sittings(date_label, main_contact, stype, venue, dohan_venue, after_venue, created_ts) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (date_label or "", main or "", stype or "", venue or "",
+             dohan_venue or "", after_venue or "", now))
         sid = cur.lastrowid
         for m in members or []:
             code = (m.get("contact") or "").strip()
@@ -69,10 +76,10 @@ def create_sitting(date_label: str, main: str, members: list,
     # 実績イベント(入力ゼロ): 主賓客の来店/同伴 + 紹介
     if main:
         try:
-            if stype in ("", "dohan"):   # 店内お席・同伴(店内に着地)は来店扱い
+            if stype != "gaiso":   # 店内お席ありは来店扱い
                 db.set_last_visit(main)
-            if stype == "dohan":
-                db.add_event(main, "dohan", f"{main} 同伴" + (f"({venue})" if venue else ""), "confirmed")
+            if (dohan_venue or "").strip():
+                db.add_event(main, "dohan", f"{main} 同伴({dohan_venue})", "confirmed")
         except Exception:
             pass
     for m in members or []:
@@ -122,27 +129,42 @@ def _name(code: str) -> str:
 
 
 def orei_text(role: str, stand: str, name: str, main: str,
-              stype: str = "", venue: str = "") -> str:
-    """役割×立場のテンプレ御礼（即時・generic上等）。stype/venueで店外系の文面に切替。"""
-    _v = (venue or "").strip()
+              stype: str = "", venue: str = "",
+              dohan_venue: str = "", after_venue: str = "") -> str:
+    """役割×立場のテンプレ御礼。同伴・アフターは独立要素として文に織り込む(同じ夜に両方可)。"""
+    _dv = (dohan_venue or "").strip()
+    _av = (after_venue or "").strip()
+    _gv = (venue or "").strip()
     if role == "customer":
-        if stype == "dohan":
-            _h = (f"{_v}、とても美味しかったです！" if _v else "")
-            if stand == "senior":
-                return f"{name}、本日は同伴にお付き合いくださりありがとうございました。{_h}そのあとのお席まで、楽しい夜でした。またご一緒できますように。"
-            return f"{name}、今日は同伴ありがとうございました！{_h}そのあとのお席も楽しかったです。また行きましょうね。"
-        if stype == "after":
-            _h = (f"{_v}、" if _v else "")
-            return f"{name}、今夜は{_h}アフターまでありがとうございました！ゆっくりお話できて嬉しかったです。おやすみなさい。"
+        parts = []
+        if _dv:
+            parts.append(f"同伴の{_dv}、とても美味しかったです！")
         if stype == "gaiso":
-            _h = (f"{_v}、" if _v else "")
-            return f"{name}、今日は{_h}ご一緒させていただきありがとうございました！とても楽しかったです。今度はお店にもぜひ。"
-        if stand == "senior":
-            return f"{name}、本日はお越しくださり誠にありがとうございました。またお目にかかれますよう、心よりお待ちしております。"
-        return f"{name}、本日はありがとうございました。またお会いできる日を楽しみにしております。"
+            parts.append(f"今日は{_gv}、ご一緒させていただきありがとうございました！とても楽しかったです。"
+                         if _gv else "今日はご一緒させていただきありがとうございました！とても楽しかったです。")
+        elif stand == "senior":
+            parts.append(f"{'そのあとのお席まで、' if _dv else '本日はお越しくださり誠に'}ありがとうございました。")
+        else:
+            parts.append(f"{'そのあとのお席も楽しかったです！' if _dv else '本日はありがとうございました。'}")
+        if _av:
+            parts.append(f"{_av}のアフターまでお付き合いいただき、嬉しかったです。")
+        # 締め
+        if stype == "gaiso":
+            parts.append("今度はお店にもぜひ。")
+        elif stand == "senior":
+            parts.append("またお目にかかれますよう、心よりお待ちしております。")
+        else:
+            parts.append("またお会いできる日を楽しみにしています。")
+        return f"{name}、" + "".join(parts)
     if role == "intro":
-        return f"{name}、本日は{main}さんをご紹介いただきありがとうございました！おかげさまで良いお席になりました、感謝です。"
+        return f"{name}、本日は{main}をご紹介いただきありがとうございました！おかげさまで良いお席になりました、感謝です。"
+    if role == "guest":
+        if stand == "senior":
+            return f"{name}、本日はご一緒させていただきありがとうございました。おかげさまで楽しいお席になりました。またお目にかかれますように。"
+        return f"{name}、今日はご一緒できて嬉しかったです！ありがとうございました。またぜひ。"
     if role == "after":
+        if _av:
+            return f"{name}、今夜はありがとうございました！{_av}、居心地がよくて素敵な時間でした。また寄らせてくださいね。"
         return f"{name}、今夜はお伺いできて嬉しかったです！ありがとうございました。また寄らせてくださいね。"
     if role == "peer":
         if stand == "senior":
@@ -163,6 +185,15 @@ def generate_orei(sid: int) -> list:
     if not s:
         return []
     main = s.get("main_contact", "")
+    # 旧v56形式(stype=dohan/after)は新フィールドに読み替え
+    _sty = s.get("stype", "") or ""
+    _ven = s.get("venue", "") or ""
+    _dv = s.get("dohan_venue", "") or ""
+    _av = s.get("after_venue", "") or ""
+    if _sty == "dohan":
+        _dv, _sty = (_dv or _ven), ""
+    elif _sty == "after":
+        _av, _sty = (_av or _ven), ""
     order = {"senior": 0, "equal": 1, "junior": 2}
     out = []
     for m in s["members"]:
@@ -173,7 +204,7 @@ def generate_orei(sid: int) -> list:
             "stand": m.get("stand", "equal"),
             "sent": m.get("sent", 0),
             "text": orei_text(m["role"], m.get("stand", "equal"), nm, main,
-                              s.get("stype", "") or "", s.get("venue", "") or ""),
+                              _sty, _ven, _dv, _av),
         })
     out.sort(key=lambda x: order.get(x["stand"], 1))
     return out
