@@ -100,45 +100,59 @@ def _make_opener(contact_code: str, company: str, note: str, title: str) -> str:
         return ""
 
 
+_REFRESH_LOCK = threading.Lock()
+
+
 def refresh(force: bool = False) -> dict:
-    """朝バッチ本体。1日1回(JST日付で判定)。force=Trueで即時実行。"""
+    """朝バッチ本体。1日1回(JST日付で判定)。force=Trueで即時実行。
+    v72(9-6): 実行済みマーク(last_day)は処理成功後に書く。途中失敗した日は
+    次回スケジューラ周回(30分後)で再実行される。再入はロックで防止。"""
     ensure()
     now = time.time()
     jst_day = time.strftime("%Y-%m-%d", time.gmtime(now + 9 * 3600))
     if not force and _meta_get("last_day") == jst_day:
         return {"ran": False, "added": 0}
-    _meta_set("last_day", jst_day)
-    with db.conn() as c:
-        rows = [dict(r) for r in c.execute(
-            "SELECT code, company, company_note FROM contacts "
-            "WHERE linked!=0 AND company IS NOT NULL AND company!=''")]
-    added = 0
-    for ct in rows:
-        if added >= _MAX_PER_DAY:
-            break
-        try:
-            items = _fetch_rss(ct["company"])
-        except Exception:
-            continue
-        per = 0
-        for it in items:
-            if per >= _MAX_PER_CONTACT or added >= _MAX_PER_DAY:
+    if not _REFRESH_LOCK.acquire(blocking=False):
+        return {"ran": False, "added": 0, "busy": True}
+    try:
+        with db.conn() as c:
+            rows = [dict(r) for r in c.execute(
+                "SELECT code, company, company_note FROM contacts "
+                "WHERE linked!=0 AND company IS NOT NULL AND company!=''")]
+        added = 0
+        failed = 0
+        for ct in rows:
+            if added >= _MAX_PER_DAY:
                 break
-            if it["ts"] and (now - it["ts"]) > _FRESH_DAYS * 86400:
+            try:
+                items = _fetch_rss(ct["company"])
+            except Exception:
+                failed += 1
                 continue
-            h = hashlib.sha1((ct["code"] + "|" + it["title"]).encode("utf-8")).hexdigest()
-            with db.conn() as c:
-                dup = c.execute("SELECT 1 FROM news_items WHERE hash=?", (h,)).fetchone()
-            if dup:
-                continue
-            opener = _make_opener(ct["code"], ct["company"], ct.get("company_note") or "", it["title"])
-            with db.conn() as c:
-                c.execute("INSERT OR IGNORE INTO news_items(contact,company,title,link,opener,hash,created_ts) "
-                          "VALUES(?,?,?,?,?,?,?)",
-                          (ct["code"], ct["company"], it["title"], it["link"], opener, h, now))
-            per += 1
-            added += 1
-    return {"ran": True, "added": added, "companies": len(rows)}
+            per = 0
+            for it in items:
+                if per >= _MAX_PER_CONTACT or added >= _MAX_PER_DAY:
+                    break
+                if it["ts"] and (now - it["ts"]) > _FRESH_DAYS * 86400:
+                    continue
+                h = hashlib.sha1((ct["code"] + "|" + it["title"]).encode("utf-8")).hexdigest()
+                with db.conn() as c:
+                    dup = c.execute("SELECT 1 FROM news_items WHERE hash=?", (h,)).fetchone()
+                if dup:
+                    continue
+                opener = _make_opener(ct["code"], ct["company"], ct.get("company_note") or "", it["title"])
+                with db.conn() as c:
+                    c.execute("INSERT OR IGNORE INTO news_items(contact,company,title,link,opener,hash,created_ts) "
+                              "VALUES(?,?,?,?,?,?,?)",
+                              (ct["code"], ct["company"], it["title"], it["link"], opener, h, now))
+                per += 1
+                added += 1
+        # 全社失敗(ネットワーク断など)の日はマークせず次周回で再挑戦。一部でも取れたら完了扱い
+        if not rows or failed < len(rows):
+            _meta_set("last_day", jst_day)
+        return {"ran": True, "added": added, "companies": len(rows), "failed": failed}
+    finally:
+        _REFRESH_LOCK.release()
 
 
 def list_items(limit: int = 20) -> list[dict]:

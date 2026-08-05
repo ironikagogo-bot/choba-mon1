@@ -59,8 +59,15 @@ CREATE TABLE IF NOT EXISTS push_subscriptions(  -- Web Push 購読(本人スマ�
 
 @contextmanager
 def conn():
-    c = sqlite3.connect(config.DB_PATH)
+    # v72(9-8): 複数スレッド(受信取り込み・事前生成・ニュース・API)からの書き込みが並ぶため
+    # WAL + busy_timeout を常時設定。'database is locked' の即死を防ぐ。
+    c = sqlite3.connect(config.DB_PATH, timeout=10)
     c.row_factory = sqlite3.Row
+    try:
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("PRAGMA busy_timeout=10000")
+    except Exception:
+        pass
     try:
         yield c
         c.commit()
@@ -81,12 +88,18 @@ def init():
 
 def upsert_contact(code: str, rank: str = "B", cycle_days=None, note: str = "",
                    tags: str = "", birthday: str = ""):
+    # v72(9-10): 同名で新規登録した時に既存カードのメモ・タグ・誕生日・周期を
+    # 空値で上書き消失させない。渡された値が空なら既存値を保持する(CASE式)。
     with conn() as c:
         c.execute(
             "INSERT INTO contacts(code,rank,cycle_days,note,tags,birthday) "
             "VALUES(?,?,?,?,?,?) "
-            "ON CONFLICT(code) DO UPDATE SET rank=excluded.rank, note=excluded.note, "
-            "tags=excluded.tags, birthday=excluded.birthday",
+            "ON CONFLICT(code) DO UPDATE SET "
+            "  rank=excluded.rank, "
+            "  note=CASE WHEN excluded.note IS NOT NULL AND excluded.note!='' THEN excluded.note ELSE contacts.note END, "
+            "  tags=CASE WHEN excluded.tags IS NOT NULL AND excluded.tags!='' THEN excluded.tags ELSE contacts.tags END, "
+            "  birthday=CASE WHEN excluded.birthday IS NOT NULL AND excluded.birthday!='' THEN excluded.birthday ELSE contacts.birthday END, "
+            "  cycle_days=CASE WHEN excluded.cycle_days IS NOT NULL THEN excluded.cycle_days ELSE contacts.cycle_days END",
             (code, rank, cycle_days, note, tags, birthday),
         )
 
@@ -155,13 +168,17 @@ def get_message(mid: int):
         return dict(r) if r else None
 
 
-def set_status(mid: int, status: str):
+def set_status(mid: int, status: str, auto: bool = False):
+    """auto=True は本人の操作でないシステム都合のクローズ(スレッド一括・残骸整理)。
+    v72(9-7): swept=1 の印を付け、応答時間・返信数などの成績集計から除外する。"""
     with conn() as c:
-        try:
-            c.execute("ALTER TABLE messages ADD COLUMN acted_ts REAL")
-        except Exception:
-            pass
-        c.execute("UPDATE messages SET status=?, acted_ts=? WHERE id=?", (status, time.time(), mid))
+        for ddl in ("acted_ts REAL", "swept INTEGER DEFAULT 0"):
+            try:
+                c.execute(f"ALTER TABLE messages ADD COLUMN {ddl}")
+            except Exception:
+                pass
+        c.execute("UPDATE messages SET status=?, acted_ts=?, swept=? WHERE id=?",
+                  (status, time.time(), 1 if auto else 0, mid))
 
 
 def save_drafts(mid: int, drafts):

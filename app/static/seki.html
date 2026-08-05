@@ -44,7 +44,7 @@ h2{font-family:'Shippori Mincho',serif;font-size:15px;letter-spacing:.1em}
 .bkbar{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .bk{background:none;border:none;color:var(--gold);font-size:13px;font-weight:700;font-family:inherit}
 label.f{display:block;font-size:11.5px;color:var(--muted);margin:14px 2px 6px;letter-spacing:.04em}
-input.tf{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:14px;font-family:inherit;background:var(--soft)}
+input.tf{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px 12px;font-size:16px;font-family:inherit;background:var(--soft)}
 .chips{display:flex;flex-wrap:wrap;gap:7px}
 .chip{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font-size:12.5px;font-family:inherit;cursor:pointer;transition:.15s}
 .chip.on{background:var(--goldsoft);border-color:var(--gold);color:var(--gold);font-weight:700}
@@ -96,9 +96,15 @@ var ROLE_CYCLE=["intro","guest","peer","after","help","report"];
 var STAND_LABEL={senior:"先輩",equal:"対等",junior:"後輩"};
 var STAND_CYCLE=["senior","equal","junior"];
 var contactsCache=[], rosterCache=[];
-function api(u,opt){return fetch(u,opt).then(function(r){return r.json();});}
+// v72(9-12): 非2xxはエラーとして扱う(白画面・偽の成功確定を防ぐ)
+function api(u,opt){return fetch(u,opt).then(function(r){
+  if(!r.ok){ return r.text().then(function(t){ throw new Error("["+r.status+"] "+(t||"").slice(0,100)); }); }
+  return r.json();
+});}
+// v72(9-12): クリップボードは成否をPromiseで返す(失敗時は送信済みにしない)
+function copyTextAsync(t){ try{ if(navigator.clipboard&&navigator.clipboard.writeText){ return navigator.clipboard.writeText(t); } }catch(e){} return Promise.reject(new Error("clipboard unavailable")); }
 function post(u,body){return api(u,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body||{})});}
-function esc(s){return (s==null?"":String(s)).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+function esc(s){return (s==null?"":String(s)).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
 function toast(t){var e=document.getElementById("toast");e.textContent=t;e.style.display="block";clearTimeout(e._t);e._t=setTimeout(function(){e.style.display="none";},1900);}
 var app=document.getElementById("app");
 
@@ -302,7 +308,7 @@ document.addEventListener("click",function(ev){
   if(!t) return;
   if(t.dataset.go){ nav(t.dataset.go); return; }
   if(t.dataset.sit){ nav("orei",Number(t.dataset.sit)); return; }
-  if(t.hasOwnProperty("dataset")&&t.dataset.anni!==undefined){ copyText(t.dataset.anni); var a=t.closest(".anni"); if(a){a.classList.add("done");} t.textContent="済"; t.classList.add("ok"); toast("お祝いをコピーしました"); return; }
+  if(t.dataset.anni!==undefined){ /* v72(9-3): hasOwnProperty("dataset")はDOM上常にfalseでボタンが死んでいた */ copyText(t.dataset.anni); var a=t.closest(".anni"); if(a){a.classList.add("done");} t.textContent="済"; t.classList.add("ok"); toast("お祝いをコピーしました"); return; }
   if(t.dataset.foldall){ REC_FOLD=!REC_FOLD; drawRecord(); return; }
   if(t.dataset.main!==undefined){ rec.main=t.dataset.main; rec.mainStand=stdOf(t.dataset.main); drawRecord(); fetchSug(); return; }
   if(t.dataset.add!==undefined){
@@ -325,15 +331,16 @@ function doRecord(){
   var seen={}; members=members.filter(function(m){if(seen[m.contact])return false;seen[m.contact]=true;return true;});
   post("/api/sittings",{date_label:rec.dateLabel,main:rec.main,stype:rec.stype,venue:rec.venue,dohan_venue:rec.dohanVenue,after_venue:rec.afterVenue,members:members}).then(function(r){
     toast("お席を記録しました"); nav("orei",r.id);
-  });
+  }).catch(function(e){ toast("記録に失敗しました: "+e.message); });
 }
 function doSend(contact,text){
-  copyText(text);
-  var sid=app._sid;
-  post("/api/sittings/"+sid+"/sent",{contact:contact}).then(function(){
-    var row=document.getElementById("or-"+cssEsc(contact));
-    orei(sid); toast("コピーしました。LINEで貼って送ってください");
-  });
+  // v72(9-12): コピーが成功した時だけ送信済みに確定する(コピー失敗で送ったことにしない)
+  copyTextAsync(text).then(function(){
+    var sid=app._sid;
+    return post("/api/sittings/"+sid+"/sent",{contact:contact}).then(function(){
+      orei(sid); toast("コピーしました。LINEで貼って送ってください");
+    });
+  }).catch(function(e){ toast("コピーできませんでした。長押しでコピーしてください"); });
 }
 function cssEsc(s){return s.replace(/["\\#.:\[\]]/g,"\\$&");}
 function copyText(t){ try{navigator.clipboard&&navigator.clipboard.writeText(t);}catch(e){} }

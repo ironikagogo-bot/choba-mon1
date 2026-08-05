@@ -19,7 +19,7 @@ body{background:var(--bg);color:var(--text);font-family:'Zen Kaku Gothic New',sa
 .hd .b.badge{position:relative}
 .hd .b .n{position:absolute;top:-4px;right:-4px;background:var(--shu);color:#fff;font-size:9px;font-weight:700;border-radius:8px;min-width:15px;height:15px;line-height:15px;text-align:center;padding:0 3px}
 .search{padding:10px 14px}
-.search input{width:100%;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:15px;font-family:inherit;color:var(--text)}
+.search input{width:100%;background:var(--soft);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:16px;font-family:inherit;color:var(--text)}
 .filt{display:flex;gap:6px;flex-wrap:wrap;padding:0 14px 10px}
 .fp{font-size:12px;font-weight:700;padding:6px 12px;border-radius:5px;background:var(--panel);border:1px solid var(--line);color:var(--muted);letter-spacing:.04em}
 .fp.on{background:var(--gold);border-color:var(--gold);color:#fff}
@@ -47,8 +47,8 @@ body{background:var(--bg);color:var(--text);font-family:'Zen Kaku Gothic New',sa
 .fi{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px}
 .fi:last-child{border-bottom:none}
 .fi label{font-size:13px;color:var(--text);flex:0 0 auto}
-.fi input,.fi select{font-size:15px;border:none;text-align:right;flex:1;background:none;color:var(--text);min-width:0;font-family:inherit}
-.fi textarea{width:100%;border:none;font-size:14px;min-height:60px;font-family:inherit;background:none;color:var(--text);line-height:1.8}
+.fi input,.fi select{font-size:16px;border:none;text-align:right;flex:1;background:none;color:var(--text);min-width:0;font-family:inherit}
+.fi textarea{width:100%;border:none;font-size:16px;min-height:60px;font-family:inherit;background:none;color:var(--text);line-height:1.8}
 .seg{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
 .seg span{font-size:12px;font-weight:700;padding:6px 11px;border-radius:5px;background:var(--chip);color:var(--muted);cursor:pointer;white-space:nowrap}
 .seg span.on{background:var(--gold);color:#fff}
@@ -74,7 +74,7 @@ body{background:var(--bg);color:var(--text);font-family:'Zen Kaku Gothic New',sa
 .tb.new{border-color:#C4D8C0;color:var(--ok);background:var(--oksoft)}
 .tb.priv{border-color:#E7C4BC;color:var(--shu);background:var(--shusoft)}
 .picker{margin-top:8px;display:none}.picker.show{display:block}
-.picker select{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);font-size:14px;background:var(--soft);font-family:inherit;color:var(--text)}
+.picker select{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);font-size:16px;background:var(--soft);font-family:inherit;color:var(--text)}
 .mutedrow{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;background:var(--panel);font-size:13px}
 .mutedrow .u{color:var(--gold);font-weight:700}
 .defcard{background:var(--panel);margin:10px 14px;border-radius:10px;padding:12px 13px;border:1px solid var(--line)}
@@ -110,7 +110,11 @@ async function api(path, method, body){
   if(!r.ok){var t=await r.text();throw new Error("["+r.status+"] "+t.slice(0,120));}
   return r.json();
 }
-function esc(s){return (s==null?"":String(s)).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c]})}
+function esc(s){return (s==null?"":String(s)).replace(/[<>&"']/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]})}
+/* v72(9-2): ユーザー由来の文字列(LINE表示名・顧客名・属性)をinline onclickのJS文字列に
+   直接連結するとXSSが成立するため、値はこの表に置き添字だけを埋め込む */
+var JA=[];
+function jarg(v){JA.push(v);return 'JA['+(JA.length-1)+']';}
 
 /* ---------- LIST ---------- */
 var LST={q:"",rank:"",ak:"",av:"",kind:"customer"};
@@ -131,12 +135,12 @@ async function viewList(){
   var choiceDef=DEFS.find(function(d){return d.atype==="choice"&&d.options});
   var attrChips="";
   if(choiceDef){ attrChips=choiceDef.options.split(",").map(function(o){o=o.trim();
-    return '<span class="fp attr'+(LST.ak===choiceDef.key&&LST.av===o?" on":"")+'" onclick="toggleAttr(\''+esc(choiceDef.key)+'\',\''+esc(o)+'\')">'+esc(choiceDef.key)+':'+esc(o)+'</span>'}).join(""); }
+    return '<span class="fp attr'+(LST.ak===choiceDef.key&&LST.av===o?" on":"")+'" onclick="toggleAttr('+jarg(choiceDef.key)+','+jarg(o)+')">'+esc(choiceDef.key)+':'+esc(o)+'</span>'}).join(""); }
   var rows=list.map(function(c){
     var aliases=(c.aliases&&c.aliases.length)?c.aliases.join("・"):"";
     var tags=(c.tags||"").split(",").filter(Boolean).slice(0,1).map(function(t){return '<span class="chp">'+esc(t)+'</span>'}).join("");
     var sake=c.attrs&&LST.ak&&c.attrs[LST.ak]?'<span class="chp pur">'+esc(LST.ak)+':'+esc(c.attrs[LST.ak])+'</span>':'';
-    return '<div class="row" onclick="go(\'card/'+encodeURIComponent(c.code)+'\')">'
+    return '<div class="row" onclick="go('+jarg('card/'+encodeURIComponent(c.code))+')">'
       +'<div class="ava">'+esc((c.code||"?")[0])+'</div><div class="cmid">'
       +'<div class="cn">'+esc(c.code)+' <span class="rk '+esc(c.rank)+'">'+esc(c.rank)+'</span></div>'
       +'<div class="csub">'+(c.register?esc(regLabel(c.register))+' / ':'')+(c.nickname?'呼び='+esc(c.nickname):'')+'</div>'
@@ -168,7 +172,19 @@ function kindBar(){
   return '<div class="filt">'+seg+move+'</div>';
 }
 function setKind(k){LST.kind=k;LST.rank="";viewList();}
-async function doTransfer(){ try{var r=await api("/api/transfer","POST",{from_kind:"staff",to_kind:"excolleague"});toast("移籍: "+(r.moved||0)+"名を元同僚へ");LST.kind="ex";viewList();}catch(e){toast("失敗: "+e.message);} }
+var _xfArmed=false, _xfTimer=null;
+async function doTransfer(){
+  // v72(9-14): 誤タップで店内全員が移籍する事故を防ぐ2タップ確認。
+  var el=document.querySelector('[onclick="doTransfer()"]');
+  if(!_xfArmed){
+    _xfArmed=true;
+    if(el){el.dataset._t=el.textContent; el.textContent="もう一度タップで確定";el.style.background="#f4e3f2";}
+    _xfTimer=setTimeout(function(){_xfArmed=false; if(el&&el.dataset._t){el.textContent=el.dataset._t;el.style.background="";}},4000);
+    return;
+  }
+  clearTimeout(_xfTimer); _xfArmed=false; if(el&&el.dataset._t){el.textContent=el.dataset._t;el.style.background="";}
+  try{var r=await api("/api/transfer","POST",{from_kind:"staff",to_kind:"excolleague"});toast("移籍: "+(r.moved||0)+"名を元同僚へ");LST.kind="ex";viewList();}catch(e){toast("失敗: "+e.message);}
+}
 function toggleAttr(k,v){ if(LST.ak===k&&LST.av===v){LST.ak="";LST.av="";}else{LST.ak=k;LST.av=v;} viewList(); }
 
 /* ---------- CARD ---------- */
@@ -182,7 +198,7 @@ async function viewCard(code){
   var attrRows=DEFS.map(function(df){var v=(d.attrs||{})[df.key];return v?'<div class="frow"><span class="fl" style="color:#6b4bd6">'+esc(df.key)+'</span><span class="fv">'+esc(v)+'</span></div>':''}).join("");
   var visitRows=events.slice(0,6).map(function(e){return '<div class="frow"><span class="fl">'+esc(e.label||e.kind)+'</span><span class="fv" style="color:#8a8f98;font-weight:500">'+(e.status==="confirmed"?"確定":"仮")+'・自動</span></div>'}).join("")||'<div class="memo" style="color:#9aa1aa">まだ記録なし（返信すると自動で貯まる）</div>';
   app.innerHTML=header("顧客カード")
-    +'<div class="hd" style="position:static;border-top:none"><div class="t" style="font-size:20px">'+esc(d.code)+' <span class="rk '+esc(d.rank)+'" style="display:inline-flex">'+esc(d.rank)+'</span></div><button class="b" onclick="go(\'edit/'+encodeURIComponent(code)+'\')">編集</button></div>'
+    +'<div class="hd" style="position:static;border-top:none"><div class="t" style="font-size:20px">'+esc(d.code)+' <span class="rk '+esc(d.rank)+'" style="display:inline-flex">'+esc(d.rank)+'</span></div><button class="b" onclick="go('+jarg('edit/'+encodeURIComponent(code))+')">編集</button></div>'
     +'<div class="frow"><span class="fl">本名</span><span class="fv">'+esc(d.real_name||"—")+'</span></div>'
     +'<div class="frow"><span class="fl">電話番号</span><span class="fv">'+esc(d.phone||"—")+'</span></div>'
     +(d.stand?'<div class="frow"><span class="fl">立場</span><span class="fv">'+({senior:"先輩",equal:"対等",junior:"後輩"}[d.stand]||"—")+'</span></div>':'')
@@ -198,7 +214,7 @@ async function viewCard(code){
     +'<div class="sec">来店・同伴（返信操作から自動記録）</div>'+visitRows
     +'<div class="sec" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→活かす）</div><div class="memo" style="background:#EEF4EC;border-top:1px solid #C4D8C0;border-bottom:1px solid #C4D8C0;color:#3f6b3d">'+esc(d.note_pos||"—")+'</div>'
     +'<div class="sec" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には出しません）</div><div class="memo" style="background:#FBEDEA;border-top:1px solid #E7C4BC;border-bottom:1px solid #E7C4BC;color:#8a2f22">'+esc(d.note_neg||"—")+'</div>'
-    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact(\''+encodeURIComponent(d.code)+'\',this)">この顧客を削除</button></div>';
+    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact('+jarg(encodeURIComponent(d.code))+',this)">この顧客を削除</button></div>';
 }
 
 function delContact(code, btn){
@@ -376,12 +392,12 @@ async function viewTray(){
       +'<span class="trname">'+esc(p.line_name)+'</span><span class="trcnt">'+(p.count||1)+'件</span></div>'
       +'<div class="trmsg">'+esc(p.last_text||"")+'</div>'
       +'<div class="tract"><span class="tb link" onclick="togglePicker('+idx+')">既存客に紐付け</span>'
-      +'<span class="tb new" onclick="resolveTray(\''+esc(p.line_name)+'\',\'new\')">新規客</span>'
-      +'<span class="tb priv" onclick="resolveTray(\''+esc(p.line_name)+'\',\'private\')">私用（除外）</span></div>'
+      +'<span class="tb new" onclick="resolveTray('+jarg(p.line_name)+',\'new\')">新規客</span>'
+      +'<span class="tb priv" onclick="resolveTray('+jarg(p.line_name)+',\'private\')">私用（除外）</span></div>'
       +'<div class="picker" id="pk'+idx+'"><select id="sel'+idx+'">'+opts+'</select>'
-      +'<button class="btn mini" style="margin-top:6px" onclick="resolveTray(\''+esc(p.line_name)+'\',\'link\',document.getElementById(\'sel'+idx+'\').value)">この客に紐付ける</button></div></div>';
+      +'<button class="btn mini" style="margin-top:6px" onclick="resolveTray('+jarg(p.line_name)+',\'link\',document.getElementById(\'sel'+idx+'\').value)">この客に紐付ける</button></div></div>';
   }).join("")||'<div class="empty">未紐付けはありません。</div>';
-  var mk=muted.map(function(m){return '<div class="mutedrow"><span>🚫 '+esc(m.line_name)+'</span><span class="u" onclick="unmute(\''+esc(m.line_name)+'\')">解除</span></div>'}).join("");
+  var mk=muted.map(function(m){return '<div class="mutedrow"><span>🚫 '+esc(m.line_name)+'</span><span class="u" onclick="unmute('+jarg(m.line_name)+')">解除</span></div>'}).join("");
   app.innerHTML=header("未紐付けトレイ")
     +'<div class="trnote">⚠️ 未知のアカウントはここに隔離。仕事(既存/新規)か私用かを仕分けるまで受信箱に出しません。</div>'
     +pk+(mk?'<div class="sec">私用（取り込まない）一覧</div>'+mk:'')+'<div style="height:24px"></div>';
@@ -428,6 +444,7 @@ async function addDef(){
 /* ---------- router ---------- */
 function go(h){location.hash=h}
 async function route(){
+  JA=[];  // v72(9-2): 画面遷移ごとにjarg退避テーブルをリセット(旧カードのDOMは破棄済み・無制限成長防止)
   var h=location.hash.replace(/^#/,"")||"list";
   var parts=h.split("/");
   if(parts[0]==="list") return viewList();

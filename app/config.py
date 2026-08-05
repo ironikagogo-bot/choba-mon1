@@ -49,3 +49,7 @@ WATCH_POLL_SEC = float(os.environ.get("CHOUBA_WATCH_POLL_SEC", "2.0"))
 INGEST_TOKEN = os.environ.get("CHOUBA_INGEST_TOKEN", "")
 # 玄関認証のパスワード(空なら認証オフ=開発時のみ)。本番は必ず設定する。
 PASSWORD = os.environ.get("CHOUBA_PASSWORD", "")
+
+# v72(9-16): 本番(非デモ)でトークン/パスワード未設定なら、トークン境界の公開APIを
+# 開けっ放しにせず塞ぐ(=設定漏れ事故の受け皿)。1=閉じる(既定)/0=あえて開ける(開発)。
+STRICT_AUTH = os.environ.get("CHOUBA_STRICT_AUTH", "1") == "1"

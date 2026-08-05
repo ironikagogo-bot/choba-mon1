@@ -21,6 +21,15 @@ from .provisioning import linking, MockProvisioner, DeskState
 app = FastAPI(title="帳場 pilot API")
 db.init()
 linking.init()
+# v72: 起動時に全モジュールのスキーマを先に整える(新規DBでのAPI 500を根絶)＋
+# 過去の改名バグ(9-1)で旧名のまま残った席記録の追い付け修復(冪等)
+try:
+    from . import crm as _crm0, sittings as _sit0
+    _crm0.ensure()
+    _sit0.ensure()
+    _crm0.repair_sitting_names()
+except Exception:
+    pass
 if not config.DEMO:
     try:
         from . import news as _news
@@ -28,6 +37,23 @@ if not config.DEMO:
         _news.start_scheduler()
     except Exception:
         pass
+    # v72(9-16): 本番でトークン未設定=stats/quickdrawが無認証で公開になる事故の警告
+    if config.STRICT_AUTH and not config.INGEST_TOKEN:
+        import sys
+        print("⚠️ [帳場] CHOUBA_INGEST_TOKEN 未設定: /api/stats・/api/quickdraft は"
+              "STRICT_AUTHにより403で塞がれます。運用するにはRenderの環境変数にトークンを設定してください。",
+              file=sys.stderr, flush=True)
+
+
+def _require_ingest_token(token: str):
+    """トークン境界の公開APIの認証。v72(9-16): 本番でトークン未設定なら403で塞ぐ
+    (無認証公開を既定にしない)。デモ・開発(STRICT_AUTH=0)では従来どおり素通し。"""
+    if config.INGEST_TOKEN:
+        if not token or not hmac.compare_digest(str(token), config.INGEST_TOKEN):
+            raise HTTPException(401, "bad token")
+        return
+    if config.STRICT_AUTH and not config.DEMO:
+        raise HTTPException(403, "token not configured")
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -167,16 +193,15 @@ def _healthz():
 def usage_stats(token: str = ""):
     """モニター観測用の統計(件数のみ・本文/相手名は一切含まない)。INGEST_TOKENで認証。
     運用者がダッシュボードから3インスタンスを横断で見る想定。CORSを許可(トークン必須のため)。"""
-    if config.INGEST_TOKEN:
-        if not token or not hmac.compare_digest(token, config.INGEST_TOKEN):
-            raise HTTPException(401, "bad token")
+    _require_ingest_token(token)
     import datetime
     from . import crm as _crm
     _crm.ensure()   # kind等の後付け列を保証(初回起動直後でも落ちない)
     with db.conn() as c:
         for _tbl, _ddl in (("sent_replies", "edited INTEGER DEFAULT 0"),
                            ("sent_replies", "edit_ratio INTEGER DEFAULT 100"),
-                           ("messages", "acted_ts REAL")):
+                           ("messages", "acted_ts REAL"),
+                           ("messages", "swept INTEGER DEFAULT 0")):
             try:
                 c.execute(f"ALTER TABLE {_tbl} ADD COLUMN {_ddl}")
             except Exception:
@@ -198,7 +223,7 @@ def usage_stats(token: str = ""):
                 "WHERE m.ts>=? AND m.ts<?", (t0, t1)).fetchone()[0]
             verbatim = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND ts<? AND edited=0", (t0, t1)).fetchone()[0]
             edited = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND ts<? AND edited=1", (t0, t1)).fetchone()[0]
-            skipped = c.execute("SELECT COUNT(*) FROM messages WHERE ts>=? AND ts<? AND status='skipped'", (t0, t1)).fetchone()[0]
+            skipped = c.execute("SELECT COUNT(*) FROM messages WHERE ts>=? AND ts<? AND status='skipped' AND IFNULL(swept,0)=0", (t0, t1)).fetchone()[0]
             days.append({"date": d.isoformat(), "received": received, "drafted": drafted,
                          "sent_verbatim": verbatim, "sent_edited": edited, "skipped": skipped})
 
@@ -212,13 +237,13 @@ def usage_stats(token: str = ""):
             hourly[datetime.datetime.fromtimestamp(r[0]).hour]["sent"] += 1
         # 対応の内訳(最終ステータス)
         actions = {r[0]: r[1] for r in c.execute(
-            "SELECT status, COUNT(*) FROM messages WHERE ts>=? GROUP BY status", (t14,))}
+            "SELECT status, COUNT(*) FROM messages WHERE ts>=? AND IFNULL(swept,0)=0 GROUP BY status", (t14,))}
         # 放置(24時間以上openのまま)
         neglected = c.execute("SELECT COUNT(*) FROM messages WHERE status='open' AND ts<?",
                               (time.time() - 86400,)).fetchone()[0]
         # 応答時間(受信→対応・分): repliedのみ・中央値/90%点
         lat = [max(0.0, (r[1] - r[0]) / 60.0) for r in c.execute(
-            "SELECT ts, acted_ts FROM messages WHERE status='replied' AND acted_ts IS NOT NULL AND ts>=?", (t14,))]
+            "SELECT ts, acted_ts FROM messages WHERE status='replied' AND acted_ts IS NOT NULL AND ts>=? AND IFNULL(swept,0)=0", (t14,))]
         lat.sort()
         def _pct(v, q):
             return round(v[min(len(v)-1, int(len(v)*q))], 1) if v else None
@@ -229,12 +254,12 @@ def usage_stats(token: str = ""):
             rec = c.execute("SELECT COUNT(*) FROM messages m JOIN contacts k ON k.code=m.contact "
                             "WHERE k.rank=? AND m.ts>=?", (rk, t14)).fetchone()[0]
             rep = c.execute("SELECT COUNT(*) FROM messages m JOIN contacts k ON k.code=m.contact "
-                            "WHERE k.rank=? AND m.ts>=? AND m.status='replied'", (rk, t14)).fetchone()[0]
+                            "WHERE k.rank=? AND m.ts>=? AND m.status='replied' AND IFNULL(m.swept,0)=0", (rk, t14)).fetchone()[0]
             skp = c.execute("SELECT COUNT(*) FROM messages m JOIN contacts k ON k.code=m.contact "
-                            "WHERE k.rank=? AND m.ts>=? AND m.status='skipped'", (rk, t14)).fetchone()[0]
+                            "WHERE k.rank=? AND m.ts>=? AND m.status='skipped' AND IFNULL(m.swept,0)=0", (rk, t14)).fetchone()[0]
             rl = [max(0.0, (r[1] - r[0]) / 60.0) for r in c.execute(
                 "SELECT m.ts, m.acted_ts FROM messages m JOIN contacts k ON k.code=m.contact "
-                "WHERE k.rank=? AND m.status='replied' AND m.acted_ts IS NOT NULL AND m.ts>=?", (rk, t14))]
+                "WHERE k.rank=? AND m.status='replied' AND m.acted_ts IS NOT NULL AND m.ts>=? AND IFNULL(m.swept,0)=0", (rk, t14))]
             rl.sort()
             er = c.execute("SELECT AVG(edit_ratio) FROM sent_replies s JOIN contacts k ON k.code=s.contact "
                            "WHERE k.rank=? AND s.ts>=?", (rk, t14)).fetchone()[0]
@@ -245,7 +270,7 @@ def usage_stats(token: str = ""):
         by_cat = {}
         for cat in ("urgent", "rally", "batch"):
             rec = c.execute("SELECT COUNT(*) FROM messages WHERE category=? AND ts>=?", (cat, t14)).fetchone()[0]
-            rep = c.execute("SELECT COUNT(*) FROM messages WHERE category=? AND ts>=? AND status='replied'", (cat, t14)).fetchone()[0]
+            rep = c.execute("SELECT COUNT(*) FROM messages WHERE category=? AND ts>=? AND status='replied' AND IFNULL(swept,0)=0", (cat, t14)).fetchone()[0]
             by_cat[cat] = {"received": rec, "replied": rep}
         # 対応モードの利用状況
         modes = {
@@ -505,7 +530,7 @@ def inbox():
     kept = []
     for m in msgs:
         if is_call_notice(m["text"]):
-            db.set_status(m["id"], "skipped")
+            db.set_status(m["id"], "skipped", auto=True)
             continue
         kept.append(m)
     # 名無しグループ通知(送信者不明)と同一本文の個別通知が両方ある時は、グループ側を閉じる
@@ -518,7 +543,7 @@ def inbox():
         if _is_group_name(m["contact"]):
             _body = (m["text"] or "").replace("【グループ】", "").strip()
             if len(_body) >= 10 and _body in _texts_indiv:
-                db.set_status(m["id"], "skipped")
+                db.set_status(m["id"], "skipped", auto=True)
                 continue
         _kept2.append(m)
     kept = _kept2
@@ -541,7 +566,7 @@ def inbox():
         if m["category"] == "rally":
             key = (m["contact"], (m["text"] or "").strip())
             if len(key[1]) >= 10 and key in urgent_keys:
-                db.set_status(m["id"], "skipped")
+                db.set_status(m["id"], "skipped", auto=True)
                 continue
         if m["kind"] == "staff" or m["unlinked"]:
             (out["urgent"] if m["category"] == "urgent" else out["batch"]).append(m)
@@ -644,14 +669,13 @@ def admin_wipe(body: WipeIn):
         c.execute("DELETE FROM drafts")
         c.execute("DELETE FROM messages")
         if body.scope == "all":
+            # v72(9-15): 「初期化」の期待に反して残っていたテーブルを追加
+            # (ニュース・機能ログ・Web Push購読・自分の表示名)。
             for t in ("sent_replies", "events", "style_profile",
                       "contact_aliases", "muted_names", "snoozed_names",
-                      "pending_links", "contact_attrs", "attr_defs", "contacts"):
-                try:
-                    c.execute(f"DELETE FROM {t}")
-                except Exception:
-                    pass
-            for t in ("sitting_members", "sittings"):
+                      "pending_links", "contact_attrs", "attr_defs", "contacts",
+                      "sitting_members", "sittings",
+                      "news_items", "news_meta", "feature_events", "push_subscriptions"):
                 try:
                     c.execute(f"DELETE FROM {t}")
                 except Exception:
@@ -677,7 +701,7 @@ def act(mid: int, body: Action):
             for _m in _thread:
                 if (_m["contact"] == msg["contact"] and _m["id"] != mid
                         and (_m["ts"] or 0) <= (msg["ts"] or 0)):
-                    db.set_status(_m["id"], body.action)
+                    db.set_status(_m["id"], body.action, auto=True)  # v72(9-7): 成績集計から除外
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる
@@ -1073,8 +1097,7 @@ def quickdraft(body: QuickDraftIn, request: Request):
     iOSショートカット(コピー→この入口へPOST→下書きをクリップボードへ)から叩く想定。
     認証は android/notify と同じ INGEST_TOKEN(未設定なら認証なし)。"""
     from .quickdraft import draft_from_text
-    if config.INGEST_TOKEN and not hmac.compare_digest(str(body.token or ""), config.INGEST_TOKEN):
-        raise HTTPException(401, "bad token")
+    _require_ingest_token(str(body.token or ""))
     text = (body.text or "").strip()
     if not text:
         raise HTTPException(400, "empty text")
@@ -1361,8 +1384,9 @@ def seki_suggest(main: str = ""):
     mains: 主賓候補=そろそろ度(周期×経過)3 + 曜日癖1 + やり取り量2 + ランク + ⚡今夜LINE2。
     members: mainとの同席共起3(過去の役割も推測) + やり取り量1.5 + ランク + ⚡1.5。"""
     import datetime
-    from . import sittings as _sit
+    from . import sittings as _sit, crm as _crm
     _sit.ensure()
+    _crm.ensure()  # v72: 新規DBでkind/linked列が無いまま参照して500になる問題(9-4)
     now = time.time()
     with db.conn() as c:
         _contacts = [dict(r) for r in c.execute(

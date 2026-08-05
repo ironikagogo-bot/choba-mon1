@@ -4,6 +4,7 @@ ANTHROPIC_API_KEY があれば Claude API、なければテンプレートにフ
 """
 import json
 import re
+import threading
 
 import requests
 
@@ -144,7 +145,40 @@ def _review_pass(contact: dict, incoming: str, drafts: list, base_prompt: str) -
     return fixed or None
 
 
+# v72(9-5): 二重生成ガード。事前生成スレッド(受信時)と本処理(通知タップ時)が同じmidを
+# 同時に生成してAPI呼び出しが2倍になる問題の修正。既存下書きがあれば再生成せず返し、
+# 生成中なら完了を待って結果を共有する。
+_GEN_LOCK = threading.Lock()
+_GEN_INFLIGHT: dict = {}
+
+
+def _saved_drafts(message_id: int):
+    rows = db.get_drafts(message_id) or []
+    return [{"text": d["text"], "tone": d["tone"]} for d in rows]
+
+
 def generate(message_id: int) -> list[dict]:
+    existing = _saved_drafts(message_id)
+    if existing:
+        return existing
+    with _GEN_LOCK:
+        ev = _GEN_INFLIGHT.get(message_id)
+        owner = ev is None
+        if owner:
+            ev = threading.Event()
+            _GEN_INFLIGHT[message_id] = ev
+    if not owner:
+        ev.wait(timeout=45)
+        return _saved_drafts(message_id)
+    try:
+        return _generate_inner(message_id)
+    finally:
+        with _GEN_LOCK:
+            _GEN_INFLIGHT.pop(message_id, None)
+        ev.set()
+
+
+def _generate_inner(message_id: int) -> list[dict]:
     msg = db.get_message(message_id)
     if not msg:
         return []

@@ -243,11 +243,14 @@ class DeskService:
                 return {"status": "duplicate", "contact": contact}
 
             self.android_count += 1
-            mid, cat, reason = ingest(contact, message, log=self.log, predraft=True)
-            if mid is None:
-                return {"status": "muted", "contact": contact}
-            return {"status": "ingested", "contact": contact, "message": message,
-                    "category": cat, "reason": reason, "id": mid}
+        # v72(9-9): AIトリアージ(最大12秒)を含む取り込みはロックの外で実行。
+        # 通知バースト時に解析・重複判定まで直列化されてリーダー側がタイムアウトする問題の修正。
+        # (重複判定は上のロック内で完了済みなので、ここが並行しても二重取り込みは起きない)
+        mid, cat, reason = ingest(contact, message, log=self.log, predraft=True)
+        if mid is None:
+            return {"status": "muted", "contact": contact}
+        return {"status": "ingested", "contact": contact, "message": message,
+                "category": cat, "reason": reason, "id": mid}
 
     def replay(self, clear_messages: bool = True):
         """受信デモをもう一度流す(台本モードのみ。実読み取りでは無効)。"""

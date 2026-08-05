@@ -105,6 +105,8 @@ def record_pending(display_name: str, text: str = "", ts: float = None):
 def list_pending() -> list:
     ensure()
     with db.conn() as c:
+        # "LINE"はシステム通知の誤取り込みで湧く偽名(人名としてありえない)。表示せず掃除する
+        c.execute("DELETE FROM pending_links WHERE line_name='LINE'")
         return [dict(r) for r in c.execute(
             "SELECT * FROM pending_links ORDER BY last_ts DESC")]
 
@@ -356,7 +358,7 @@ def rename_contact(old: str, new: str) -> dict:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
                 pass
-        for tbl, col in (("sittings", "host_contact"), ("sitting_members", "contact")):
+        for tbl, col in (("sittings", "main_contact"), ("sitting_members", "contact")):
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
@@ -364,6 +366,31 @@ def rename_contact(old: str, new: str) -> dict:
     # 旧名がLINE表示名だった場合に備えて紐付けを残す(重複はON CONFLICTで吸収)
     add_alias(old, new)
     return {"ok": True, "code": new}
+
+
+def repair_sitting_names():
+    """過去の改名バグ(v44〜v71: sittingsの列名誤りで席記録が旧名のまま)の追い付け修復。
+    contacts に存在しないが contact_aliases で現カードに紐付く名前を席記録から更新する。
+    起動時に1回呼ぶ。冪等。"""
+    ensure()
+    fixed = 0
+    with db.conn() as c:
+        try:
+            rows = c.execute(
+                "SELECT a.line_name, a.contact FROM contact_aliases a "
+                "WHERE a.line_name NOT IN (SELECT code FROM contacts) "
+                "AND a.contact IN (SELECT code FROM contacts)").fetchall()
+            for r in rows:
+                old_name, cur = r["line_name"], r["contact"]
+                for tbl, col in (("sittings", "main_contact"), ("sitting_members", "contact")):
+                    try:
+                        cu = c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (cur, old_name))
+                        fixed += cu.rowcount or 0
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return {"ok": True, "fixed": fixed}
 
 
 def delete_contact(code: str):
