@@ -176,7 +176,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
 <body>
 <div class="wrap">
   <header>
-    <h1>帳場 <span style="font-size:9px;color:#B5941F;letter-spacing:.18em;vertical-align:middle">PARTNER</span></h1><span class="mode" id="mode"></span>
+    <h1>帳場</h1><span class="mode" id="mode"></span>
     <div class="desk" style="display:none"><span class="dot off" id="deskDot"></span><span id="deskText"></span></div>
   </header>
 
@@ -193,7 +193,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
     <div id="urgent"></div>
     <div class="sec"><div class="bar"></div><span>まとめ箱</span><div class="rule"></div><span class="hint" id="bHint"></span></div>
     <div id="batch"></div>
-    <div class="sec"><div class="bar" style="background:#3A5170"></div><span style="color:#3A5170">その他</span><div class="rule"></div><span class="hint" id="sHint"></span></div>
+    <div class="sec"><div class="bar" style="background:#3A5170"></div><span style="color:#3A5170">店内</span><div class="rule"></div><span class="hint" id="sHint"></span></div>
     <div id="staff"></div>
     <div class="note">読む・判断・下書きは帳場内で完結します。送信を伴う操作だけLINEに移ります（コピー済みの本文を貼って送信）。帳場は送信機能そのものを持ちません。</div>
   </section>
@@ -246,8 +246,8 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
     </div>
 
     <div class="panel">
-      <h3>文体学習（連絡先の一括登録）</h3>
-      <p>LINEのトーク履歴（.txt）を入れると、あなたの文体と、相手ごとの話し方を学習します。登場する相手は連絡先として自動登録されます。</p>
+      <h3>文体学習（顧客の一括登録）</h3>
+      <p>LINEのトーク履歴（.txt）を入れると、あなたの文体と、相手ごとの話し方を学習します。登場する相手は顧客として自動登録されます。</p>
       <input type="text" id="selfName" placeholder="LINE上のあなたの表示名（例：あかり）">
       <input type="file" id="importFile" accept=".txt,text/plain">
       <button class="btn" id="importBtn">取り込む</button>
@@ -286,7 +286,7 @@ nav .badge{position:absolute;top:4px;left:calc(50% + 8px);background:var(--shu);
 <nav>
   <button data-view="inbox" class="on"><span class="ico"><svg viewBox="0 0 24 24"><polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>受信箱<span class="badge" id="navBadge" style="display:none"></span></button>
   <button data-view="announce"><span class="ico"><svg viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg></span>アナウンス</button>
-  <button data-view="contacts"><span class="ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>連絡先</button>
+  <button data-view="contacts"><span class="ico"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>顧客カード</button>
   <button data-view="events"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg></span>実績</button>
   <button data-view="settings"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span>設定</button>
 </nav>
@@ -416,54 +416,65 @@ function unknownCardHtml(m) {
     <div class="linename">🔗 LINEの表示名：${esc(m.contact)}</div>
     <div class="unkask">この相手はどちら？</div>
     <div class="unkchoice3">
-      <button class="work" data-act="unkwork" data-contact="${esc(m.contact)}">仲間<small>柔術・家族友人</small></button>
-      <button class="staff" data-act="unkstaff" data-contact="${esc(m.contact)}">その他<small>元同業・手続き等</small></button>
+      <button class="work" data-act="unkwork" data-contact="${esc(m.contact)}">顧客<small>営業先</small></button>
+      <button class="staff" data-act="unkstaff" data-contact="${esc(m.contact)}">店内<small>黒服・ママ</small></button>
       <button class="priv" data-act="unkpriv" data-contact="${esc(m.contact)}">私用<small>受け取らない</small></button>
     </div>
     <button class="unksnooze" data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視（分類しない）</button>
   </div>`;
 }
+function staffQuickHtml(mid, text) {
+  const t = text || '';
+  const opts = [];
+  if (/おはよう/.test(t)) opts.push(['おはようございます', 'おはようございます！本日もよろしくお願いします！']);
+  if (/(おつかれ|お疲れ)/.test(t)) opts.push(['お疲れ様です', 'お疲れ様です！']);
+  opts.push(['かしこまりました', 'かしこまりました！']);
+  opts.push(['了解です', '了解です！']);
+  if (/(何時|向か|到着|来れ)/.test(t)) opts.push(['向かってます', '今向かっています！']);
+  if (/(確認|チェック)/.test(t)) opts.push(['確認します', '確認します！']);
+  opts.push(['後ほど連絡', '後ほどご連絡します。']);
+  const seen = new Set();
+  const rows = opts.filter(([l]) => !seen.has(l) && seen.add(l)).slice(0, 6)
+    .map(([l, x]) => `<button data-act="quick" data-mid="${mid}" data-text="${esc(x)}">${l}</button>`).join('');
+  return `<div class="quickrow">${rows}</div>`;
+}
+
 function staffGroupHtml(contact, msgs) {
   const last = msgs[msgs.length - 1];
   if (msgs.length === 1) return staffCardHtml(last, last._u ? 'u' : '');
   const _u = msgs.find((m) => m._u);
   const alert = _u
-    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>その他・要対応<span class="el">${fmtElapsed(_u.ts)}</span></div>`
+    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>店内・要対応<span class="el">${fmtElapsed(_u.ts)}</span></div>`
     : '';
   const items = msgs.map((m) => isMediaOnly(m)
     ? `<div class="msg mini mm">${esc(mediaMini(m))}</div>`
     : `<div class="msg mini">${esc(m.text)}</div>`);
   return `<div class="card staff" id="card-${last.id}">
     ${alert}
-    <div class="row"><span class="code">${esc(contact)}</span><span class="stafftag">その他</span><span class="reason" style="color:#3A5170">${esc(last.reason || '')}</span></div>
+    <div class="row"><span class="code">${esc(contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(last.reason || '')}</span></div>
     <div class="thread">${items.join('')}</div>
-    <div class="quickrow">
-      <button data-act="quick" data-mid="${last.id}" data-text="了解です！">了解です</button>
-      <button data-act="quick" data-mid="${last.id}" data-text="後ほどご連絡します。">後ほど連絡</button>
-      <button data-act="quick" data-mid="${last.id}" data-text="おつかれさまです！">おつかれさま</button>
-      <button data-act="quick" data-mid="${last.id}" data-text="今向かっています！">向かってます</button>
-      <button data-act="quick" data-mid="${last.id}" data-text="確認します！">確認します</button>
-    </div>
+    ${staffQuickHtml(last.id, msgs.map((m) => m.text).join(' '))}
     <div class="acts"><button data-act="openline" data-mid="${last.id}">LINEを見る</button><button data-act="deferred" data-mid="${last.id}">後ほど対応</button></div>
   </div>`;
 }
 
 function staffCardHtml(m, cls) {
   if (isMediaOnly(m)) return mediaCardHtml(m);
+  if (/返信不要/.test(m.reason || '')) {
+    return `<div class="card staff" id="card-${m.id}">
+      <div class="row"><span class="code">${esc(m.contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#8D8674">返信不要の相槌</span><span class="time">${fmtTime(m.ts)}</span></div>
+      <div class="msg mini" style="color:#77694d">${esc(m.text)}</div>
+      <div class="acts"><button data-act="skipped" data-mid="${m.id}">流す</button><button data-act="quick" data-mid="${m.id}" data-text="よろしくお願いします！">一言だけ返す</button></div>
+    </div>`;
+  }
   const alert = (cls === 'u')
-    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>その他・要対応<span class="el">${fmtElapsed(m.ts)}</span></div>`
+    ? `<div class="alertbar" style="background:#3A5170"><span class="pulse"></span>店内・要対応<span class="el">${fmtElapsed(m.ts)}</span></div>`
     : '';
   return `<div class="card staff" id="card-${m.id}">
     ${alert}
-    <div class="row"><span class="code">${esc(m.contact)}</span><span class="stafftag">その他</span><span class="reason" style="color:#3A5170">${esc(m.reason)}</span></div>
+    <div class="row"><span class="code">${esc(m.contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(m.reason)}</span></div>
     <div class="msg">${esc(m.text)}</div>
-    <div class="quickrow">
-      <button data-act="quick" data-mid="${m.id}" data-text="了解です！">了解です</button>
-      <button data-act="quick" data-mid="${m.id}" data-text="後ほどご連絡します。">後ほど連絡</button>
-      <button data-act="quick" data-mid="${m.id}" data-text="おつかれさまです！">おつかれさま</button>
-      <button data-act="quick" data-mid="${m.id}" data-text="今向かっています！">向かってます</button>
-      <button data-act="quick" data-mid="${m.id}" data-text="確認します！">確認します</button>
-    </div>
+    ${staffQuickHtml(m.id, m.text)}
     <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button data-act="deferred" data-mid="${m.id}">後ほど対応</button></div>
   </div>`;
 }
@@ -611,7 +622,7 @@ async function loadInbox(force) {
   _bStaff.forEach((m) => { (_sBy[m.contact] = _sBy[m.contact] || []).push(m); });
   Object.values(_sBy).forEach((l) => l.sort((a, b) => (a.ts || 0) - (b.ts || 0)));
   const _staffHtml = Object.keys(_sBy).map((c) => staffGroupHtml(c, _sBy[c])).join('');
-  $('#staff').innerHTML = _staffHtml || '<div class="empty">その他の連絡はありません。</div>';
+  $('#staff').innerHTML = _staffHtml || '<div class="empty">店内の連絡はありません。</div>';
   $('#sHint').textContent = (_uStaff.length + _bStaff.length) ? `${_uStaff.length + _bStaff.length}件` : '';
   const _uN = gU.length + _uCust.length;
   $('#uHint').textContent = _uN ? `${_uN}件` : '';
@@ -662,7 +673,7 @@ document.addEventListener('click', async (ev) => {
     const c = el.dataset.contact;
     try { await api('/api/inbox/classify', { contact: c, action: 'work' }); }
     catch (e) { toast('登録に失敗しました'); return; }
-    toast('柔術仲間に登録しました。詳細を編集できます');
+    toast('顧客に登録しました。詳細を編集できます');
     switchToContactsEdit(c);
     setTimeout(() => loadInbox(true), 400);
     return;
@@ -671,7 +682,7 @@ document.addEventListener('click', async (ev) => {
     const c = el.dataset.contact;
     try { await api('/api/inbox/classify', { contact: c, action: 'staff' }); }
     catch (e) { toast('失敗しました'); return; }
-    toast('その他として登録しました'); loadInbox(true); return;
+    toast('店内・業務として登録しました'); loadInbox(true); return;
   }
   if (act === 'unkpriv') {
     const c = el.dataset.contact;
