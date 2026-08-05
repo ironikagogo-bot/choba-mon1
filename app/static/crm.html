@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<title>帳場｜顧客管理</title>
+<title>帳場｜連絡先</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@500;700&family=Zen+Kaku+Gothic+New:wght@400;700&display=swap');
 :root{--bg:#F7F4EC;--panel:#fff;--soft:#FFFDF8;--line:#E4DECD;--text:#2B2823;--muted:#8D8674;
@@ -125,7 +125,7 @@ async function viewList(){
     if(LST.kind==="customer"){ list=(await api("/api/contacts/search"+qs)).contacts||[]; }
     else{ list=((await api("/api/roster?kinds="+kindMap[LST.kind])).roster)||[];
           if(LST.q){ var qq=LST.q; list=list.filter(function(c){return (c.code||"").indexOf(qq)>=0||(c.tags||"").indexOf(qq)>=0;}); } }
-  }catch(e){ app.innerHTML=header("顧客リスト")+'<div class="err">読み込み失敗: '+esc(e.message)+'</div>'; return; }
+  }catch(e){ app.innerHTML=header("連絡先")+'<div class="err">読み込み失敗: '+esc(e.message)+'</div>'; return; }
   if(LST.rank&&LST.kind==="customer") list=list.filter(function(c){return c.rank===LST.rank});
   // 属性フィルタ用チップ(最初のchoice型属性の選択肢)
   var choiceDef=DEFS.find(function(d){return d.atype==="choice"&&d.options});
@@ -143,7 +143,7 @@ async function viewList(){
       +(aliases?'<div class="linetag">🔗 '+esc(aliases)+'</div>':'<div class="linetag" style="color:#c99">🔗 未紐付け</div>')
       +'</div><div style="display:flex;flex-direction:column;gap:3px;align-items:flex-end">'+tags+sake+'</div></div>';
   }).join("");
-  app.innerHTML=header("顧客リスト", true)
+  app.innerHTML=header("連絡先", true)
     +kindBar()
     +'<div class="search"><input id="q" placeholder="🔍 名前・タグ・メモで検索" value="'+esc(LST.q)+'"></div>'
     +'<div class="filt"><span class="fp'+(!LST.rank?" on":"")+'" onclick="setRank(\'\')">全員</span>'
@@ -162,13 +162,13 @@ function header(title, isList){
 }
 function setRank(r){LST.rank=r;viewList()}
 function kindBar(){
-  var K=[["customer","顧客"],["peer","同業者"],["staff","店内"],["ex","元同僚"]];
+  var K=[["customer","柔術仲間"],["peer","家族・友人"],["staff","その他"],["ex","元同業"]];
   var seg=K.map(function(k){return '<span class="fp'+(LST.kind===k[0]?" on":"")+'" onclick="setKind(\''+k[0]+'\')">'+k[1]+'</span>';}).join("");
-  var move=(LST.kind==="staff")?'<span class="fp" style="margin-left:auto;color:#8a5a86;border-color:#d9c3d6" onclick="doTransfer()">→ 全員を元同僚へ（移籍）</span>':"";
+  var move=(LST.kind==="staff")?'<span class="fp" style="margin-left:auto;color:#8a5a86;border-color:#d9c3d6" onclick="doTransfer()">→ 全員を元同業へ（一括変更）</span>':"";
   return '<div class="filt">'+seg+move+'</div>';
 }
 function setKind(k){LST.kind=k;LST.rank="";viewList();}
-async function doTransfer(){ try{var r=await api("/api/transfer","POST",{from_kind:"staff",to_kind:"excolleague"});toast("移籍: "+(r.moved||0)+"名を元同僚へ");LST.kind="ex";viewList();}catch(e){toast("失敗: "+e.message);} }
+async function doTransfer(){ try{var r=await api("/api/transfer","POST",{from_kind:"staff",to_kind:"excolleague"});toast("変更: "+(r.moved||0)+"名を元同業へ");LST.kind="ex";viewList();}catch(e){toast("失敗: "+e.message);} }
 function toggleAttr(k,v){ if(LST.ak===k&&LST.av===v){LST.ak="";LST.av="";}else{LST.ak=k;LST.av=v;} viewList(); }
 
 /* ---------- CARD ---------- */
@@ -176,18 +176,18 @@ async function viewCard(code){
   var app=document.getElementById("app");
   var d, events=[];
   try{ d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail"); }
-  catch(e){ app.innerHTML=header("顧客カード")+'<div class="err">'+esc(e.message)+'</div>'; return; }
+  catch(e){ app.innerHTML=header("連絡先カード")+'<div class="err">'+esc(e.message)+'</div>'; return; }
   try{ events=(await api("/api/events")).filter?function(){}:[]; }catch(e){}
   try{ var ev=await api("/api/events"); events=(ev.events||ev||[]).filter(function(x){return x.contact===code}); }catch(e){events=[]}
   var attrRows=DEFS.map(function(df){var v=(d.attrs||{})[df.key];return v?'<div class="frow"><span class="fl" style="color:#6b4bd6">'+esc(df.key)+'</span><span class="fv">'+esc(v)+'</span></div>':''}).join("");
   var visitRows=events.slice(0,6).map(function(e){return '<div class="frow"><span class="fl">'+esc(e.label||e.kind)+'</span><span class="fv" style="color:#8a8f98;font-weight:500">'+(e.status==="confirmed"?"確定":"仮")+'・自動</span></div>'}).join("")||'<div class="memo" style="color:#9aa1aa">まだ記録なし（返信すると自動で貯まる）</div>';
-  app.innerHTML=header("顧客カード")
+  app.innerHTML=header("連絡先カード")
     +'<div class="hd" style="position:static;border-top:none"><div class="t" style="font-size:20px">'+esc(d.code)+' <span class="rk '+esc(d.rank)+'" style="display:inline-flex">'+esc(d.rank)+'</span></div><button class="b" onclick="go(\'edit/'+encodeURIComponent(code)+'\')">編集</button></div>'
     +'<div class="frow"><span class="fl">本名</span><span class="fv">'+esc(d.real_name||"—")+'</span></div>'
     +'<div class="frow"><span class="fl">電話番号</span><span class="fv">'+esc(d.phone||"—")+'</span></div>'
     +(d.stand?'<div class="frow"><span class="fl">立場</span><span class="fv">'+({senior:"先輩",equal:"対等",junior:"後輩"}[d.stand]||"—")+'</span></div>':'')
     +((Number(d.flag_ero)||Number(d.flag_koi))?'<div class="frow"><span class="fl">対応モード</span><span class="fv" style="color:#C0402C">'+[Number(d.flag_ero)===1?"いなし":(Number(d.flag_ero)===2?"ノリOK":""),Number(d.flag_koi)?"ガチ恋（線引き）":""].filter(Boolean).join(" / ")+'</span></div>':'')
-    +((d.kind&&d.kind!=="customer")?'<div class="frow"><span class="fl">種別</span><span class="fv">'+({peer:"同業者",staff:"店内",excolleague:"元同僚"}[d.kind]||d.kind)+'</span></div>':'')
+    +((d.kind&&d.kind!=="customer")?'<div class="frow"><span class="fl">種別</span><span class="fv">'+({peer:"家族・友人",staff:"その他",excolleague:"元同業"}[d.kind]||d.kind)+'</span></div>':'')
     +((d.birthday||d.kids_bday||d.founding)?'<div class="frow"><span class="fl">記念日</span><span class="fv" style="text-align:right">'+[d.birthday?"誕生日 "+esc(d.birthday):"",d.kids_bday?"子 "+esc(d.kids_bday):"",d.founding?"創立 "+esc(d.founding):""].filter(Boolean).join("<br>")+'</span></div>':'')
     +'<div class="frow"><span class="fl">呼び方</span><span class="fv">'+esc(d.nickname||"—")+'</span></div>'
     +'<div class="frow"><span class="fl">距離感</span><span class="fv"'+(d.register==="keigo_only"?' style="color:#C0402C"':'')+'>'+esc(regLabel(d.register))+'</span></div>'
@@ -198,13 +198,13 @@ async function viewCard(code){
     +'<div class="sec">来店・同伴（返信操作から自動記録）</div>'+visitRows
     +'<div class="sec" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→活かす）</div><div class="memo" style="background:#EEF4EC;border-top:1px solid #C4D8C0;border-bottom:1px solid #C4D8C0;color:#3f6b3d">'+esc(d.note_pos||"—")+'</div>'
     +'<div class="sec" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には出しません）</div><div class="memo" style="background:#FBEDEA;border-top:1px solid #E7C4BC;border-bottom:1px solid #E7C4BC;color:#8a2f22">'+esc(d.note_neg||"—")+'</div>'
-    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact(\''+encodeURIComponent(d.code)+'\',this)">この顧客を削除</button></div>';
+    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact(\''+encodeURIComponent(d.code)+'\',this)">この連絡先を削除</button></div>';
 }
 
 function delContact(code, btn){
   code=decodeURIComponent(code);
   if(btn.getAttribute("data-c")!=="1"){ btn.setAttribute("data-c","1"); btn.textContent="本当に削除？もう一度タップ"; btn.classList.add("armed");
-    setTimeout(function(){ if(btn){btn.setAttribute("data-c","0"); btn.textContent="この顧客を削除"; btn.classList.remove("armed");} }, 3000); return; }
+    setTimeout(function(){ if(btn){btn.setAttribute("data-c","0"); btn.textContent="この連絡先を削除"; btn.classList.remove("armed");} }, 3000); return; }
   api("/api/contacts/"+encodeURIComponent(code)+"/delete","POST").then(function(){ toast("削除しました"); location.hash="list"; }).catch(function(e){ toast("失敗: "+e.message); });
 }
 /* ---------- EDIT / NEW ---------- */
@@ -228,7 +228,7 @@ function paintEdit(){
   var standDim=(EF.kind==="customer"); if(standDim){EF.stand="";}
   var STANDS=[["","なし"],["senior","先輩"],["equal","対等"],["junior","後輩"]];
   var standSeg=STANDS.map(function(r){return '<span class="'+(EF.stand===r[0]?"on":"")+'" onclick="EF.stand=\''+r[0]+'\';renderEdit()">'+r[1]+'</span>'}).join("");
-  var KINDS=[["customer","顧客"],["peer","同業者"],["staff","店内"],["excolleague","元同僚"]];
+  var KINDS=[["customer","柔術仲間"],["peer","家族・友人"],["staff","その他"],["excolleague","元同業"]];
   var kindSeg=KINDS.map(function(r){return '<span class="'+(EF.kind===r[0]?"on":"")+'" onclick="EF.kind=\''+r[0]+'\';renderEdit()">'+r[1]+'</span>'}).join("");
   var aliasList=EF.aliases.map(function(a,i){return '<div class="aliasrow">🔗 <span style="flex:1">'+esc(a)+'</span><button class="alx" onclick="delAlias('+i+')">解除</button></div>'}).join("");
   var attrItems=DEFS.map(function(df){
@@ -240,7 +240,7 @@ function paintEdit(){
     else{inp='<input value="'+esc(v)+'" oninput="EF.attrs[\''+esc(df.key)+'\']=this.value">';}
     return '<div class="fi"><label style="color:#6b4bd6">'+esc(df.key)+'</label>'+inp+'</div>';
   }).join("");
-  app.innerHTML=header(isNew?"新規顧客":"顧客を編集")
+  app.innerHTML=header(isNew?"新規登録":"連絡先を編集")
     +'<div class="glabel">基本（ここだけで動きます）</div><div class="fg">'
     +'<div class="fi"><label>名前(呼び名)</label><input id="ef_code" value="'+esc(EF.code)+'" placeholder="例: 健さん / T.会長"></div>'
     +(isNew?'':'<div style="font-size:10px;color:#8D8674;padding:0 16px 8px;line-height:1.6;border-bottom:1px solid var(--line)">名前を変えて保存すると呼び名が変わります（受信・学習・実績はそのまま引き継ぎ。元の名前は紐付けとして残ります）</div>')
@@ -270,7 +270,7 @@ function paintEdit(){
     +'<div class="fi"><label>電話番号</label><input id="ef_phone" value="'+esc(EF.phone)+'" placeholder="例: 090-1234-5678" inputmode="tel"></div>'
     +'<div class="fi"><label>呼び方</label><input id="ef_nick" value="'+esc(EF.nickname)+'" placeholder="例: あき"></div>'
     +'<div class="fi"><label>タグ</label><input id="ef_tags" value="'+esc(EF.tags)+'" placeholder="VIP,常連 (カンマ区切り)"></div>'
-    +'<div class="fi"'+(standDim?' style="opacity:.4;pointer-events:none"':'')+'><label>立場（先輩後輩）'+(standDim?' <span style="font-size:10px;color:#8D8674;font-weight:400">顧客には不要</span>':'')+'</label><div class="seg">'+standSeg+'</div></div>'
+    +'<div class="fi"'+(standDim?' style="opacity:.4;pointer-events:none"':'')+'><label>立場（目上・目下）'+(standDim?' <span style="font-size:10px;color:#8D8674;font-weight:400">柔術仲間には不要</span>':'')+'</label><div class="seg">'+standSeg+'</div></div>'
     +'</div>'
     +'<div class="glabel">記念日（お祝いLINE用・ご命日は扱いません）</div><div class="fg">'
     +'<div class="fi"><label>誕生日（月-日）</label><input id="ef_bday" value="'+esc(EF.birthday)+'" placeholder="例: 07-20" inputmode="numeric"></div>'
@@ -283,7 +283,7 @@ function paintEdit(){
     +'<div class="fi"><label>補足（役職・業界など）</label><input id="ef_cnote" value="'+esc(EF.company_note)+'" placeholder="例: 代表取締役／不動産デベロッパー"></div>'
     +'</div>'
     +(isNew?'':'<div class="glabel">🔗 LINE紐付け</div>'
-      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの顧客に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
+      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの連絡先に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
       +'<div class="fg">'+(aliasList||'<div class="aliasrow" style="color:#9aa1aa">未紐付け</div>')
       +'<div class="fi"><input id="ef_alias" placeholder="LINE表示名を追加"><button class="btn mini" onclick="addAlias()">追加</button></div></div>')
     +(attrItems?'<div class="glabel">ユーザー定義属性</div><div class="fg">'+attrItems+'</div>':'')
@@ -383,7 +383,7 @@ async function viewTray(){
   }).join("")||'<div class="empty">未紐付けはありません。</div>';
   var mk=muted.map(function(m){return '<div class="mutedrow"><span>🚫 '+esc(m.line_name)+'</span><span class="u" onclick="unmute(\''+esc(m.line_name)+'\')">解除</span></div>'}).join("");
   app.innerHTML=header("未紐付けトレイ")
-    +'<div class="trnote">⚠️ 未知のアカウントはここに隔離。仕事(既存/新規)か私用かを仕分けるまで受信箱に出しません。</div>'
+    +'<div class="trnote">⚠️ 未知のアカウントはここに隔離。どの仲間かを仕分けるまで受信箱に出しません。</div>'
     +pk+(mk?'<div class="sec">私用（取り込まない）一覧</div>'+mk:'')+'<div style="height:24px"></div>';
 }
 function togglePicker(i){var p=document.getElementById("pk"+i);if(p)p.classList.toggle("show")}
@@ -404,7 +404,7 @@ async function viewAttrs(){
   }).join("")||'<div class="empty">まだ属性がありません。下で作成。</div>';
   var types=[["choice","選択肢"],["text","テキスト"],["number","数値"],["date","日付"]];
   app.innerHTML=header("属性の定義")
-    +'<div style="padding:10px 16px;font-size:12px;color:#6b7280">属性は1回作れば全顧客共通の検索軸になります。表記ゆれ防止に「選択肢型」推奨。</div>'
+    +'<div style="padding:10px 16px;font-size:12px;color:#6b7280">属性は1回作れば全連絡先共通の検索軸になります。表記ゆれ防止に「選択肢型」推奨。</div>'
     +cards
     +'<div class="defcard" style="border:1.5px dashed #c9bef2;background:#faf8ff"><div class="dh" style="color:#6b4bd6">＋ 新しい属性を作る</div>'
     +'<div class="fi" style="padding:8px 0"><label>名前</label><input id="nd_key" placeholder="例: 好きな酒"></div>'

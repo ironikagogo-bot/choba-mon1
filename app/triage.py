@@ -57,8 +57,8 @@ def ai_classify(text: str, rank: str) -> tuple[str, str] | None:
     if not config.TRIAGE_AI or not config.ANTHROPIC_API_KEY:
         return None
     system = (
-        "あなたは銀座クラブのホステスの受信LINEを2分類する仕分け係。\n"
-        "urgent=今すぐ返した方がよい(来店/日程/同伴/金銭/急ぎ、相手が返事を待つ問いかけ、"
+        "あなたは本人の受信LINEを2分類する仕分け係。\n"
+        "urgent=今すぐ返した方がよい(日程/約束/金銭/急ぎ、相手が返事を待つ問いかけ、"
         "不満・不機嫌など感情が強い)。\n"
         "batch=急がない(雑談/近況報告/軽い挨拶で、こちらの返事を特に待っていない)。\n"
         "皮肉や遠回しな催促・感情の強さも汲む。判断は控えめに——迷ったら urgent にしない(ノイズ削減優先)。\n"
