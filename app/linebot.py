@@ -50,6 +50,17 @@ def ensure():
           data TEXT DEFAULT '{}',      -- フロー別カーソル等(JSON)
           updated_ts REAL
         );
+        CREATE TABLE IF NOT EXISTS linebot_facts(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact TEXT NOT NULL,
+          k TEXT NOT NULL,             -- 項目名(誕生日/好きなお酒 等)
+          v TEXT NOT NULL,             -- 抽出値
+          src TEXT DEFAULT '',         -- 出典(実引用の断片)
+          conf TEXT DEFAULT '中',      -- 高/中/低
+          alts TEXT DEFAULT '[]',      -- 代替候補(JSON配列)
+          status TEXT DEFAULT 'pending',  -- pending/applied/fixed/deleted/skipped
+          created_ts REAL
+        );
         """)
 
 
@@ -216,7 +227,7 @@ def build_queue():
                       "rank": c.get("rank") or "B",
                       "reason": m.get("reason") or "",
                       "urgent": 1 if m["category"] == "urgent" else 0,
-                      "text": (m.get("text") or "")[:120]})
+                      "text": (m.get("text") or "")[:1000]})
     return items
 
 
@@ -314,18 +325,27 @@ def rep_item_msgs(uid, st):
     d["cur_drafts"] = ds
     set_state(uid, "rep", d)
     mark = "" if not it["urgent"] else "・急ぎ"
+    # 受信文の表示: 600字まで。それ以上は「…(続きあり)」+📄全文ボタン(v79)
+    full = db.get_message(it["mid"]) or {}
+    full_text = full.get("text") or it["text"]
+    shown = full_text[:600]
+    truncated = len(full_text) > 600
     card = flexmsg(f"📨 {i+1}/{len(q)}｜{it['contact']}（{it['rank']}{mark}）",
-                   f"「{it['text']}」\n({it['reason']})",
+                   f"「{shown}" + ("…\n(続きあり→📄全文)" if truncated else "」")
+                   + f"\n({it['reason']})",
                    accent=RED if it["urgent"] else GOLD,
                    footer=f"{FWD}【{it['contact']} 宛】")
     msgs = [card] + [txt(x) for x in ds if x]
-    msgs[-1]["quickReply"] = _quick([
+    quick = [
         ("案1を転送した→次へ", "f=rep&a=d1"),
         ("案2を転送した→次へ", "f=rep&a=d2"),
         ("自分で書いた→次へ", "f=rep&a=self"),
         ("あとで", "f=rep&a=later"),
         ("スキップ", "f=rep&a=skip"),
-    ])
+    ]
+    if truncated:
+        quick.insert(2, ("📄 全文を見る", "f=rep&a=full"))
+    msgs[-1]["quickReply"] = _quick(quick)
     return msgs
 
 
@@ -360,6 +380,22 @@ def rep_action(uid, token, a, p):
     if a == "resume":
         loading(uid, 20)
         return reply(token, rep_item_msgs(uid, st)[:5])
+    if a == "full":
+        # 📄全文表示(v79): 白い吹き出しにしない(下書きと混ざるため)。カーソルは進めない
+        full = (db.get_message(it["mid"]) or {}).get("text") or it["text"]
+        msgs = []
+        for j in range(0, min(len(full), 5200), 1750):
+            msgs.append(flexmsg(f"📄 {it['contact']}からの全文" + (f"({j//1750+1})" if len(full) > 1750 else ""),
+                                full[j:j+1750], accent=BLUE))
+        msgs = msgs[:4]
+        msgs[-1]["quickReply"] = _quick([
+            ("案1を転送した→次へ", "f=rep&a=d1"),
+            ("案2を転送した→次へ", "f=rep&a=d2"),
+            ("自分で書いた→次へ", "f=rep&a=self"),
+            ("あとで", "f=rep&a=later"),
+            ("スキップ", "f=rep&a=skip"),
+        ])
+        return reply(token, msgs)
     if a == "restart":
         d["ri"] = 0
         set_state(uid, "rep", d)
@@ -530,11 +566,288 @@ def handle_file(uid, token, message):
             crm.add_alias(nm, nm)
             registered.append(nm)
     db.track("linebot_txt_import")
+    # 📇 事実抽出(v78): 相手ごとにLLMで誕生日・好み等を掘り、確認待ちに積む
+    n_facts = 0
+    for nm in profiled[:3]:
+        try:
+            facts = extract_facts(text, nm, self_name)
+            save_facts(nm, facts)
+            n_facts += len(facts)
+        except Exception as e:
+            print(f"[linebot facts save] {e}", flush=True)
+    n_pend = len(pending_facts())
     body = (f"✓ あなた={self_name} として {p.n_messages}文を学習\n"
             f"✓ 相手別の口調: {len(profiled)}人分\n"
-            + (f"✓ 新規カード: {'・'.join(registered[:5])}" if registered else "✓ 既存カードに紐付けました"))
+            + (f"✓ 新規カード: {'・'.join(registered[:5])}" if registered else "✓ 既存カードに紐付けました")
+            + (f"\n🔎 カードに載せられそうな情報を{n_facts}件見つけました" if n_facts else ""))
+    quick = [("ホームへ", "m=home")]
+    if n_pend:
+        quick.insert(0, (f"🔎 抽出を確認({n_pend}件)", "m=fact"))
     return reply(token, [flexmsg(f"📄 「{name}」を取り込みました", body, accent=GREEN,
-                                 quick=[("ホームへ", "m=home")])])
+                                 quick=quick)])
+
+
+# ============ 📇 txt抽出→タップ確認(カード整備) ============
+
+FACT_KEYS = ("呼び名", "誕生日", "好きなお酒", "好きな食べ物", "仕事", "記念日",
+             "同伴・アフター", "注意点", "その他")
+
+
+def extract_facts(text, partner, self_name):
+    """トーク履歴から顧客カード向けの事実をLLM抽出。失敗時は[]（取り込み自体は成功扱い）。"""
+    if not config.ANTHROPIC_API_KEY:
+        return []
+    talk = text[-48000:]
+    prompt = (
+        f"以下は{self_name}(ホステス)と{partner}(相手)のLINEトーク履歴。"
+        f"{partner}の顧客カードに載せる事実だけを抽出せよ。\n"
+        f"項目名は次から選ぶ: {'/'.join(FACT_KEYS)}\n"
+        "ルール:\n"
+        "- 履歴に根拠のある事実のみ。推測で作らない。無ければ出さない\n"
+        f"- 呼び名={self_name}が{partner}を実際どう呼んでいるか\n"
+        "- src=根拠となる実際の発言の断片(40字以内)\n"
+        "- conf=高(複数回/明言)・中(1回だが明確)・低(弱い根拠)\n"
+        "- alts=同じ項目の別解釈があれば最大2つ\n"
+        "- 最大8項目\n"
+        '出力はJSON配列のみ: [{"k":"誕生日","v":"8月19日","src":"来週誕生日なんだ","conf":"高","alts":[]}]\n'
+        f"---\n{talk}"
+    )
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": config.ANTHROPIC_API_KEY,
+                     "anthropic-version": "2023-06-01", "content-type": "application/json"},
+            json={"model": config.ANTHROPIC_MODEL, "max_tokens": 1200,
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=45)
+        r.raise_for_status()
+        out = "".join(b.get("text", "") for b in r.json().get("content", []))
+        out = out[out.index("["):out.rindex("]") + 1]
+        facts = json.loads(out)
+    except Exception as e:
+        print(f"[linebot facts] {type(e).__name__}: {e}", flush=True)
+        return []
+    ok = []
+    for f in facts[:8]:
+        k = str(f.get("k", "")).strip()
+        v = str(f.get("v", "")).strip()
+        if not k or not v or k not in FACT_KEYS:
+            continue
+        ok.append({"k": k, "v": v[:80], "src": str(f.get("src", ""))[:60],
+                   "conf": f.get("conf") if f.get("conf") in ("高", "中", "低") else "中",
+                   "alts": [str(a)[:40] for a in (f.get("alts") or [])[:2]]})
+    return ok
+
+
+def save_facts(contact, facts):
+    ensure()
+    with db.conn() as c:
+        for f in facts:
+            # 同じ(contact,k,v)のpendingが既にあれば重複保存しない
+            r = c.execute("SELECT id FROM linebot_facts WHERE contact=? AND k=? AND v=? "
+                          "AND status='pending'", (contact, f["k"], f["v"])).fetchone()
+            if r:
+                continue
+            c.execute("INSERT INTO linebot_facts(contact,k,v,src,conf,alts,status,created_ts) "
+                      "VALUES(?,?,?,?,?,?, 'pending', ?)",
+                      (contact, f["k"], f["v"], f["src"], f["conf"],
+                       json.dumps(f["alts"], ensure_ascii=False), time.time()))
+
+
+def pending_facts():
+    ensure()
+    with db.conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM linebot_facts WHERE status='pending' ORDER BY id")]
+
+
+def _set_fact_status(fid, status):
+    with db.conn() as c:
+        c.execute("UPDATE linebot_facts SET status=? WHERE id=?", (status, fid))
+
+
+def _get_fact(fid):
+    with db.conn() as c:
+        r = c.execute("SELECT * FROM linebot_facts WHERE id=?", (fid,)).fetchone()
+        return dict(r) if r else None
+
+
+def apply_fact(contact, k, v):
+    """確定した事実を実カードへ書き込む。"""
+    from . import crm
+    if k == "誕生日":
+        with db.conn() as c:
+            c.execute("UPDATE contacts SET birthday=? WHERE code=?", (v, contact))
+    elif k == "呼び名":
+        try:
+            crm.add_alias(contact, v)
+        except Exception:
+            pass
+        crm.add_def("呼び名")
+        crm.set_attr(contact, "呼び名", v)
+    else:
+        crm.add_def(k)
+        crm.set_attr(contact, k, v)
+    db.track("linebot_fact_apply")
+
+
+def fact_card(token, prefix=None):
+    """次のpending項目を1枚カードで出す。無ければ完了。"""
+    pend = pending_facts()
+    head = prefix or []
+    if not pend:
+        with db.conn() as c:
+            done = c.execute("SELECT COUNT(*) FROM linebot_facts WHERE status IN "
+                             "('applied','fixed')").fetchone()[0]
+        return reply(token, head + [flexmsg("📇 カード整備、完了です",
+                                            f"確認済みの項目は顧客カードに反映済み(累計{done}件)。"
+                                            "カードは🗂顧客タブから見られます。",
+                                            accent=GREEN,
+                                            quick=[("🗂 顧客を見る", "m=crm"), ("ホームへ", "m=home")])])
+    f = pend[0]
+    n = len(pend)
+    dots = {"高": "●●●", "中": "●●○", "低": "●○○"}[f["conf"]]
+    return reply(token, head + [flexmsg(
+        f"📇 {f['contact']}｜{f['k']}（残り{n}件）",
+        f"【{f['v']}】\n\n出典:「{f['src']}」\n確信度: {dots}",
+        quick=[("○ 合ってる", f"f=fact&a=ok&i={f['id']}"),
+               ("✕ 違う", f"f=fact&a=no&i={f['id']}"),
+               ("スキップ", f"f=fact&a=skip&i={f['id']}"),
+               ("やめる(続きは🔎から)", "m=home")])])
+
+
+def fact_fix_card(uid, token, f):
+    set_state(uid, "factfix", {"fid": f["id"]})
+    try:
+        alts = json.loads(f["alts"] or "[]")
+    except Exception:
+        alts = []
+    quick = [(a[:20], f"f=fact&a=alt&i={f['id']}&j={j}") for j, a in enumerate(alts)]
+    quick.append(("この項目を消す", f"f=fact&a=del&i={f['id']}"))
+    return reply(token, [flexmsg(f"✕ では「{f['k']}」の正しい内容は？",
+                                 "候補をタップするか、そのまま正しい内容をタイプして送ってください。",
+                                 accent=RED, quick=quick)])
+
+
+def fact_action(uid, token, a, p):
+    fid = p.get("i", "")
+    f = _get_fact(int(fid)) if str(fid).isdigit() else None
+    if not f or f["status"] != "pending":
+        return fact_card(token, prefix=[flexmsg("そのボタンは処理済みです☺️", accent=BLUE)])
+    if a == "ok":
+        apply_fact(f["contact"], f["k"], f["v"])
+        _set_fact_status(f["id"], "applied")
+        set_state(uid, "", {})
+        return fact_card(token, prefix=[stamp(f"✓ {f['k']}＝{f['v']} で反映")])
+    if a == "no":
+        return fact_fix_card(uid, token, f)
+    if a == "alt":
+        try:
+            v = json.loads(f["alts"] or "[]")[int(p.get("j", "0"))]
+        except Exception:
+            return fact_fix_card(uid, token, f)
+        apply_fact(f["contact"], f["k"], v)
+        with db.conn() as c:
+            c.execute("UPDATE linebot_facts SET status='fixed', v=? WHERE id=?", (v, f["id"]))
+        set_state(uid, "", {})
+        return fact_card(token, prefix=[stamp(f"✓ {f['k']}を「{v}」に直して反映")])
+    if a == "del":
+        _set_fact_status(f["id"], "deleted")
+        set_state(uid, "", {})
+        return fact_card(token, prefix=[stamp(f"✕ {f['k']}は消しました(カードに載せません)")])
+    if a == "skip":
+        _set_fact_status(f["id"], "skipped")
+        set_state(uid, "", {})
+        return fact_card(token, prefix=[stamp(f"↷ {f['k']}はあとで(PWAでも直せます)")])
+    return fact_card(token)
+
+
+def fact_typed(uid, token, text):
+    """✕違う→自由入力で確定。"""
+    st = get_state(uid)
+    fid = st["data"].get("fid")
+    f = _get_fact(fid) if fid else None
+    set_state(uid, "", {})
+    if not f or f["status"] != "pending":
+        return fact_card(token, prefix=[flexmsg("入力先の項目が見つかりませんでした", accent=BLUE)])
+    v = text.strip()[:80]
+    apply_fact(f["contact"], f["k"], v)
+    with db.conn() as c:
+        c.execute("UPDATE linebot_facts SET status='fixed', v=? WHERE id=?", (v, f["id"]))
+    return fact_card(token, prefix=[stamp(f"✓ {f['k']}を「{v}」に直して反映")])
+
+
+# ============ 🗂 顧客タブ(LINE内カード閲覧) ============
+
+from urllib.parse import quote as _q, unquote as _uq
+
+PAGE = 11
+
+
+def _crm_contacts():
+    from . import crm
+    crm.ensure()
+    with db.conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT code, rank, kind, last_visit_ts, birthday FROM contacts "
+            "WHERE IFNULL(linked,1)!=0 AND IFNULL(kind,'customer') IN ('customer','peer') "
+            "ORDER BY CASE rank WHEN 'S' THEN 0 WHEN 'A' THEN 1 ELSE 2 END, code")]
+    return rows
+
+
+def crm_list_msgs(pg=0):
+    rows = _crm_contacts()
+    if not rows:
+        return [flexmsg("🗂 まだ顧客カードがありません",
+                        "トーク履歴の.txtをこのトークに送ると、自動で作られます。",
+                        quick=[("ホームへ", "m=home")])]
+    total = len(rows)
+    by_rank = {"S": 0, "A": 0, "B": 0}
+    for r in rows:
+        by_rank[r["rank"] if r["rank"] in by_rank else "B"] += 1
+    page = rows[pg * PAGE:(pg + 1) * PAGE]
+    quick = [(f"{r['rank']}｜{r['code']}"[:20], f"m=card&c={_q(r['code'], safe='')}") for r in page]
+    if (pg + 1) * PAGE < total:
+        quick.append((f"次の{min(PAGE, total-(pg+1)*PAGE)}人 →", f"m=crm&pg={pg+1}"))
+    quick.append(("ホームへ", "m=home"))
+    names = "\n".join(f"・{r['rank']}｜{r['code']}" for r in page)
+    return [flexmsg(f"🗂 顧客カード {total}人（S{by_rank['S']}・A{by_rank['A']}・B{by_rank['B']}）",
+                    names, footer="下のボタンで開きます👇", quick=quick)]
+
+
+def card_msgs(code):
+    from . import crm
+    d = crm.contact_detail(code)
+    if not d:
+        return [flexmsg("カードが見つかりませんでした", accent=BLUE, quick=[("🗂 一覧へ", "m=crm")])]
+    lines = []
+    kind_lab = {"customer": "顧客", "staff": "店内", "peer": "同業", "private": "私用"}.get(
+        d.get("kind") or "customer", "顧客")
+    lines.append(f"ランク: {d.get('rank') or 'B'}　種別: {kind_lab}")
+    if d.get("birthday"):
+        lines.append(f"🎂 誕生日: {d['birthday']}")
+    if d.get("last_visit_ts"):
+        days = int((time.time() - d["last_visit_ts"]) / 86400)
+        lines.append(f"🍶 最終来店: {days}日前")
+    if d.get("cycle_days"):
+        lines.append(f"周期: {d['cycle_days']}日")
+    if d.get("tags"):
+        lines.append(f"タグ: {d['tags']}")
+    for k, v in list((d.get("attrs") or {}).items())[:8]:
+        lines.append(f"{k}: {v}")
+    if d.get("note"):
+        lines.append(f"メモ: {d['note'][:100]}")
+    al = [a for a in (d.get("aliases") or []) if a != code]
+    if al:
+        lines.append(f"別名: {'・'.join(al[:3])}")
+    if len(lines) <= 1:
+        lines.append("(まだ情報が少ないです。txt取り込みや🔎整備で貯まります)")
+    cq = _q(code, safe="")
+    return [flexmsg(f"🗂 {code}", "\n".join(lines),
+                    quick=[("ランクS", f"f=crank&c={cq}&v=S"),
+                           ("ランクA", f"f=crank&c={cq}&v=A"),
+                           ("ランクB", f"f=crank&c={cq}&v=B"),
+                           ("🗂 一覧へ", "m=crm"), ("ホームへ", "m=home")])]
 
 
 # ============ ルーター ============
@@ -542,6 +855,10 @@ def handle_file(uid, token, message):
 def route_postback(uid, data, token):
     p = dict(kv.split("=", 1) for kv in (data or "").split("&") if "=" in kv)
     m = p.get("m")
+    # ✕違う→入力待ち(factfix)のまま別画面へ移動したら、入力待ちを解除する
+    # (次に打った無関係な文字を修正値として誤って食わないため)
+    if get_state(uid)["flow"] == "factfix" and p.get("f") != "fact":
+        set_state(uid, "", {})
     if m == "home":
         st = get_state(uid)
         set_state(uid, "", st["data"])   # カーソルは保持(📨で「続きから」を出せる)
@@ -554,6 +871,24 @@ def route_postback(uid, data, token):
                                      "この帳場くんの利用者になります。", accent=GREEN)])
     if m == "rep":
         return start_rep(uid, token)
+    if m == "crm":
+        try:
+            pg = int(p.get("pg", "0"))
+        except Exception:
+            pg = 0
+        db.track("linebot_crm")
+        return reply(token, crm_list_msgs(pg))
+    if m == "card":
+        return reply(token, card_msgs(_uq(p.get("c", ""))))
+    if m == "fact":
+        n = len(pending_facts())
+        if not n:
+            return reply(token, [flexmsg("🔎 確認待ちの抽出はありません",
+                                         "トーク履歴の.txtを送ると、カードに載せられそうな情報を拾って"
+                                         "ここに並べます。",
+                                         quick=[("🗂 顧客を見る", "m=crm"), ("ホームへ", "m=home")])])
+        return fact_card(token, prefix=[cover("🔎 カード整備",
+                                              f"抽出した{n}件を確認します。全部タップ、1件5秒")])
     if m == "news":
         return reply(token, news_msgs())
     if m == "anni":
@@ -567,6 +902,16 @@ def route_postback(uid, data, token):
     f = p.get("f")
     if f == "rep":
         return rep_action(uid, token, p.get("a", ""), p)
+    if f == "fact":
+        return fact_action(uid, token, p.get("a", ""), p)
+    if f == "crank":
+        code = _uq(p.get("c", ""))
+        v = p.get("v", "B")
+        if v in ("S", "A", "B") and db.get_contact(code):
+            with db.conn() as c:
+                c.execute("UPDATE contacts SET rank=? WHERE code=?", (v, code))
+            return reply(token, [stamp(f"✓ {code}をランク{v}にしました")] + card_msgs(code))
+        return reply(token, card_msgs(code))
     return reply(token, home_msgs())
 
 
@@ -646,6 +991,12 @@ def _handle(ev, etype, token, uid):
             if t in ("ホーム", "メニュー", "home"):
                 set_state(uid, "", {})
                 reply(token, home_msgs())
+            elif get_state(uid)["flow"] == "factfix":
+                fact_typed(uid, token, t)
+            elif t in ("顧客", "カード"):
+                reply(token, crm_list_msgs(0))
+            elif t in ("整備", "抽出"):
+                route_postback(uid, "m=fact", token)
             elif t == "ひも付け解除":
                 reply(token, [flexmsg("🔓 ひも付けを解除しますか?",
                                       "解除すると、次に合言葉(玄関パスワード)を送った人が"
@@ -685,9 +1036,10 @@ async def line_webhook(request: Request):
 # ============ リッチメニュー(画像は同梱の静的PNG=実行時PIL不要) ============
 
 MENU_ITEMS = [
-    ("返信", "m=rep"), ("アナウンス", "m=ann"), ("お礼", "m=orei"),
-    ("ネタ", "m=news"), ("記念日", "m=anni"), ("状況", "m=dash"),
+    ("返信", "m=rep"), ("顧客", "m=crm"), ("ネタ", "m=news"), ("状況", "m=dash"),
+    ("アナウンス", "m=ann"), ("お礼", "m=orei"), ("記念日", "m=anni"), ("整備", "m=fact"),
 ]
+MENU_COLS = 4
 
 
 @router.get("/line/setup")
@@ -699,10 +1051,10 @@ def line_setup(key: str = ""):
     img_path = os.path.join(os.path.dirname(__file__), "static", "lineimg", "richmenu.png")
     if not os.path.exists(img_path):
         return {"error": "richmenu.png がありません"}
-    cw, ch = 2496 // 3, 842 // 2
+    cw, ch = 2496 // MENU_COLS, 842 // 2
     areas = []
     for idx, (_, data) in enumerate(MENU_ITEMS):
-        x, y = (idx % 3) * cw, (idx // 3) * ch
+        x, y = (idx % MENU_COLS) * cw, (idx // MENU_COLS) * ch
         areas.append({"bounds": {"x": x, "y": y, "width": cw, "height": ch},
                       "action": {"type": "postback", "data": data}})
     r = requests.post(f"{API}/v2/bot/richmenu", headers=_hdr(), json={
