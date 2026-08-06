@@ -216,7 +216,7 @@ def _template_one(v, mode) -> str:
     return f"{name}さん こんにちは。落ち着いたら、また顔を見せてくださいね。"
 
 
-def _generate_one_ai(v, mode, template, now):
+def _generate_one_ai(v, mode, template, now, purpose=""):
     profile = db.get_profile("_global") or {}
     per = db.get_profile(v["code"]) or {}
     cp = contact_profile_block(per)
@@ -232,11 +232,26 @@ def _generate_one_ai(v, mode, template, now):
     if mode == "thanks":
         angle = _THANKS_ANGLES[_seed(v["code"]) % len(_THANKS_ANGLES)]
         ctx_lines.append(f"今回のお礼の切り口(この方向で・他の相手と被らせない): {angle}")
+    if mode != "thanks" and purpose:
+        ctx_lines.append(f"配信の種類: {purpose}")
     if mode != "thanks" and template:
-        ctx_lines.append(f"送りたい趣旨のたたき台(そのまま使わず、本人の声で自然に): 「{template}」")
+        # v103: 本人が書いた内容は「たたき台」ではなく必達事項(以前は無視されがちだった実バグ)
+        ctx_lines.append("★最優先・必達内容(この配信で伝えたいこと。全員の文面に必ず含める。"
+                        f"言い回しは本人の口調に直してよいが、情報・事実は削らない): 「{template}」")
+    if mode != "thanks":
+        ctx_lines.append("個別化の義務: 上の顧客カード・タグ・この相手への実例から、"
+                         "この相手専用のひとことを必ず1点入れる(全員同文の使い回しは禁止)。"
+                         "カードに使える事実が無い相手は呼び名・距離感の調整だけでよい。")
+    # v101: 顧客カードを配信生成にも実接続
+    try:
+        from . import crm as _crm
+        _cb = _crm.card_prompt_block(v["code"])
+    except Exception:
+        _cb = ""
     user_prompt = (
         f"{profile_prompt_block(profile)}\n\n"
         + (f"{cp}\n\n" if cp else "")
+        + (f"{_cb}\n\n" if _cb else "")
         + "\n".join(ctx_lines)
         + "\n\nこの相手に送る一言を1つ、JSONで。"
     )
@@ -265,16 +280,19 @@ def _generate_one_ai(v, mode, template, now):
     return text
 
 
-def generate(mode="greeting", ranks=None, tags=None, template="", now=None, codes=None) -> dict:
+def generate(mode="greeting", ranks=None, tags=None, template="", now=None, codes=None,
+             purpose="") -> dict:
     """あて先を選び、一人ずつ違う下書きを一括生成して返す(保存も送信もしない)。
-    codes 指定時はその相手だけ(UIで個別に外した人を除く)。"""
+    codes 指定時はその相手だけ(UIで個別に外した人を除く)。
+    template=必達内容(本人が書いた文) / purpose=配信の種類(出勤・イベント等)。"""
     now = now or time.time()
     recips = select_recipients(ranks, tags, mode, now, codes)
     ai = bool(config.ANTHROPIC_API_KEY)
     items = []
     for v in recips:
         try:
-            text = _generate_one_ai(v, mode, template, now) if ai else _template_one(v, mode)
+            text = (_generate_one_ai(v, mode, template, now, purpose=purpose)
+                    if ai else _template_one(v, mode))
             row_ai = ai
         except Exception:
             text = _template_one(v, mode)

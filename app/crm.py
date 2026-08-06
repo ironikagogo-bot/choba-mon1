@@ -256,6 +256,53 @@ def get_attrs(contact: str) -> dict:
             "SELECT akey,value FROM contact_attrs WHERE contact=?", (contact,))}
 
 
+# ---------- 顧客カード→生成プロンプト(v101: カードを下書き・配信に実接続) ----------
+_SELF_WORDS = ("自分", "本人", "わたし", "私", "me")
+
+
+def card_prompt_block(code: str) -> str:
+    """顧客カードの属性を、下書き/配信生成用のプロンプト断片にする。
+    - 事実は「自然に1〜2点だけ活かす」指示付き(詰め込み禁止)
+    - NG話題は厳守指示
+    - 担当が自分以外なら「出しゃばらない」配慮を厳守指示"""
+    ensure()
+    a = get_attrs(code) or {}
+    lines = []
+    if a.get("呼び名"):
+        lines.append(f"- 呼び名(この相手をこう呼んでいる): {a['呼び名']}")
+    if a.get("進行中の話"):
+        lines.append(f"- 進行中の話(続きに自然に触れると効く): {a['進行中の話']}")
+    for k in ("関係性メモ", "記念日", "家族", "好きなお酒", "好きな食べ物",
+              "趣味・関心", "健康", "仕事・会社", "お気に入りキャスト"):
+        if a.get(k):
+            lines.append(f"- {k}: {a[k]}")
+    block = ""
+    if lines:
+        block = ("この相手の顧客カード(確認済みの事実。全部使わず、今の文脈に合うもの"
+                 "1〜2点だけ自然に活かす。羅列・詰め込みは禁止):\n" + "\n".join(lines))
+    if a.get("NG話題"):
+        block += ("\n【NG話題・厳守】次の話題には絶対に触れない。関連語も本文に書かない: "
+                  f"{a['NG話題']}")
+    tanto = (a.get("担当") or "").strip()
+    if tanto and tanto not in _SELF_WORDS:
+        block += (f"\n【担当への配慮・厳守】この客の担当キャストは自分ではなく「{tanto}」。"
+                  "出しゃばらない・営業をかけすぎない・来店や同伴の強い誘いはしない・"
+                  "担当を立てる軽やかなトーンで、あくまで控えめに。")
+    return block
+
+
+_CARD_PROMPT_KEYS = ("呼び名", "進行中の話", "NG話題", "関係性メモ", "記念日", "家族",
+                     "好きなお酒", "好きな食べ物", "趣味・関心", "健康", "仕事・会社",
+                     "お気に入りキャスト", "担当")
+
+
+def card_used_keys(code: str) -> list:
+    """生成プロンプトに渡ったカード項目名(UIの「カード参照」表示用)。"""
+    ensure()
+    a = get_attrs(code) or {}
+    return [k for k in _CARD_PROMPT_KEYS if a.get(k)]
+
+
 def contact_detail(code: str) -> dict:
     """顧客カード用: 基本情報＋エイリアス＋属性をまとめて返す。"""
     ensure()

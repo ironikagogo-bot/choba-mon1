@@ -214,6 +214,16 @@ def _generate_inner(message_id: int) -> list[dict]:
         user_prompt += f"\nこの相手が喜ぶ・強み(自然に活かす): {_pos}"
     if _neg:
         user_prompt += f"\nこの相手の地雷・注意(触れず避ける。本文にこの語句を絶対書かない): {_neg}"
+    # v101: 顧客カード(整備/LIFFで貯めた属性)を生成に実接続
+    try:
+        from . import crm as _crm
+        _cb = _crm.card_prompt_block(contact["code"])
+    except Exception:
+        _cb = ""
+    if _cb:
+        user_prompt += ("\n\n" + _cb +
+                        "\n↑この相手の顧客カード。返信の文脈に合う事実が1つでもあれば自然に織り込む"
+                        "(呼び名があれば呼びかけに使う)。文脈に合わない事実の無理な挿入はしない。")
     _reg_val = (contact.get("register") or "").strip()
     _reg = REGISTER_RULE.get(_reg_val)
     if _reg:

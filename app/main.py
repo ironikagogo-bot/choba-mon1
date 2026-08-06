@@ -10,7 +10,7 @@ import hmac
 import hashlib
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -64,6 +64,20 @@ try:
 except Exception as _e:
     print(f"[linebot disabled] {_e}", flush=True)
 
+# LIFF(v96・Phase1): SPA + JSON API。認証はLIFF IDトークン/INGEST_TOKEN(liff.py内)
+try:
+    from . import liff as _liff
+    app.include_router(_liff.router)
+except Exception as _e:
+    print(f"[liff disabled] {_e}", flush=True)
+
+# 受信係の死活監視(v97): 無音しきい値超えでLINE push+Webプッシュ。/healthz/reader が外部監視の口
+try:
+    from . import watchdog as _watchdog
+    _watchdog.start()
+except Exception as _e:
+    print(f"[watchdog disabled] {_e}", flush=True)
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -71,7 +85,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _AUTH_COOKIE = "choba_auth"
 # Cookie不要で通す経路: ログイン・機械投入(トークンで別認証)・静的・PWA・ヘルス
 _EXEMPT = ("/login", "/api/login", "/api/logout", "/static/", "/sw.js", "/line/",
-           "/manifest.webmanifest", "/api/android/notify", "/api/quickdraft", "/healthz", "/api/stats")
+           "/manifest.webmanifest", "/api/android/notify", "/api/android/heartbeat",
+           "/api/reader/claim", "/api/quickdraft", "/healthz", "/api/stats",
+           "/liff", "/api/liff/")   # v96: LIFFは自前認証(IDトークン/INGEST_TOKEN)
 _login_hits: dict = {}
 
 _LOGIN_HTML = """<!DOCTYPE html><html lang=ja><head><meta charset=UTF-8>
@@ -198,6 +214,73 @@ def _demo_ai_guard(request: Request):
 def _healthz():
     return {"ok": True}
 
+
+@app.get("/healthz/reader")
+def _healthz_reader():
+    """受信係の死活(v97)。停止中は503を返す=UptimeRobot等の外部監視をそのまま挿せる。
+    ※Render自体のHealth Checkにはこちらではなく /healthz を設定すること。"""
+    from . import watchdog as _wd
+    st = _wd.status()
+    return JSONResponse(st, status_code=200 if st["ok"] else 503)
+
+
+def _reader_token_ok(tok: str, battery=None) -> bool:
+    """v102: リーダー専用トークン(rdr_*) or 旧INGEST_TOKEN の二本立て。"""
+    if tok and tok.startswith("rdr_"):
+        from . import readerauth
+        return readerauth.check(tok, battery=battery)
+    if config.INGEST_TOKEN and tok == config.INGEST_TOKEN:
+        return True
+    return bool(not config.INGEST_TOKEN and not (config.STRICT_AUTH and not config.DEMO))
+
+
+@app.post("/api/android/heartbeat")
+async def android_heartbeat(request: Request):
+    """リーダーv0.5からの生存信号。?token=<rdr_トークン or INGEST_TOKEN>&battery=85"""
+    tok = request.query_params.get("token", "")
+    batt = request.query_params.get("battery")
+    if not _reader_token_ok(tok, battery=batt):
+        return Response(status_code=403)
+    from . import watchdog as _wd
+    _wd.beat(battery=batt)
+    return {"ok": True}
+
+
+_claim_hits: dict = {}
+
+
+@app.post("/api/reader/claim")
+async def reader_claim(request: Request):
+    """v102 リーダーのプロビジョニング(認証前の公開口・レート制限つき)。
+    body: {"code": "QRのワンタイムコード"} または {"password": "玄関パスワード"}
+    成功: {"ok":true, "token":"rdr_...", "name":"帳場くん"} 失敗: 403"""
+    ip = request.client.host if request.client else "?"
+    now = time.time()
+    q = [t for t in _claim_hits.get(ip, []) if now - t < 60]
+    q.append(now)
+    _claim_hits[ip] = q[-30:]
+    if len(q) > 10:
+        return JSONResponse({"error": "しばらくしてからもう一度"}, status_code=429)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    code = (body.get("code") or "").strip()
+    pw = (body.get("password") or "").strip()
+    from . import readerauth
+    ok = False
+    if code:
+        ok = readerauth.claim_code(code)
+    elif pw and config.PASSWORD:
+        ok = hmac.compare_digest(pw.encode("utf-8"), config.PASSWORD.encode("utf-8"))
+    if not ok:
+        print(f"[reader claim reject] ip={ip} via={'code' if code else 'pw'}", flush=True)
+        return JSONResponse({"error": "コードまたはパスワードが違います"}, status_code=403)
+    label = (body.get("label") or "リーダー端末")[:40]
+    token = readerauth.issue(label)
+    db.track("reader_claim")
+    return {"ok": True, "token": token, "name": "帳場くん受信係"}
+
 @app.get("/api/stats")
 def usage_stats(token: str = ""):
     """モニター観測用の統計(件数のみ・本文/相手名は一切含まない)。INGEST_TOKENで認証。
@@ -289,6 +372,24 @@ def usage_stats(token: str = ""):
             "snoozed_now": c.execute("SELECT COUNT(*) FROM snoozed_names WHERE until_ts>?", (time.time(),)).fetchone()[0],
         }
         avg_edit = c.execute("SELECT AVG(edit_ratio) FROM sent_replies WHERE ts>=?", (t14,)).fetchone()[0]
+        # 当日30分毎×属性別(JST・ダッシュボード用 v99)
+        _jst = datetime.timezone(datetime.timedelta(hours=9))
+        _day0 = datetime.datetime.now(_jst).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        _kindmap = {"customer": "customer", "staff": "staff", "peer": "peer"}
+        _slots = [{"received": {}, "sent": {}} for _ in range(48)]
+        for _r in c.execute(
+                "SELECT m.ts, k.kind FROM messages m LEFT JOIN contacts k ON k.code=m.contact "
+                "WHERE m.ts>=?", (_day0,)):
+            _i = min(47, max(0, int((_r[0] - _day0) // 1800)))
+            _k = _kindmap.get(_r[1] or "customer", "other")
+            _slots[_i]["received"][_k] = _slots[_i]["received"].get(_k, 0) + 1
+        for _r in c.execute(
+                "SELECT s.ts, k.kind FROM sent_replies s LEFT JOIN contacts k ON k.code=s.contact "
+                "WHERE s.ts>=?", (_day0,)):
+            _i = min(47, max(0, int((_r[0] - _day0) // 1800)))
+            _k = _kindmap.get(_r[1] or "customer", "other")
+            _slots[_i]["sent"][_k] = _slots[_i]["sent"].get(_k, 0) + 1
+        today_halfhours = {"start_ts": _day0, "slots": _slots}
         # 機能の利用状況(14日・未使用機能の検出)
         c.execute("CREATE TABLE IF NOT EXISTS feature_events("
                   "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, ts REAL NOT NULL)")
@@ -302,7 +403,7 @@ def usage_stats(token: str = ""):
         "hourly": hourly, "actions": actions, "neglected_over_24h": neglected,
         "latency": latency, "by_rank": by_rank, "by_category": by_cat,
         "modes": modes, "avg_edit_ratio": round(avg_edit, 1) if avg_edit is not None else None,
-        "features": features,
+        "features": features, "today_halfhours": today_halfhours,
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/login")
@@ -512,7 +613,12 @@ async def android_notify(request: Request):
         for k, v in body.items():
             if v and not data.get(k):
                 data[k] = str(v)
-    if config.INGEST_TOKEN and not hmac.compare_digest(str(data.get("token", "")), config.INGEST_TOKEN):
+    _tok = str(data.get("token", ""))
+    if _tok.startswith("rdr_"):        # v102: リーダー専用トークン(書き込み専用・失効可)
+        from . import readerauth as _ra
+        if not _ra.check(_tok):
+            raise HTTPException(401, "bad token")
+    elif config.INGEST_TOKEN and not hmac.compare_digest(_tok, config.INGEST_TOKEN):
         raise HTTPException(401, "bad token")
     res = deskservice.SERVICE.android_ingest(
         str(data.get("package", "") or ""),
