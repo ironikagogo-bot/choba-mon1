@@ -50,6 +50,11 @@ def ensure():
           data TEXT DEFAULT '{}',      -- フロー別カーソル等(JSON)
           updated_ts REAL
         );
+        CREATE TABLE IF NOT EXISTS linebot_talks(
+          contact TEXT PRIMARY KEY,    -- 相手ごとの最新txt原文(掘り直し用)
+          text TEXT NOT NULL,
+          ts REAL
+        );
         CREATE TABLE IF NOT EXISTS linebot_facts(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           contact TEXT NOT NULL,
@@ -62,6 +67,15 @@ def ensure():
           created_ts REAL
         );
         """)
+        # 後付け列の保証(新品DB・古いDBのどちらでも落ちない)
+        for tbl, ddl in (("sent_replies", "edited INTEGER DEFAULT 0"),
+                         ("sent_replies", "edit_ratio INTEGER DEFAULT 100"),
+                         ("messages", "acted_ts REAL"),
+                         ("messages", "swept INTEGER DEFAULT 0")):
+            try:
+                c.execute(f"ALTER TABLE {tbl} ADD COLUMN {ddl}")
+            except Exception:
+                pass
 
 
 def _meta_get(k):
@@ -523,10 +537,13 @@ def dash_msgs():
                          (week,)).fetchone()[0]
         nsamp = c.execute("SELECT COUNT(*) FROM sent_replies").fetchone()[0]
     rate = f"{round(verb/sent_n*100)}%" if sent_n else "―"
+    n_prof = (db.get_profile("_global") or {}).get("n_messages") or 0
     return [flexmsg("📊 今日の状況",
-                    f"📨 返信待ち：{len(q)}件\n✍️ 文体サンプル：{nsamp}文\n"
+                    f"📨 返信待ち：{len(q)}件\n"
+                    f"✍️ 文体の学習：txtから{n_prof}文＋送信から{nsamp}文\n"
                     f"📈 今週：送信{sent_n}件・そのまま率{rate}",
-                    quick=[("📨 返信", "m=rep"), ("ホームへ", "m=home")])]
+                    quick=[("📨 返信", "m=rep"), ("✍️ 文体を見る", "m=style"),
+                           ("🗂 顧客", "m=crm"), ("ホームへ", "m=home")])]
 
 
 # ============ txt取り込み ============
@@ -566,23 +583,20 @@ def handle_file(uid, token, message):
             crm.add_alias(nm, nm)
             registered.append(nm)
     db.track("linebot_txt_import")
-    # 📇 事実抽出(v78): 相手ごとにLLMで誕生日・好み等を掘り、確認待ちに積む
-    n_facts = 0
+    # 📄 原文を保存 → 🔎 抽出はバックグラウンドで(v80: reply1分制限と分離・無言失敗の根絶)
     for nm in profiled[:3]:
-        try:
-            facts = extract_facts(text, nm, self_name)
-            save_facts(nm, facts)
-            n_facts += len(facts)
-        except Exception as e:
-            print(f"[linebot facts save] {e}", flush=True)
-    n_pend = len(pending_facts())
+        save_talk(nm, text)
+        dig_async(nm)
+    who = "・".join(profiled[:3]) or "相手"
     body = (f"✓ あなた={self_name} として {p.n_messages}文を学習\n"
-            f"✓ 相手別の口調: {len(profiled)}人分\n"
-            + (f"✓ 新規カード: {'・'.join(registered[:5])}" if registered else "✓ 既存カードに紐付けました")
-            + (f"\n🔎 カードに載せられそうな情報を{n_facts}件見つけました" if n_facts else ""))
-    quick = [("ホームへ", "m=home")]
-    if n_pend:
-        quick.insert(0, (f"🔎 抽出を確認({n_pend}件)", "m=fact"))
+            f"✓ {who} の口調・話題を記憶\n"
+            + (f"✓ 新規カード: {'・'.join(registered[:5])}" if registered
+               else f"✓ {who} の既存カードを更新\n")
+            + "\n🔎 AIがカードに載せる情報を掘っています(30秒〜1分)。"
+              "終わったら下の🔎ボタンかメニューの「整備」で確認できます👇")
+    quick = [("🔎 抽出を確認", "m=fact"),
+             (f"🗂 {profiled[0]}のカード"[:20], f"m=card&c={_q(profiled[0], safe='')}") if profiled else ("🗂 顧客", "m=crm"),
+             ("ホームへ", "m=home")]
     return reply(token, [flexmsg(f"📄 「{name}」を取り込みました", body, accent=GREEN,
                                  quick=quick)])
 
@@ -594,58 +608,118 @@ FACT_KEYS = ("呼び名", "誕生日", "好きなお酒", "好きな食べ物", 
 
 
 def extract_facts(text, partner, self_name):
-    """トーク履歴から顧客カード向けの事実をLLM抽出。失敗時は[]（取り込み自体は成功扱い）。"""
+    """トーク履歴から顧客カード向けの事実をLLM抽出。
+    戻り値: (facts, err)。err=Noneなら成功(0件もあり得る)。"""
     if not config.ANTHROPIC_API_KEY:
-        return []
+        return [], "APIキー未設定"
     talk = text[-48000:]
     prompt = (
-        f"以下は{self_name}(ホステス)と{partner}(相手)のLINEトーク履歴。"
-        f"{partner}の顧客カードに載せる事実だけを抽出せよ。\n"
-        f"項目名は次から選ぶ: {'/'.join(FACT_KEYS)}\n"
+        f"以下は{self_name}(銀座のホステス)と{partner}(相手)のLINEトーク履歴です。"
+        f"{partner}の顧客カードに載せる価値のある事実を抽出してください。\n"
+        f"よく使う項目名: {'/'.join(FACT_KEYS)}(これ以外の項目名も自由に使ってよい)\n"
         "ルール:\n"
-        "- 履歴に根拠のある事実のみ。推測で作らない。無ければ出さない\n"
-        f"- 呼び名={self_name}が{partner}を実際どう呼んでいるか\n"
+        "- 履歴に根拠のある事実のみ。推測で作らない\n"
+        f"- 呼び名={self_name}が{partner}を実際どう呼んでいるか(表示名がローマ字や記号のとき特に重要)\n"
+        "- 本名がわかる場合は項目「本名」で必ず出す\n"
         "- src=根拠となる実際の発言の断片(40字以内)\n"
         "- conf=高(複数回/明言)・中(1回だが明確)・低(弱い根拠)\n"
         "- alts=同じ項目の別解釈があれば最大2つ\n"
-        "- 最大8項目\n"
-        '出力はJSON配列のみ: [{"k":"誕生日","v":"8月19日","src":"来週誕生日なんだ","conf":"高","alts":[]}]\n'
+        "- 3〜10項目。全く無い場合のみ空配列\n"
+        '出力はJSON配列のみ(説明文なし): '
+        '[{"k":"誕生日","v":"8月19日","src":"来週誕生日なんだ","conf":"高","alts":[]}]\n'
         f"---\n{talk}"
     )
+    out = ""
     try:
-        r = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": config.ANTHROPIC_API_KEY,
-                     "anthropic-version": "2023-06-01", "content-type": "application/json"},
-            json={"model": config.ANTHROPIC_MODEL, "max_tokens": 1200,
-                  "messages": [{"role": "user", "content": prompt}]},
-            timeout=45)
-        r.raise_for_status()
-        out = "".join(b.get("text", "") for b in r.json().get("content", []))
-        out = out[out.index("["):out.rindex("]") + 1]
-        facts = json.loads(out)
+        for attempt in range(2):
+            r = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"x-api-key": config.ANTHROPIC_API_KEY,
+                         "anthropic-version": "2023-06-01", "content-type": "application/json"},
+                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 1500,
+                      "messages": [{"role": "user", "content": prompt}] if attempt == 0 else
+                      [{"role": "user", "content": prompt},
+                       {"role": "assistant", "content": out[:1000]},
+                       {"role": "user", "content": "JSON配列のみで出し直してください。前置きや```は不要。"}]},
+                timeout=60)
+            r.raise_for_status()
+            out = "".join(b.get("text", "") for b in r.json().get("content", []))
+            try:
+                arr = out[out.index("["):out.rindex("]") + 1]
+                facts = json.loads(arr)
+                break
+            except (ValueError, json.JSONDecodeError):
+                print(f"[linebot facts parse retry] head={out[:200]!r}", flush=True)
+                if attempt == 1:
+                    return [], "AIの出力を読めませんでした"
+    except requests.Timeout:
+        return [], "時間切れ(トークが長すぎ)"
     except Exception as e:
         print(f"[linebot facts] {type(e).__name__}: {e}", flush=True)
-        return []
+        return [], f"{type(e).__name__}"
     ok = []
-    for f in facts[:8]:
-        k = str(f.get("k", "")).strip()
+    for f in facts[:10]:
+        k = str(f.get("k", "")).strip()[:14]
         v = str(f.get("v", "")).strip()
-        if not k or not v or k not in FACT_KEYS:
+        if not k or not v:
             continue
         ok.append({"k": k, "v": v[:80], "src": str(f.get("src", ""))[:60],
                    "conf": f.get("conf") if f.get("conf") in ("高", "中", "低") else "中",
                    "alts": [str(a)[:40] for a in (f.get("alts") or [])[:2]]})
-    return ok
+    return ok, None
+
+
+def save_talk(contact, text):
+    ensure()
+    with db.conn() as c:
+        c.execute("INSERT INTO linebot_talks(contact,text,ts) VALUES(?,?,?) "
+                  "ON CONFLICT(contact) DO UPDATE SET text=excluded.text, ts=excluded.ts",
+                  (contact, text, time.time()))
+
+
+def _dig_status(contact=None):
+    """掘り(抽出)の進行状況。contact指定なしなら全体サマリを返す。"""
+    ensure()
+    with db.conn() as c:
+        rows = {r["k"][4:]: r["v"] for r in c.execute(
+            "SELECT k, v FROM linebot_meta WHERE k LIKE 'dig_%'")}
+    if contact is not None:
+        return rows.get(contact, "")
+    return rows
+
+
+def dig_async(contact):
+    """バックグラウンドで抽出(reply期限に縛られない)。結果は🔎整備タブで受け取る。"""
+    _meta_set(f"dig_{contact}", f"running:{int(time.time())}")
+
+    def work():
+        try:
+            with db.conn() as c:
+                r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
+            if not r:
+                _meta_set(f"dig_{contact}", "error:トーク原文がありません(txtを再送してください)")
+                return
+            self_name = (db.get_profile("_selfname") or {}).get("name") or "自分"
+            facts, err = extract_facts(r["text"], contact, self_name)
+            if err:
+                _meta_set(f"dig_{contact}", f"error:{err}")
+            else:
+                save_facts(contact, facts)
+                _meta_set(f"dig_{contact}", f"done:{len(facts)}")
+        except Exception as e:
+            _meta_set(f"dig_{contact}", f"error:{type(e).__name__}")
+            print(f"[linebot dig] {e}", flush=True)
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 def save_facts(contact, facts):
     ensure()
     with db.conn() as c:
         for f in facts:
-            # 同じ(contact,k,v)のpendingが既にあれば重複保存しない
-            r = c.execute("SELECT id FROM linebot_facts WHERE contact=? AND k=? AND v=? "
-                          "AND status='pending'", (contact, f["k"], f["v"])).fetchone()
+            # 同じ(contact,k,v)が既にあれば重複保存しない(確定済み・削除済みも含む=掘り直しの二度手間防止)
+            r = c.execute("SELECT id FROM linebot_facts WHERE contact=? AND k=? AND v=?",
+                          (contact, f["k"], f["v"])).fetchone()
             if r:
                 continue
             c.execute("INSERT INTO linebot_facts(contact,k,v,src,conf,alts,status,created_ts) "
@@ -795,24 +869,87 @@ def _crm_contacts():
     return rows
 
 
+def _yobina(code, attrs=None):
+    """表示に使う呼び名。抽出済みなら「呼び名(表示名)」、無ければ表示名。"""
+    from . import crm
+    a = attrs if attrs is not None else crm.get_attrs(code)
+    y = a.get("呼び名") or a.get("本名") or ""
+    if y and y != code:
+        return f"{y}({code})"
+    return code
+
+
 def crm_list_msgs(pg=0):
+    from . import crm
     rows = _crm_contacts()
     if not rows:
         return [flexmsg("🗂 まだ顧客カードがありません",
                         "トーク履歴の.txtをこのトークに送ると、自動で作られます。",
                         quick=[("ホームへ", "m=home")])]
+    # 直近のやりとり順を加味(ランク→直近)
+    with db.conn() as c:
+        last = {r["contact"]: r["mx"] for r in c.execute(
+            "SELECT contact, MAX(ts) mx FROM messages GROUP BY contact")}
+    rows.sort(key=lambda r: ({"S": 0, "A": 1}.get(r["rank"], 2), -(last.get(r["code"]) or 0)))
     total = len(rows)
     by_rank = {"S": 0, "A": 0, "B": 0}
     for r in rows:
         by_rank[r["rank"] if r["rank"] in by_rank else "B"] += 1
     page = rows[pg * PAGE:(pg + 1) * PAGE]
-    quick = [(f"{r['rank']}｜{r['code']}"[:20], f"m=card&c={_q(r['code'], safe='')}") for r in page]
+    lines = []
+    for r in page:
+        attrs = crm.get_attrs(r["code"])
+        disp = _yobina(r["code"], attrs)
+        extra = []
+        if r.get("birthday"):
+            extra.append(f"🎂{r['birthday']}")
+        lt = last.get(r["code"])
+        if lt:
+            dd = int((time.time() - lt) / 86400)
+            extra.append("今日やりとり" if dd == 0 else f"{dd}日前")
+        n_attr = len(attrs)
+        if n_attr:
+            extra.append(f"情報{n_attr}件")
+        lines.append(f"・{r['rank']}｜{disp}" + (f"　{'・'.join(extra)}" if extra else ""))
+    quick = [(f"{r['rank']}｜{_yobina(r['code'])}"[:20], f"m=card&c={_q(r['code'], safe='')}")
+             for r in page]
     if (pg + 1) * PAGE < total:
         quick.append((f"次の{min(PAGE, total-(pg+1)*PAGE)}人 →", f"m=crm&pg={pg+1}"))
     quick.append(("ホームへ", "m=home"))
-    names = "\n".join(f"・{r['rank']}｜{r['code']}" for r in page)
+    foot = "下のボタンで開きます👇"
+    if by_rank["S"] == 0 and by_rank["A"] == 0 and total >= 3:
+        foot = "まだ全員B。カードを開いて太客にS/Aを付けると、返信の優先順位に効きます👇"
     return [flexmsg(f"🗂 顧客カード {total}人（S{by_rank['S']}・A{by_rank['A']}・B{by_rank['B']}）",
-                    names, footer="下のボタンで開きます👇", quick=quick)]
+                    "\n".join(lines), footer=foot, quick=quick)]
+
+
+def style_msgs():
+    """✍️ 何を学習したかの見える化(v80)。"""
+    prof = db.get_profile("_global") or {}
+    n = prof.get("n_messages") or 0
+    if not n:
+        return [flexmsg("✍️ まだ文体を学習していません",
+                        "トーク履歴の.txtを送ると、あなたの言い回し・絵文字の癖を覚えます。",
+                        quick=[("ホームへ", "m=home")])]
+    lines = [f"学習した実例: {n}文"]
+    if prof.get("avg_len"):
+        lines.append(f"平均文長: 約{round(prof['avg_len'])}文字")
+    if prof.get("emoji_per_msg") is not None:
+        lines.append(f"絵文字: 1通あたり約{round(prof['emoji_per_msg'], 1)}個")
+    if prof.get("top_emojis"):
+        lines.append(f"よく使う絵文字: {''.join(prof['top_emojis'][:6])}")
+    if prof.get("top_endings"):
+        lines.append(f"よく使う文末: {'／'.join(prof['top_endings'][:4])}")
+    ex = (prof.get("samples") or [])[:3]
+    if ex:
+        lines.append("\nあなたの実例(下書きはこれを真似ます):")
+        for e in ex:
+            lines.append(f"「{str(e)[:60]}」")
+    with db.conn() as c:
+        n_sent = c.execute("SELECT COUNT(*) FROM sent_replies").fetchone()[0]
+    lines.append(f"\n送信からの追加学習: {n_sent}件(「案◯を転送した」を押すたびに増えます)")
+    return [flexmsg("✍️ 覚えているあなたの文体", "\n".join(lines),
+                    quick=[("🗂 顧客", "m=crm"), ("ホームへ", "m=home")])]
 
 
 def card_msgs(code):
@@ -843,11 +980,15 @@ def card_msgs(code):
     if len(lines) <= 1:
         lines.append("(まだ情報が少ないです。txt取り込みや🔎整備で貯まります)")
     cq = _q(code, safe="")
-    return [flexmsg(f"🗂 {code}", "\n".join(lines),
-                    quick=[("ランクS", f"f=crank&c={cq}&v=S"),
-                           ("ランクA", f"f=crank&c={cq}&v=A"),
-                           ("ランクB", f"f=crank&c={cq}&v=B"),
-                           ("🗂 一覧へ", "m=crm"), ("ホームへ", "m=home")])]
+    quick = [("ランクS", f"f=crank&c={cq}&v=S"),
+             ("ランクA", f"f=crank&c={cq}&v=A"),
+             ("ランクB", f"f=crank&c={cq}&v=B")]
+    with db.conn() as c:
+        has_talk = c.execute("SELECT 1 FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+    if has_talk:
+        quick.append(("🔎 AIで掘り直す", f"f=fact&a=dig&c={cq}"))
+    quick += [("🗂 一覧へ", "m=crm"), ("ホームへ", "m=home")]
+    return [flexmsg(f"🗂 {_yobina(code, d.get('attrs') or {})}", "\n".join(lines), quick=quick)]
 
 
 # ============ ルーター ============
@@ -880,15 +1021,60 @@ def route_postback(uid, data, token):
         return reply(token, crm_list_msgs(pg))
     if m == "card":
         return reply(token, card_msgs(_uq(p.get("c", ""))))
+    if m == "style":
+        return reply(token, style_msgs())
     if m == "fact":
         n = len(pending_facts())
-        if not n:
-            return reply(token, [flexmsg("🔎 確認待ちの抽出はありません",
-                                         "トーク履歴の.txtを送ると、カードに載せられそうな情報を拾って"
-                                         "ここに並べます。",
-                                         quick=[("🗂 顧客を見る", "m=crm"), ("ホームへ", "m=home")])])
-        return fact_card(token, prefix=[cover("🔎 カード整備",
-                                              f"抽出した{n}件を確認します。全部タップ、1件5秒")])
+        if n:
+            return fact_card(token, prefix=[cover("🔎 カード整備",
+                                                  f"抽出した{n}件を確認します。全部タップ、1件5秒")])
+        digs = _dig_status()
+        running, errors, zero = [], [], []
+        for c_, s_ in digs.items():
+            if s_.startswith("running"):
+                try:
+                    t0 = int(s_.split(":")[1])
+                except Exception:
+                    t0 = 0
+                if time.time() - t0 > 300:
+                    # 再起動等でスレッドが死んだ掘り→時限で失敗扱いにする(永遠の「掘っています」防止)
+                    _meta_set(f"dig_{c_}", "error:中断されました(再デプロイ等)")
+                    errors.append((c_, "中断されました(再デプロイ等)"))
+                else:
+                    running.append(c_)
+            elif s_.startswith("error:"):
+                errors.append((c_, s_[6:]))
+            elif s_ == "done:0":
+                zero.append(c_)
+        if running:
+            return reply(token, [flexmsg("🔎 いま掘っています…",
+                                         f"対象: {'・'.join(running[:3])}\n30秒ほどしてから"
+                                         "もう一度このボタンを押してください。",
+                                         accent=BLUE, quick=[("🔎 もう一度", "m=fact"),
+                                                             ("ホームへ", "m=home")])])
+        if errors:
+            c0, why = errors[0]
+            return reply(token, [flexmsg(f"🔎 {c0} の抽出に失敗しました",
+                                         f"理由: {why}\nもう一度掘り直せます👇",
+                                         accent=RED,
+                                         quick=[("🔁 掘り直す", f"f=fact&a=dig&c={_q(c0, safe='')}"),
+                                                ("ホームへ", "m=home")])])
+        # 何も無い: 0件成功の説明+掘り直せる相手(原文保存済み)の案内
+        with db.conn() as c:
+            talks = [r["contact"] for r in c.execute(
+                "SELECT contact FROM linebot_talks ORDER BY ts DESC LIMIT 3")]
+        quick = [(f"🔁 {t}を掘り直す"[:20], f"f=fact&a=dig&c={_q(t, safe='')}") for t in talks]
+        quick += [("🗂 顧客を見る", "m=crm"), ("ホームへ", "m=home")]
+        body = ("トーク履歴の.txtを送ると、AIがカードに載せる情報を拾ってここに並べます。"
+                + ("掘り直しもできます👇" if talks else ""))
+        title = "🔎 確認待ちの抽出はありません"
+        if zero:
+            title = f"🔎 {zero[0]} からは載せられる情報が見つかりませんでした"
+            body = ("トークが雑談中心だとこうなります(異常ではありません)。"
+                    "掘り直すか、別のトーク履歴も送ってみてください👇")
+            for z in zero:
+                _meta_set(f"dig_{z}", "seen")
+        return reply(token, [flexmsg(title, body, quick=quick)])
     if m == "news":
         return reply(token, news_msgs())
     if m == "anni":
@@ -903,6 +1089,19 @@ def route_postback(uid, data, token):
     if f == "rep":
         return rep_action(uid, token, p.get("a", ""), p)
     if f == "fact":
+        if p.get("a") == "dig":
+            c0 = _uq(p.get("c", ""))
+            with db.conn() as c:
+                has = c.execute("SELECT 1 FROM linebot_talks WHERE contact=?", (c0,)).fetchone()
+            if not c0 or not has:
+                return reply(token, [flexmsg("原文が見つかりませんでした",
+                                             "その相手のトーク履歴.txtをもう一度送ってください。",
+                                             accent=RED, quick=[("ホームへ", "m=home")])])
+            dig_async(c0)
+            return reply(token, [flexmsg(f"🔎 {c0} を掘り直しています…",
+                                         "30秒ほどしてから🔎整備を押してください。",
+                                         accent=BLUE, quick=[("🔎 整備を開く", "m=fact"),
+                                                             ("ホームへ", "m=home")])])
         return fact_action(uid, token, p.get("a", ""), p)
     if f == "crank":
         code = _uq(p.get("c", ""))
@@ -995,6 +1194,8 @@ def _handle(ev, etype, token, uid):
                 fact_typed(uid, token, t)
             elif t in ("顧客", "カード"):
                 reply(token, crm_list_msgs(0))
+            elif t in ("文体", "学習"):
+                reply(token, style_msgs())
             elif t in ("整備", "抽出"):
                 route_postback(uid, "m=fact", token)
             elif t == "ひも付け解除":
