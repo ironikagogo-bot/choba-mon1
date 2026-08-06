@@ -55,13 +55,22 @@ def _require_ingest_token(token: str):
     if config.STRICT_AUTH and not config.DEMO:
         raise HTTPException(403, "token not configured")
 
+# 帳場くん(LINE公式アカウント窓口・第1弾)。LINE_CHANNEL_SECRET/TOKEN 設定時のみ有効
+try:
+    from . import linebot as _linebot
+    if _linebot.CHANNEL_SECRET and _linebot.ACCESS_TOKEN:
+        app.include_router(_linebot.router)
+        _linebot.ensure()
+except Exception as _e:
+    print(f"[linebot disabled] {_e}", flush=True)
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # ==================== 玄関認証(パスワード1枚) ====================
 _AUTH_COOKIE = "choba_auth"
 # Cookie不要で通す経路: ログイン・機械投入(トークンで別認証)・静的・PWA・ヘルス
-_EXEMPT = ("/login", "/api/login", "/api/logout", "/static/", "/sw.js",
+_EXEMPT = ("/login", "/api/login", "/api/logout", "/static/", "/sw.js", "/line/",
            "/manifest.webmanifest", "/api/android/notify", "/api/quickdraft", "/healthz", "/api/stats")
 _login_hits: dict = {}
 
