@@ -115,6 +115,7 @@ def resolve_pending(line_name: str, action: str, contact: str = None,
                     rank: str = "B") -> dict:
     """未紐付けトレイの1件を仕分ける。
       action: 'link'(既存客に紐付け) / 'new'(新規客) / 'private'(私用=除外)
+              / 'staff'(店内=黒服・ママ・ちーふ) / 'peer'(同業=ホステス仲間)  ※v73 ゆみさん要望
     戻り値に、取りこぼし防止用の last_text/contact を含める。
     """
     ensure()
@@ -132,12 +133,21 @@ def resolve_pending(line_name: str, action: str, contact: str = None,
             return {"ok": False, "error": "contact required for link"}
         add_alias(name, contact)
         link_contact(contact)
+        # v74: 表示名で自動生成済みの孤児カードが残る問題(ゆみさん「酒井さん2人」)。
+        # 過去の受信ごと既存カードへ吸収して重複を残さない。
+        if name != contact and db.get_contact(name):
+            merge_contact(contact, name)
         target = contact
-    elif action == "new":
+    elif action in ("new", "staff", "peer"):
         code = (contact or name).strip()
         db.upsert_contact(code, rank)
         add_alias(name, code)
         link_contact(code)
+        if action == "staff":
+            mark_staff(code)   # 営業対象外・顧客リスト/実績に載せない
+        elif action == "peer":
+            with db.conn() as c:
+                c.execute("UPDATE contacts SET kind='peer', linked=1 WHERE code=?", (code,))
         target = code
     else:
         return {"ok": False, "error": "bad action"}
@@ -366,6 +376,61 @@ def rename_contact(old: str, new: str) -> dict:
     # 旧名がLINE表示名だった場合に備えて紐付けを残す(重複はON CONFLICTで吸収)
     add_alias(old, new)
     return {"ok": True, "code": new}
+
+
+def merge_contact(keep: str, absorb: str) -> dict:
+    """重複カードの統合(v74・ゆみさん実運用の「酒井さん2人」問題)。
+    absorb側の受信・返信実例・実績・お席・属性・紐付けを keep へ移し、absorb のカードを消す。
+    keep側の設定(ランク・メモ等)が優先。absorb側は空欄の穴埋めにだけ使う。
+    absorbの名前は紐付け(alias)として残る=その表示名からの受信は以後 keep に入る。"""
+    ensure()
+    keep = (keep or "").strip()
+    absorb = (absorb or "").strip()
+    if not keep or not absorb or keep == absorb:
+        return {"ok": False, "error": "統合元と統合先が不正です"}
+    k = db.get_contact(keep)
+    a = db.get_contact(absorb)
+    if not k:
+        return {"ok": False, "error": "残す側のカードが見つかりません"}
+    with db.conn() as c:
+        # データの移動(受信・実例・実績・属性・お席)
+        for tbl, col in (("messages", "contact"), ("sent_replies", "contact"),
+                          ("events", "contact"), ("contact_aliases", "contact"),
+                          ("sittings", "main_contact"), ("sitting_members", "contact")):
+            try:
+                c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (keep, absorb))
+            except Exception:
+                pass
+        # 属性は keep側に同キーがあれば keep優先(absorb側は捨てる)
+        try:
+            c.execute("UPDATE OR IGNORE contact_attrs SET contact=? WHERE contact=?", (keep, absorb))
+            c.execute("DELETE FROM contact_attrs WHERE contact=?", (absorb,))
+        except Exception:
+            pass
+        # 文体プロファイルは keepに無い時だけ移す
+        try:
+            has_k = c.execute("SELECT 1 FROM style_profile WHERE contact=?", (keep,)).fetchone()
+            if has_k:
+                c.execute("DELETE FROM style_profile WHERE contact=?", (absorb,))
+            else:
+                c.execute("UPDATE style_profile SET contact=? WHERE contact=?", (keep, absorb))
+        except Exception:
+            pass
+        # keep側の空欄を absorb側で穴埋め(メモ・タグ・誕生日・周期・会社)
+        if a:
+            for fld in ("note", "tags", "birthday", "cycle_days", "company", "company_url", "company_note",
+                        "nickname", "note_pos", "note_neg"):
+                try:
+                    if not (k.get(fld) or "") and (a.get(fld) or ""):
+                        c.execute(f"UPDATE contacts SET {fld}=? WHERE code=?", (a[fld], keep))
+                except Exception:
+                    pass
+        c.execute("UPDATE contacts SET linked=1 WHERE code=?", (keep,))
+        c.execute("DELETE FROM contacts WHERE code=?", (absorb,))
+        c.execute("DELETE FROM pending_links WHERE line_name=?", (absorb,))
+    # absorbの名前は紐付けとして残す(その表示名からの受信が keep に入り続ける)
+    add_alias(absorb, keep)
+    return {"ok": True, "kept": keep, "absorbed": absorb}
 
 
 def repair_sitting_names():

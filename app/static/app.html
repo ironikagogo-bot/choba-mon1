@@ -66,8 +66,9 @@ button{font-family:inherit;cursor:pointer}
 .btn.shu{background:var(--shu)}
 .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
 .btn:disabled{opacity:.5}
-.acts{display:flex;gap:6px;margin-top:8px}
-.acts button{flex:1;padding:9px 0;border:1px solid var(--line);background:#fff;border-radius:6px;font-size:11.5px;color:var(--muted)}
+.acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.acts button{flex:1;min-width:70px;padding:9px 0;border:1px solid var(--line);background:#fff;border-radius:6px;font-size:11.5px;color:var(--muted)}
+.acts button.done{border-color:#C4D8C0;color:var(--ok);background:#F6FAF4;font-weight:700}
 .confirm-note{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.8;text-align:center}
 .empty{color:var(--muted);font-size:12.5px;margin:4px 18px 8px}
 .note{font-size:11px;color:var(--muted);line-height:1.9;margin:14px 16px}
@@ -128,6 +129,11 @@ body.lockscroll{overflow:hidden;height:100dvh}
 .unkcard{border-left:3px solid var(--gold)}
 .unkbar{background:var(--gold);color:#fff;padding:5px 12px;margin:-13px -14px 10px;font-size:10.5px;font-weight:700;letter-spacing:.05em;display:flex;align-items:center;gap:7px}
 .unkbar .el{margin-left:auto;font-weight:400}
+/* v73(案B): 未登録カードも1時間超で放置エスカレーション(濃赤・点滅・放置チップ) */
+.unkcard.hot{border-left-color:#7d1f16}
+.unkcard.hot .unkbar{background:#7d1f16}
+.unkbar .el.chip{margin-left:auto;background:#fff;color:#7d1f16;border-radius:10px;padding:2px 10px;font-weight:800;font-size:11.5px}
+.unkbar .pulse{width:7px;height:7px;border-radius:50%;background:#fff;animation:pz 1.4s infinite}
 .linename{font-size:10px;color:var(--muted);margin-top:6px}
 .unkask{font-size:12px;color:var(--gold);font-weight:700;margin-top:9px}
 .unkchoice{display:flex;gap:8px;margin-top:8px}
@@ -155,10 +161,11 @@ body.lockscroll{overflow:hidden;height:100dvh}
 .erobtns button:first-child{background:#A0524A;color:#fff;border-color:#A0524A}
 
 /* 店内・業務(黒服/ママ) */
-.unkchoice3{display:flex;gap:6px;margin-top:8px}
-.unkchoice3 button{flex:1;padding:9px 2px;border-radius:7px;font-size:12px;font-weight:700;border:1.5px solid;line-height:1.25;font-family:inherit}
+.unkchoice3{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.unkchoice3 button{flex:1;min-width:74px;padding:9px 2px;border-radius:7px;font-size:12px;font-weight:700;border:1.5px solid;line-height:1.25;font-family:inherit}
 .unkchoice3 .work{background:#EEF4EC;border-color:#C4D8C0;color:var(--ok)}
 .unkchoice3 .staff{background:#EAEEF3;border-color:#C3CEDC;color:#3A5170}
+.unkchoice3 .peer{background:#F8F0F7;border-color:#D9C3D6;color:#8a5a86}
 .unkchoice3 .priv{background:#FBEDEA;border-color:#E7C4BC;color:var(--shu)}
 .unkchoice3 small{display:block;font-size:8.5px;font-weight:400;color:var(--muted);margin-top:1px}
 .card.staff{border-left:3px solid #3A5170;overflow:hidden}
@@ -348,6 +355,7 @@ function draftAreaHtml(mid) {
               <button data-act="selfgo" data-mid="${mid}">✍️ 自分で書く→LINE</button>
               <button data-act="stamped" data-mid="${mid}">スタンプで返す</button>
               <button data-act="deferred" data-mid="${mid}">あとで</button>
+              <button class="done" data-act="done" data-mid="${mid}">✓ 対応済み</button>
               <button data-act="skipped" data-mid="${mid}">対応不要</button>
             </div>`;
   }
@@ -397,7 +405,7 @@ function mediaCardHtml(m) {
   return `<div class="card" id="card-${m.id}">
     <div class="row"><span class="code">${esc(m.contact)}</span>${rankChip(m.rank)}${ctx}</div>
     <div class="msg" style="color:#8D8674">${esc(m.text)}</div>
-    <div class="acts"><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="openline" data-mid="${m.id}">${mediaLabel(m)}</button></div>
+    <div class="acts"><button class="done" data-act="done" data-mid="${m.id}">✓ 対応済み</button><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="openline" data-mid="${m.id}">${mediaLabel(m)}</button></div>
   </div>`;
 }
 function rankChip(r) { return r ? `<span class="rank ${r}">${r}</span>` : ''; }
@@ -410,13 +418,18 @@ function groupCardHtml(m) {
     <div class="row"><span class="code">グループLINE</span><span class="time">${fmtTime(m.ts)}</span></div>
     <div class="reason" style="color:#8D8674">グループ「${esc(m.contact)}」— 誰の発言かは通知に含まれていません</div>
     <div class="msg">${esc(body)}</div>
-    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視</button></div>
+    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button class="done" data-act="done" data-mid="${m.id}">✓ 対応済み</button><button data-act="skipped" data-mid="${m.id}">対応不要</button><button data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視</button></div>
   </div>`;
 }
 function unknownCardHtml(m) {
   if (isGroupUnknown(m)) return groupCardHtml(m);
-  return `<div class="card unkcard" id="card-${m.id}">
-    <div class="unkbar">🆕 未登録の相手<span class="el">${fmtElapsed(m.ts)}</span></div>
+  const _hot = (Date.now() / 1000 - m.ts) >= 3600;  // v73(案B): 1時間超で放置エスカレーション
+  const _pulse = _hot ? '<span class="pulse"></span>' : '';
+  const _elhtml = _hot
+    ? `<span class="el chip">${fmtNeglect(m.ts)}</span>`
+    : `<span class="el">${fmtElapsed(m.ts)}</span>`;
+  return `<div class="card unkcard${_hot ? ' hot' : ''}" id="card-${m.id}">
+    <div class="unkbar">${_pulse}🆕 未登録の相手${_elhtml}</div>
     <div class="row"><span class="code">${esc(m.contact)}</span><span class="reason">${esc(m.reason)}</span></div>
     <div class="msg">${esc(m.text)}</div>
     <div class="linename">🔗 LINEの表示名：${esc(m.contact)}</div>
@@ -424,6 +437,7 @@ function unknownCardHtml(m) {
     <div class="unkchoice3">
       <button class="work" data-act="unkwork" data-contact="${esc(m.contact)}">顧客<small>営業先</small></button>
       <button class="staff" data-act="unkstaff" data-contact="${esc(m.contact)}">店内<small>黒服・ママ</small></button>
+      <button class="peer" data-act="unkpeer" data-contact="${esc(m.contact)}">同業<small>ホステス仲間</small></button>
       <button class="priv" data-act="unkpriv" data-contact="${esc(m.contact)}">私用<small>受け取らない</small></button>
     </div>
     <button class="unksnooze" data-act="unksnooze" data-contact="${esc(m.contact)}">24時間 無視（分類しない）</button>
@@ -460,7 +474,7 @@ function staffGroupHtml(contact, msgs) {
     <div class="row"><span class="code">${esc(contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(last.reason || '')}</span></div>
     <div class="thread">${items.join('')}</div>
     ${staffQuickHtml(last.id, msgs.map((m) => m.text).join(' '))}
-    <div class="acts"><button data-act="openline" data-mid="${last.id}">LINEを見る</button><button data-act="deferred" data-mid="${last.id}">後ほど対応</button></div>
+    <div class="acts"><button data-act="openline" data-mid="${last.id}">LINEを見る</button><button class="done" data-act="done" data-mid="${last.id}">✓ 対応済み</button><button data-act="deferred" data-mid="${last.id}">後ほど対応</button></div>
   </div>`;
 }
 
@@ -481,7 +495,7 @@ function staffCardHtml(m, cls) {
     <div class="row"><span class="code">${esc(m.contact)}</span><span class="stafftag">店内</span><span class="reason" style="color:#3A5170">${esc(m.reason)}</span></div>
     <div class="msg">${esc(m.text)}</div>
     ${staffQuickHtml(m.id, m.text)}
-    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button data-act="deferred" data-mid="${m.id}">後ほど対応</button></div>
+    <div class="acts"><button data-act="openline" data-mid="${m.id}">LINEを見る</button><button class="done" data-act="done" data-mid="${m.id}">✓ 対応済み</button><button data-act="deferred" data-mid="${m.id}">後ほど対応</button></div>
   </div>`;
 }
 const KAWASU_RE = /(下着|ハイレグ|Tバック|エッチ|えっち|裸|セクシー|おっぱい|パンチラ|どぎつい|水着姿|脱いで|脱がし|抱いて|抱くか|激しく)/;
@@ -717,6 +731,12 @@ document.addEventListener('click', async (ev) => {
     catch (e) { toast('失敗しました'); return; }
     toast('店内・業務として登録しました'); loadInbox(true); return;
   }
+  if (act === 'unkpeer') {
+    const c = el.dataset.contact;
+    try { await api('/api/inbox/classify', { contact: c, action: 'peer' }); }
+    catch (e) { toast('失敗しました'); return; }
+    toast('同業（ホステス仲間）として登録しました'); loadInbox(true); return;
+  }
   if (act === 'unkpriv') {
     const c = el.dataset.contact;
     try { await api('/api/inbox/classify', { contact: c, action: 'private' }); }
@@ -794,12 +814,13 @@ document.addEventListener('click', async (ev) => {
     setTimeout(() => { location.href = getHandoff() === 'share' ? ('https://line.me/R/share?text=' + encodeURIComponent(text)) : 'line://nv/chat'; }, 400);
     loadInbox(true); return;
   }
-  if (act === 'replied' || act === 'stamped' || act === 'deferred' || act === 'skipped') {
+  if (act === 'replied' || act === 'stamped' || act === 'deferred' || act === 'skipped' || act === 'done') {
     try {
       await api(`/api/messages/${mid}/action`, { action: act });
       cardState.delete(mid);
       toast({ replied: '記録しました', stamped: 'スタンプを選んで送ってください',
-              deferred: 'あとで箱に移しました', skipped: '対応不要にしました' }[act]);
+              deferred: 'あとで箱に移しました', skipped: '対応不要にしました',
+              done: '対応済みにしました（返信した扱いで記録）' }[act]);
       if (act === 'stamped') setTimeout(() => { location.href = 'line://nv/chat'; }, 400);
       loadInbox(true);
     } catch (e) { toast('記録に失敗しました'); }

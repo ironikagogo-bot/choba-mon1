@@ -168,9 +168,11 @@ def get_message(mid: int):
         return dict(r) if r else None
 
 
-def set_status(mid: int, status: str, auto: bool = False):
+def set_status(mid: int, status: str, auto: bool = False, no_ts: bool = False):
     """auto=True は本人の操作でないシステム都合のクローズ(スレッド一括・残骸整理)。
-    v72(9-7): swept=1 の印を付け、応答時間・返信数などの成績集計から除外する。"""
+    v72(9-7): swept=1 の印を付け、応答時間・返信数などの成績集計から除外する。
+    no_ts=True は「対応済み」(v75): LINEで直接返した等=返信としては数えるが、
+    押した時刻は実際の返信時刻ではないため acted_ts を残さない(応答時間の統計を汚さない)。"""
     with conn() as c:
         for ddl in ("acted_ts REAL", "swept INTEGER DEFAULT 0"):
             try:
@@ -178,7 +180,7 @@ def set_status(mid: int, status: str, auto: bool = False):
             except Exception:
                 pass
         c.execute("UPDATE messages SET status=?, acted_ts=?, swept=? WHERE id=?",
-                  (status, time.time(), 1 if auto else 0, mid))
+                  (status, None if no_ts else time.time(), 1 if auto else 0, mid))
 
 
 def save_drafts(mid: int, drafts):

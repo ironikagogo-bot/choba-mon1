@@ -73,6 +73,9 @@ body{background:var(--bg);color:var(--text);font-family:'Zen Kaku Gothic New',sa
 .tb.link{border-color:#E7D9AE;color:var(--gold);background:var(--goldsoft)}
 .tb.new{border-color:#C4D8C0;color:var(--ok);background:var(--oksoft)}
 .tb.priv{border-color:#E7C4BC;color:var(--shu);background:var(--shusoft)}
+.tb.staff{border-color:#B8C4D9;color:#3A5170;background:#EFF2F8}
+.tb.peer{border-color:#D9C3D6;color:#8a5a86;background:#F8F0F7}
+.tb small{display:block;font-size:9px;font-weight:500;opacity:.75;margin-top:1px}
 .picker{margin-top:8px;display:none}.picker.show{display:block}
 .picker select{width:100%;padding:9px;border-radius:6px;border:1px solid var(--line);font-size:16px;background:var(--soft);font-family:inherit;color:var(--text)}
 .mutedrow{padding:11px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;background:var(--panel);font-size:13px}
@@ -225,6 +228,7 @@ function delContact(code, btn){
 }
 /* ---------- EDIT / NEW ---------- */
 var EF={};
+var MERGE_OPTS=[];  // v74: 統合候補(顧客+店内+同僚+元同僚)
 var EF_MORE=false;   // 「詳しく設定」開閉
 var EF_ISNEW=false;
 async function viewEdit(code){
@@ -235,6 +239,21 @@ async function viewEdit(code){
   if(isNew){ EF={code:"",rank:"B",nickname:"",register:"",tags:"",note:"",real_name:"",phone:"",note_pos:"",note_neg:"",stand:"",birthday:"",kids_bday:"",founding:"",kind:"customer",flag_ero:0,flag_koi:0,company:"",company_url:"",company_note:"",aliases:[],attrs:{}}; }
   else{ try{var d=await api("/api/contacts/"+encodeURIComponent(code)+"/detail");EF={code:d.code,rank:d.rank||"B",nickname:d.nickname||"",register:(d.register==="mix"||d.register==="casual")?"":(d.register||""),tags:d.tags||"",note:d.note||"",real_name:d.real_name||"",phone:d.phone||"",note_pos:d.note_pos||"",note_neg:d.note_neg||"",stand:d.stand||"",birthday:d.birthday||"",kids_bday:d.kids_bday||"",founding:d.founding||"",kind:d.kind||"customer",flag_ero:Number(d.flag_ero)||0,flag_koi:Number(d.flag_koi)||0,company:d.company||"",company_url:d.company_url||"",company_note:d.company_note||"",aliases:d.aliases||[],attrs:d.attrs||{}};}catch(e){app.innerHTML='<div class="err">'+esc(e.message)+'</div>';return;} }
   paintEdit();
+  if(!isNew){ loadMergeOpts().then(function(){ paintEdit(); }); }
+}
+async function loadMergeOpts(){
+  try{
+    var cs=(await api("/api/contacts/search")).contacts||[];
+    var ro=[]; try{ ro=(await api("/api/roster?kinds=peer,staff,excolleague")).roster||[]; }catch(e){}
+    MERGE_OPTS=cs.map(function(c){return c.code;}).concat(ro.map(function(c){return c.code;}));
+  }catch(e){ MERGE_OPTS=[]; }
+}
+async function doMerge(){
+  var sel=document.getElementById("ef_merge"); var absorb=sel&&sel.value;
+  if(!absorb){ toast("吸収するカードを選んでください"); return; }
+  if(!confirm("「"+absorb+"」のデータをこのカード（"+EF.code+"）にまとめて、向こうのカードを削除します。よろしいですか？")) return;
+  try{ await api("/api/merge","POST",{keep:EF.code,absorb:absorb}); toast("統合しました"); go("card/"+encodeURIComponent(EF.code)); }
+  catch(e){ toast("失敗: "+e.message); }
 }
 function paintEdit(){
   var app=document.getElementById("app");
@@ -301,7 +320,10 @@ function paintEdit(){
     +(isNew?'':'<div class="glabel">🔗 LINE紐付け</div>'
       +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">LINEの表示名をこの顧客に結びつけると、次からその名前で来た受信が自動でこのカードに入ります（表示名が変わった時だけ結び直す）。</div>'
       +'<div class="fg">'+(aliasList||'<div class="aliasrow" style="color:#9aa1aa">未紐付け</div>')
-      +'<div class="fi"><input id="ef_alias" placeholder="LINE表示名を追加"><button class="btn mini" onclick="addAlias()">追加</button></div></div>')
+      +'<div class="fi"><input id="ef_alias" placeholder="LINE表示名を追加"><button class="btn mini" onclick="addAlias()">追加</button></div></div>'
+      +'<div class="glabel">🧲 重複カードを統合</div>'
+      +'<div style="font-size:11px;color:#8D8674;line-height:1.7;margin:0 16px 4px">同じ人のカードが2枚あるとき、選んだカードの受信・実績・紐付けを<b>このカードに吸収</b>してまとめます（このカードの名前が残ります）。</div>'
+      +'<div class="fg"><div class="fi"><select id="ef_merge" style="text-align:left"><option value="">吸収するカードを選ぶ…</option>'+MERGE_OPTS.filter(function(n){return n!==EF.code;}).map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>';}).join('')+'</select><button class="btn mini" onclick="doMerge()">統合</button></div></div>')
     +(attrItems?'<div class="glabel">ユーザー定義属性</div><div class="fg">'+attrItems+'</div>':'')
     +'<div class="glabel" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→下書きで活かす）</div><div class="fg"><div class="fi"><textarea id="ef_pos" placeholder="例: 酒癖よし、日本酒好き、聞き上手">'+esc(EF.note_pos)+'</textarea></div></div>'
     +'<div class="glabel" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には絶対出しません）</div><div class="fg"><div class="fi"><textarea id="ef_neg" placeholder="例: ケチ、恐妻家">'+esc(EF.note_neg)+'</textarea></div></div>'
@@ -394,6 +416,8 @@ async function viewTray(){
       +'<div class="tract"><span class="tb link" onclick="togglePicker('+idx+')">既存客に紐付け</span>'
       +'<span class="tb new" onclick="resolveTray('+jarg(p.line_name)+',\'new\')">新規客</span>'
       +'<span class="tb priv" onclick="resolveTray('+jarg(p.line_name)+',\'private\')">私用（除外）</span></div>'
+      +'<div class="tract" style="margin-top:6px"><span class="tb staff" onclick="resolveTray('+jarg(p.line_name)+',\'staff\')">店内<small>黒服・ちーふ・ママ</small></span>'
+      +'<span class="tb peer" onclick="resolveTray('+jarg(p.line_name)+',\'peer\')">同業<small>ホステス仲間</small></span></div>'
       +'<div class="picker" id="pk'+idx+'"><select id="sel'+idx+'">'+opts+'</select>'
       +'<button class="btn mini" style="margin-top:6px" onclick="resolveTray('+jarg(p.line_name)+',\'link\',document.getElementById(\'sel'+idx+'\').value)">この客に紐付ける</button></div></div>';
   }).join("")||'<div class="empty">未紐付けはありません。</div>';
@@ -404,7 +428,8 @@ async function viewTray(){
 }
 function togglePicker(i){var p=document.getElementById("pk"+i);if(p)p.classList.toggle("show")}
 async function resolveTray(name,action,contact){
-  try{ await api("/api/tray/resolve","POST",{line_name:name,action:action,contact:contact||null}); toast(action==="private"?"私用として除外":"仕分けました"); viewTray(); }
+  var msg={private:"私用として除外",staff:"店内として登録",peer:"同業として登録",new:"顧客カードを作成"}[action]||"仕分けました";
+  try{ await api("/api/tray/resolve","POST",{line_name:name,action:action,contact:contact||null}); toast(msg); viewTray(); }
   catch(e){toast("失敗: "+e.message)}
 }
 async function unmute(name){ try{await api("/api/tray/unmute","POST",{line_name:name});toast("解除しました");viewTray();}catch(e){toast(e.message)} }

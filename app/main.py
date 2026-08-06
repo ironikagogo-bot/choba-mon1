@@ -688,12 +688,17 @@ def act(mid: int, body: Action):
     msg = db.get_message(mid)
     if not msg:
         raise HTTPException(404)
-    if body.action not in ("replied", "stamped", "deferred", "skipped"):
+    if body.action not in ("replied", "stamped", "deferred", "skipped", "done"):
         raise HTTPException(400, "bad action")
-    db.set_status(mid, body.action)
+    # v75: 「対応済み」= LINEで直接返した/口頭で済んだ。返信として数えるが、
+    # 押した時刻は本当の返信時刻ではないので応答時間の統計には入れない(acted_ts無し)。
+    if body.action == "done":
+        db.set_status(mid, "replied", no_ts=True)
+    else:
+        db.set_status(mid, body.action)
     # ラリー連投対策: 返信/スタンプは「その相手との未対応スレッド全体」への対応とみなして閉じる。
     # これをしないと連投の残り(古い通)が open のまま残り、コピペ後も同じ会話がカードに再表示され続ける。
-    if body.action in ("replied", "stamped"):
+    if body.action in ("replied", "stamped", "done"):
         try:
             with db.conn() as c:
                 _thread = [dict(r) for r in c.execute(
@@ -701,7 +706,8 @@ def act(mid: int, body: Action):
             for _m in _thread:
                 if (_m["contact"] == msg["contact"] and _m["id"] != mid
                         and (_m["ts"] or 0) <= (msg["ts"] or 0)):
-                    db.set_status(_m["id"], body.action, auto=True)  # v72(9-7): 成績集計から除外
+                    _sw = "replied" if body.action == "done" else body.action
+                    db.set_status(_m["id"], _sw, auto=True)  # v72(9-7): 成績集計から除外
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる
@@ -722,7 +728,7 @@ def act(mid: int, body: Action):
     # 返信したら実績を自動記録(入力ゼロ原則): 来店系→visit、同伴系→dohan
     # ※店内・業務(黒服/ママ)は営業対象外なので実績を記録しない
     _kind = (db.get_contact(msg["contact"]) or {}).get("kind", "customer")
-    if body.action == "replied" and _kind != "staff":
+    if body.action in ("replied", "done") and _kind != "staff":
         _r = msg["reason"] or ""
         if ("来店" in _r) or ("席" in _r):
             db.add_event(msg["contact"], "visit", f"{msg['contact']} 来店(仮)", "tentative")
@@ -877,7 +883,7 @@ def add_contact(body: ContactIn):
     return db.get_contact(body.code)
 
 
-@app.post("/api/contacts/{code}/visit")
+@app.post("/api/contacts/{code:path}/visit")
 def record_visit(code: str):
     """来店を記録(お礼・ご無沙汰判定の元データ)。"""
     if not db.get_contact(code):
@@ -890,7 +896,7 @@ class RankIn(BaseModel):
     rank: str
 
 
-@app.put("/api/contacts/{code}/rank")
+@app.put("/api/contacts/{code:path}/rank")
 def update_rank(code: str, body: RankIn):
     if not db.get_contact(code):
         raise HTTPException(404)
@@ -1144,10 +1150,25 @@ def tray_list():
     return {"pending": crm.list_pending(), "muted": crm.list_muted()}
 
 
+class MergeIn(BaseModel):
+    keep: str     # 残すカード(名前もこちらが残る)
+    absorb: str   # 吸収して消すカード
+
+
+@app.post("/api/merge")
+def merge_contacts(body: MergeIn):
+    """重複カードの統合(v74)。absorbの受信・実績・紐付けをkeepへ移し、absorbは紐付けとして残す。"""
+    from . import crm
+    res = crm.merge_contact(body.keep, body.absorb)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("error", "merge failed"))
+    return res
+
+
 @app.post("/api/tray/resolve")
 def tray_resolve(body: TrayResolve):
     from . import crm
-    if body.action not in ("link", "new", "private"):
+    if body.action not in ("link", "new", "private", "staff", "peer"):
         raise HTTPException(400, "bad action")
     res = crm.resolve_pending(body.line_name, body.action, body.contact, body.rank)
     if not res.get("ok"):
@@ -1162,7 +1183,7 @@ def tray_unmute(body: UnmuteIn):
     return {"ok": True}
 
 
-@app.get("/api/contacts/{code}/detail")
+@app.get("/api/contacts/{code:path}/detail")
 def contact_detail(code: str):
     from . import crm
     d = crm.contact_detail(code)
@@ -1171,7 +1192,7 @@ def contact_detail(code: str):
     return d
 
 
-@app.post("/api/contacts/{code}/alias")
+@app.post("/api/contacts/{code:path}/alias")
 def contact_add_alias(code: str, body: AliasIn):
     from . import crm
     if not db.get_contact(code):
@@ -1184,7 +1205,7 @@ class RenameIn(BaseModel):
     new_code: str
 
 
-@app.post("/api/contacts/{code}/rename")
+@app.post("/api/contacts/{code:path}/rename")
 def contact_rename(code: str, body: RenameIn):
     from . import crm
     res = crm.rename_contact(code, body.new_code)
@@ -1193,7 +1214,7 @@ def contact_rename(code: str, body: RenameIn):
     return res
 
 
-@app.post("/api/contacts/{code}/alias/remove")
+@app.post("/api/contacts/{code:path}/alias/remove")
 def contact_remove_alias(code: str, body: AliasIn):
     from . import crm
     if not db.get_contact(code):
@@ -1216,7 +1237,7 @@ def attrs_add(body: AttrDefIn):
     return res
 
 
-@app.post("/api/contacts/{code}/attrs")
+@app.post("/api/contacts/{code:path}/attrs")
 def contact_set_attr(code: str, body: AttrValIn):
     from . import crm
     if not db.get_contact(code):
@@ -1252,37 +1273,17 @@ class ContactUpdate(BaseModel):
     company_url: str | None = None   # 会社サイトURL
     company_note: str | None = None  # 会社・肩書きの補足(役職/業界/検索の助けになる情報)
 
-@app.post("/api/contacts/{code}")
-def contact_update(code: str, body: ContactUpdate):
-    from . import crm
-    fields = {k: v for k, v in body.dict().items() if v is not None}
-    res = crm.update_contact(code, fields)
-    if not res.get("ok"):
-        raise HTTPException(404, res.get("error", "update failed"))
-    return {"ok": True, "contact": crm.contact_detail(code)}
-
-@app.get("/crm")
-def crm_page():
-    """顧客管理(3層＋未紐付けトレイ＋属性)の実ページ。"""
-    return FileResponse(os.path.join(STATIC_DIR, "crm.html"))
-
-
-@app.get("/seki")
-def seki_page():
-    """お席の記録→御礼→実績の実ページ。"""
-    return FileResponse(os.path.join(STATIC_DIR, "seki.html"))
-
-
-class InboxClassify(BaseModel):
-    contact: str
-    action: str   # work(顧客に登録) / private(私用除外)
-
-@app.post("/api/contacts/{code}/delete")
+@app.post("/api/contacts/{code:path}/delete")
 def contact_delete(code: str):
     from . import crm
     if not db.get_contact(code):
         raise HTTPException(404)
     return crm.delete_contact(code)
+
+
+class InboxClassify(BaseModel):
+    contact: str
+    action: str   # work(顧客に登録) / private(私用除外)
 
 
 @app.post("/api/inbox/classify")
@@ -1300,6 +1301,13 @@ def inbox_classify(body: InboxClassify):
         crm.mark_staff(name)
         crm.add_alias(name, name)
         return {"ok": True, "contact": name, "kind": "staff"}
+    if body.action == "peer":
+        # v73(ゆみさん要望): 同業=ホステス仲間。営業対象外だが普通に会話する相手
+        db.upsert_contact(name, "B")
+        with db.conn() as c:
+            c.execute("UPDATE contacts SET kind='peer', linked=1 WHERE code=?", (name,))
+        crm.add_alias(name, name)
+        return {"ok": True, "contact": name, "kind": "peer"}
     if body.action == "private":
         crm.mute(name)
         crm.discard_unlinked(name)
@@ -1504,7 +1512,7 @@ class KindIn(BaseModel):
     kind: str
 
 
-@app.post("/api/contacts/{code}/kind")
+@app.post("/api/contacts/{code:path}/kind")
 def api_set_kind(code: str, body: KindIn):
     from . import crm
     if body.kind not in ("customer", "staff", "peer", "excolleague"):
@@ -1515,6 +1523,29 @@ def api_set_kind(code: str, body: KindIn):
 class TransferIn(BaseModel):
     from_kind: str = "staff"
     to_kind: str = "excolleague"
+
+
+
+# v74: 素の{code:path}更新ルートは貪欲マッチのため必ず最後に登録する(delete/kind等を飲み込まないように)
+@app.post("/api/contacts/{code:path}")
+def contact_update(code: str, body: ContactUpdate):
+    from . import crm
+    fields = {k: v for k, v in body.dict().items() if v is not None}
+    res = crm.update_contact(code, fields)
+    if not res.get("ok"):
+        raise HTTPException(404, res.get("error", "update failed"))
+    return {"ok": True, "contact": crm.contact_detail(code)}
+
+@app.get("/crm")
+def crm_page():
+    """顧客管理(3層＋未紐付けトレイ＋属性)の実ページ。"""
+    return FileResponse(os.path.join(STATIC_DIR, "crm.html"))
+
+
+@app.get("/seki")
+def seki_page():
+    """お席の記録→御礼→実績の実ページ。"""
+    return FileResponse(os.path.join(STATIC_DIR, "seki.html"))
 
 
 @app.post("/api/transfer")
