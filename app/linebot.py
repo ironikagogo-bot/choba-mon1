@@ -546,6 +546,12 @@ def route_postback(uid, data, token):
         st = get_state(uid)
         set_state(uid, "", st["data"])   # カーソルは保持(📨で「続きから」を出せる)
         return reply(token, home_msgs())
+    if m == "unbind2":
+        _meta_set("owner", "")
+        set_state(uid, "", {})
+        return reply(token, [flexmsg("🔓 解除しました",
+                                     "次に合言葉(玄関パスワード)を送った人が、"
+                                     "この帳場くんの利用者になります。", accent=GREEN)])
     if m == "rep":
         return start_rep(uid, token)
     if m == "news":
@@ -640,6 +646,12 @@ def _handle(ev, etype, token, uid):
             if t in ("ホーム", "メニュー", "home"):
                 set_state(uid, "", {})
                 reply(token, home_msgs())
+            elif t == "ひも付け解除":
+                reply(token, [flexmsg("🔓 ひも付けを解除しますか?",
+                                      "解除すると、次に合言葉(玄関パスワード)を送った人が"
+                                      "新しい利用者になります。\n(携帯の変更・引き渡しのとき用)",
+                                      accent=RED,
+                                      quick=[("はい、解除する", "m=unbind2"), ("やめる", "m=home")])])
             else:
                 reply(token, [flexmsg("タイプは不要です☺️",
                                       "下のメニューかボタンで操作してください👇\n(トーク履歴の.txtを送ると口調を学習します)",
