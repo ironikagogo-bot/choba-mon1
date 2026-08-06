@@ -100,6 +100,17 @@ def liff_page():
     return HTMLResponse(html)
 
 
+@router.get("/api/liff/hello")
+def liff_hello():
+    """認証不要の起動確認。リセット後の「ひも付け前」を検知して案内を出すため(v115)。"""
+    from . import linebot
+    try:
+        bound = bool(linebot.owner_id())
+    except Exception:
+        bound = False
+    return {"ok": True, "bound": bound, "has_liff": bool(LIFF_ID)}
+
+
 # ============ ホーム(今日の状況ハブ) ============
 
 @router.get("/api/liff/home")
@@ -179,8 +190,6 @@ def _fixup_items():
         missing = []
         if not (a.get("呼び名") or "").strip():
             missing.append("呼び名")
-        if not (a.get("本名") or "").strip():
-            missing.append("本名")
         if not (ct.get("kind") or "").strip():
             missing.append("種別")
         if not (ct.get("stand") or "").strip():
@@ -237,10 +246,11 @@ async def liff_fixup_save(request: Request):
         crm.discard_unlinked(code)
         db.track("liff_fixup_priv")
         return {"ok": True, "discarded": True}
-    if not (yb and hn and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")):
-        return JSONResponse({"error": "呼び名・本名・種別・立場は必須です"}, status_code=400)
+    if not (yb and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")):
+        return JSONResponse({"error": "呼び名・種別・立場は必須です"}, status_code=400)
     crm.add_def("呼び名"); crm.set_attr(code, "呼び名", yb)
-    crm.add_def("本名"); crm.set_attr(code, "本名", hn)
+    if hn:
+        crm.add_def("本名"); crm.set_attr(code, "本名", hn)
     try:
         crm.add_alias(code, yb)
     except Exception:
@@ -358,6 +368,7 @@ def liff_contact(code: str, request: Request):
                      "ng": attrs.get("NG話題") or "",
                      "relmemo": attrs.get("関係性メモ") or ""},
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
+        "pstats": (lambda: linebot.partner_stats(code))(),
         "news": items,
         "history": {"received": msgs, "sent": sents, "seki": seki},
         "pending_facts": pending_n, "review_facts": review_n,
@@ -377,8 +388,21 @@ async def liff_contact_update(code: str, request: Request):
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    fields = body.get("fields") or {}
+    fields = dict(body.get("fields") or {})
     attrs = body.get("attrs") or {}
+    # v114: 種別(kind)は update_contact の許可外だったため保存されていなかった実バグ。
+    # set_kind で明示反映する(顧客→店内→同業の切替が効くようになる)。
+    kind = (fields.pop("kind", "") or "").strip()
+    if kind in ("customer", "staff", "peer", "private"):
+        try:
+            crm.set_kind(code, kind)
+        except Exception:
+            with db.conn() as c:
+                c.execute("UPDATE contacts SET kind=? WHERE code=?", (kind, code))
+    # v114: 店内の性別(店内区分=女/男)。下書きの呼び方・トーンに効く
+    sg = (fields.pop("staff_gender", "") or "").strip()
+    if kind == "staff" and sg in ("女", "男"):
+        crm.add_def("店内区分"); crm.set_attr(code, "店内区分", sg)
     crm.update_contact(code, fields)
     for k, v in attrs.items():
         if not isinstance(k, str) or not k.strip():
@@ -422,6 +446,29 @@ async def liff_persona_run(request: Request):
     linebot.persona_async(code)
     db.track("liff_persona_run")
     return {"ok": True}
+
+
+@router.post("/api/liff/persona/edit")
+async def liff_persona_edit(request: Request):
+    """v116: ペルソナの1項目を削除/修正(たまに間違う分を手で直せる)。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        b = await request.json()
+        code = (b.get("code") or "").strip()
+        action = b.get("action") or ""
+        index = int(b.get("index", -1))
+        value = b.get("value") or ""
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if action not in ("del", "fix", "summary"):
+        return JSONResponse({"error": "bad action"}, status_code=400)
+    p = linebot.edit_persona(code, action, index, value)
+    if p is None:
+        return JSONResponse({"error": "ペルソナがありません"}, status_code=404)
+    db.track("liff_persona_edit")
+    return {"ok": True, "persona": p}
 
 
 # ============ 📡 受信係の接続管理(v102) ============
@@ -629,6 +676,7 @@ def _run_import_job(jid: int, contact: str, text: str):
         facts = linebot._ensure_name_questions(contact, facts)
         ncrit, nauto = linebot.save_split(contact, facts)
         upd("done", f"{ncrit + nauto}")
+        linebot.maybe_auto_persona(contact)   # v109: 一括取り込みでもペルソナ同時生成
         db.track("liff_bulk_import")
     except Exception as e:
         upd("error", f"{type(e).__name__}")

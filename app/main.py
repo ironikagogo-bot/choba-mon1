@@ -281,6 +281,15 @@ async def reader_claim(request: Request):
     db.track("reader_claim")
     return {"ok": True, "token": token, "name": "帳場くん受信係"}
 
+def _reader_status_safe():
+    """v110: ダッシュボードにリーダー生存(ハートビート)を渡す。受信0でも生存が分かる。"""
+    try:
+        from . import watchdog
+        return watchdog.status()
+    except Exception:
+        return None
+
+
 @app.get("/api/stats")
 def usage_stats(token: str = ""):
     """モニター観測用の統計(件数のみ・本文/相手名は一切含まない)。INGEST_TOKENで認証。
@@ -404,6 +413,7 @@ def usage_stats(token: str = ""):
         "latency": latency, "by_rank": by_rank, "by_category": by_cat,
         "modes": modes, "avg_edit_ratio": round(avg_edit, 1) if avg_edit is not None else None,
         "features": features, "today_halfhours": today_halfhours,
+        "reader": _reader_status_safe(),
     }, headers={"Access-Control-Allow-Origin": "*"})
 
 @app.get("/login")

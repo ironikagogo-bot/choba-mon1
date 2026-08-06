@@ -13,14 +13,14 @@
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Hiragino Sans','Noto Sans JP',sans-serif;background:var(--cream);color:var(--ink);
-  min-height:100vh;font-size:15px;line-height:1.55}
+  min-height:100vh;font-size:16px;line-height:1.6}
 header{position:sticky;top:0;z-index:10;background:var(--navy);color:#F0ECE2;
   padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;display:flex;align-items:center;gap:10px}
 header .back{font-size:22px;line-height:1;color:#F0ECE2;background:none;border:none;padding:4px 8px 4px 0;
   visibility:hidden}
 header.has-back .back{visibility:visible}
-header h1{font-size:16px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-header .sub{font-size:11px;color:#B8C0D4}
+header h1{font-size:17px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header .sub{font-size:12.5px;color:#CBD3E3}
 main{padding:14px 14px calc(env(safe-area-inset-bottom) + 28px);max-width:560px;margin:0 auto}
 .tiles{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px}
 .tile{background:#fff;border:1px solid var(--border);border-radius:14px;padding:12px 6px;text-align:center}
@@ -34,7 +34,7 @@ main{padding:14px 14px calc(env(safe-area-inset-bottom) + 28px);max-width:560px;
 .navcard{background:var(--navy);color:#F0ECE2;border:none;cursor:pointer;width:100%;text-align:left;
   border-radius:14px;padding:15px 16px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
 .navcard b{font-size:15px}
-.navcard .desc{font-size:12px;color:#B8C0D4;margin-top:2px}
+.navcard .desc{font-size:13px;color:#CBD3E3;margin-top:3px}
 .navcard .n{margin-left:auto;background:var(--red);color:#fff;border-radius:99px;font-size:12px;
   font-weight:700;min-width:22px;height:22px;display:flex;align-items:center;justify-content:center;padding:0 7px}
 .navcard.gold{background:#fff;color:var(--ink);border:1px solid var(--border)}
@@ -45,46 +45,46 @@ main{padding:14px 14px calc(env(safe-area-inset-bottom) + 28px);max-width:560px;
 .row{background:#fff;border:1px solid var(--border);border-radius:14px;padding:12px 14px;margin-bottom:8px;
   display:flex;align-items:center;gap:10px;cursor:pointer}
 .row .nm{font-weight:700}
-.row .meta{font-size:12px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .meta{font-size:13px;color:#5A5348;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row .body{flex:1;min-width:0}
 .badge{font-size:11px;font-weight:700;border-radius:6px;padding:2px 7px;color:#fff;flex:none}
 .badge.S{background:var(--gold)} .badge.A{background:#8A96B0} .badge.B{background:#C4BDA9}
 .chev{color:#C4BDA9;font-size:18px}
 .search{width:100%;border:1px solid var(--border);border-radius:12px;padding:11px 14px;font-size:16px;
   background:#fff;margin-bottom:10px}
-h3.sec{font-size:13px;margin:0 0 8px;display:flex;align-items:center;gap:6px}
-.kv{display:flex;gap:8px;padding:7px 0;border-bottom:1px solid #F0EBDE;font-size:14px}
+h3.sec{font-size:14px;margin:0 0 9px;display:flex;align-items:center;gap:6px}
+.kv{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #F0EBDE;font-size:15px}
 .kv:last-child{border-bottom:none}
-.kv .k{color:var(--sub);flex:none;width:88px;font-size:12px;padding-top:2px}
+.kv .k{color:#5A5348;font-weight:700;flex:none;width:92px;font-size:13px;padding-top:2px}
 .kv .v{flex:1;word-break:break-word}
 .pill{display:inline-block;border-radius:8px;padding:6px 10px;font-size:13px;margin:0 6px 6px 0}
 .pill.green{background:#EAF4EA;color:var(--green);border:1px solid #CBE3CC}
 .pill.red{background:#F9ECEA;color:var(--red);border:1px solid #EBCFC9}
 .pill.navy{background:#EDF0F7;color:var(--navy);border:1px solid #D4DBEA}
 .pill.gold{background:#FBF6E9;color:#7A5F1E;border:1px solid #E8D9AE}
-.conf{color:#B0A98F;font-size:11px;margin-left:6px}
-.quote{color:#9A958A;font-size:11px;margin-top:2px}
+.conf{color:#7A6E48;font-size:12px;margin-left:6px;font-weight:700}
+.quote{color:#7A756A;font-size:12px;margin-top:2px}
 .hist{font-size:13px;padding:8px 0;border-bottom:1px solid #F0EBDE}
 .hist:last-child{border-bottom:none}
 .hist .d{color:var(--sub);font-size:11px}
-.btn{display:block;width:100%;border:none;border-radius:12px;padding:14px;font-size:15px;font-weight:700;
-  cursor:pointer;margin-top:10px}
+.btn{display:block;width:100%;border:none;border-radius:12px;padding:15px;font-size:16px;font-weight:700;
+  cursor:pointer;margin-top:10px;min-height:50px}
 .btn.primary{background:var(--gold);color:#fff}
 .btn.ghost{background:#fff;color:var(--navy);border:1px solid var(--border)}
 .btn.green{background:var(--line);color:#fff}
-label.f{display:block;font-size:12px;color:var(--sub);font-weight:700;margin:14px 2px 5px}
-input.f,textarea.f{width:100%;border:1px solid var(--border);border-radius:10px;padding:11px 12px;
+label.f{display:block;font-size:13px;color:#5A5348;font-weight:700;margin:15px 2px 6px}
+input.f,textarea.f{width:100%;border:1px solid var(--border);border-radius:10px;padding:13px 14px;
   font-size:16px;background:#fff;font-family:inherit}
-textarea.f{min-height:64px;resize:vertical}
+textarea.f{min-height:90px;resize:vertical;overflow:hidden}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
-.chip{border:1px solid var(--border);background:#fff;border-radius:99px;padding:8px 14px;font-size:14px;
-  cursor:pointer;color:var(--sub)}
+.chip{border:1px solid var(--border);background:#fff;border-radius:99px;padding:11px 16px;font-size:15px;
+  cursor:pointer;color:#4A443A;min-height:44px;display:inline-flex;align-items:center}
 .chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
 .jobrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid #F0EBDE;font-size:14px}
 .jobrow:last-child{border-bottom:none}
 .jobrow .st{margin-left:auto;font-size:12px;font-weight:700;flex:none}
 .st.done{color:var(--green)} .st.err{color:var(--red)} .st.run{color:var(--gold)} .st.amb{color:var(--red)}
-.note{font-size:12px;color:var(--sub);margin-top:8px}
+.note{font-size:12.5px;color:#5A5348;margin-top:8px}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #E8D9AE;border-top-color:var(--gold);
   border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
@@ -100,7 +100,7 @@ textarea.f{min-height:64px;resize:vertical}
 .draft.sel{border-color:var(--gold)}
 .draft .t{font-size:14px;white-space:pre-wrap;word-break:break-word;margin-bottom:10px}
 .draft textarea{width:100%;border:1px solid var(--gold);border-radius:10px;padding:10px;
-  font-size:16px;font-family:inherit;min-height:96px;margin-bottom:8px}
+  font-size:16px;font-family:inherit;min-height:96px;margin-bottom:8px;overflow:hidden}
 .draft .row{display:flex;gap:8px}
 .draft .row .btn{margin-top:0;padding:11px;font-size:14px;flex:1}
 .actbar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1px solid var(--border);
@@ -169,8 +169,25 @@ async function boot() {
     ING = prompt("開発用: INGEST_TOKENを入力(LIFF設定後は不要になります)") || "";
     sessionStorage.setItem("ing", ING);
   }
+  // 未ひも付けチェック(リセット後の詰まり対策・v115)
+  try {
+    const h = await fetch("/api/liff/hello").then(r => r.json());
+    if (ID_TOKEN && h.has_liff && !h.bound) { showBindGuide(); return; }
+  } catch (e) {}
   route();   // 認証完了後にもう一度描く(キャッシュ表示→実データへ)
   warmBoot();
+}
+function showBindGuide() {
+  setHead("🔑 はじめの設定", "", false);
+  $("#view").innerHTML = `<div class="card" style="text-align:center;padding:24px 16px">
+    <div style="font-size:44px">🔑</div>
+    <h3 class="sec" style="justify-content:center;margin-top:10px">まず、あなたの端末とつなぎます</h3>
+    <p style="font-size:15px;color:var(--ink);margin:10px 0 4px">
+      いったんこの画面を閉じて、<b>帳場くんのLINEトーク</b>に<br><b>玄関パスワード</b>を1回送ってください。</p>
+    <p class="note" style="margin-top:8px">送るとひも付けが完了し、次からこの画面がすぐ開きます。<br>
+      (機種変更やリセットの後は、この手順がもう一度必要です)</p>
+    <button class="btn primary" style="margin-top:16px" onclick="location.reload()">つないだので開く</button>
+  </div>`;
 }
 // 起動1往復ウォーム: ホーム+顧客一覧をまとめて取得してキャッシュへ
 async function warmBoot() {
@@ -198,6 +215,16 @@ window.addEventListener("hashchange", ev => {
   allowNav = false; _navDepth += 1; route();
 });
 function nav(h) { location.hash = h; }
+// textareaを中身の高さに自動フィット(枠内スクロールを無くす)
+function autogrow(el) { el.style.height = "auto"; el.style.height = (el.scrollHeight + 4) + "px"; }
+document.addEventListener("input", e => {
+  if (e.target && e.target.tagName === "TEXTAREA") autogrow(e.target);
+});
+// 画面描画のたびに全textareaを一度フィットさせる
+const _mo = new MutationObserver(() => {
+  document.querySelectorAll("textarea.f").forEach(t => { if (!t._grown) { t._grown = 1; autogrow(t); } });
+});
+_mo.observe(document.getElementById("view"), { childList: true, subtree: true });
 let _navDepth = 0;   // SPA内で何回遷移したか(メニュー直入りの行き止まり防止)
 $("#btnBack").onclick = () => {
   if (_navDepth > 0) { _navDepth -= 2; history.back(); }   // hashchangeで+1されるので実質-1
@@ -316,6 +343,12 @@ function drawHome(d) {
   const est = (d.estranged || []);
   const rate = d.sent_week ? Math.round(d.verbatim_week / d.sent_week * 100) + "%" : "―";
   $("#view").innerHTML = `
+  <div onclick="nav('#reader')" style="cursor:pointer;display:flex;align-items:center;gap:8px;
+    font-size:13px;font-weight:700;margin:0 2px 10px;
+    color:${rdOk ? 'var(--green)' : 'var(--red)'}">
+    ${rdOk ? '📡 受信係 稼働中' : '📡 受信係 要確認'}
+    <span style="color:var(--sub);font-weight:400">${ago}</span>
+    <span class="chev" style="margin-left:auto">›</span></div>
   <div class="tiles">
     <div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ ›</span></div>
@@ -358,17 +391,24 @@ async function vList() {
     const rows = _contacts.filter(c => !q || c.name.includes(q) || c.code.includes(q) ||
       (c.company || "").includes(q));
     $("#rows").innerHTML = rows.length ? rows.map(c => `
-      <div class="row" onclick="nav('#card/${encodeURIComponent(c.code)}')">
+      <div class="row" data-card="${encodeURIComponent(c.code)}">
         <span class="badge ${c.rank}">${c.rank}</span>
         <div class="body"><div class="nm">${esc(disp(c.name))}</div>
         <div class="meta">${esc(c.company || "")}${c.ongoing ? " ・📌" + esc(c.ongoing).slice(0, 20) : ""}</div></div>
-        <button class="chip" onclick="event.stopPropagation();nav('#edit/${encodeURIComponent(c.code)}')">✎</button>
+        <button class="chip editbtn" data-edit="${encodeURIComponent(c.code)}">✎</button>
         <span class="chev">›</span></div>`).join("")
       : `<div class="empty">見つかりませんでした</div>`;
   };
   window.drawList = draw;
   if (_contacts) draw("");
   $("#q").addEventListener("input", e => draw(e.target.value.trim()));
+  // イベント委譲: ✎は編集・それ以外の行タップはカード(window.event非依存=iOS安全)
+  $("#rows").addEventListener("click", e => {
+    const eb = e.target.closest(".editbtn");
+    if (eb) { e.stopPropagation(); nav("#edit/" + eb.dataset.edit); return; }
+    const row = e.target.closest(".row[data-card]");
+    if (row) nav("#card/" + row.dataset.card);
+  });
 }
 
 // ============ 濃い顧客カード ============
@@ -385,7 +425,8 @@ function drawCard(code, d) {
   if (!d) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   if (d.error) { $("#view").innerHTML = `<div class="empty">カードが見つかりません</div>`; return; }
   setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触" + d.gap_days + "日前" : ""}`, true);
-  const kindLab = { customer: "顧客", staff: "店内", peer: "同業", private: "私用" }[d.kind] || "顧客";
+  const sgL = d.attrs && d.attrs["店内区分"] ? "(" + d.attrs["店内区分"] + ")" : "";
+  const kindLab = ({ customer: "顧客", staff: "店内" + sgL, peer: "同業", private: "私用" })[d.kind] || "顧客";
   const standLab = { up: "目上", even: "対等", down: "目下" }[d.stand] || d.stand || "";
   const now = d.now_keys || {};
   const nowHtml = (now.ongoing ? `<div class="pill green">🟢 ${esc(now.ongoing)}</div>` : "") +
@@ -398,10 +439,14 @@ function drawCard(code, d) {
   let persona;
   if (d.persona && d.persona.sections) {
     persona = (d.persona.summary ? `<div style="font-weight:700;font-size:13px;margin-bottom:6px">${esc(d.persona.summary)}</div>` : "")
-      + d.persona.sections.map(s =>
+      + d.persona.sections.map((s, si) =>
       `<div class="kv"><div class="k">${esc(s.k)}<span class="conf">${CONF_DOT[s.conf] || ""}</span></div>
-       <div class="v">${esc(s.v)}${s.src ? `<div class="quote">「${esc(s.src)}」</div>` : ""}</div></div>`).join("")
-      + `<button class="chip" style="margin-top:10px" onclick="personaRun('${cq}')">🔁 分析し直す</button>`;
+       <div class="v">${esc(s.v)}${s.src ? `<div class="quote">「${esc(s.src)}」</div>` : ""}
+         <div style="margin-top:4px"><button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
+           onclick="personaFix('${cq}',${si},${JSON.stringify(s.v).replace(/"/g,'&quot;')})">✎直す</button>
+         <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red)"
+           onclick="personaDel('${cq}',${si})">🗑消す</button></div></div></div>`).join("")
+      + `<button class="chip" style="margin-top:10px" onclick="personaRun('${cq}')">🔁 全部分析し直す</button>`;
   } else if (pst.startsWith("running")) {
     persona = `<div class="note"><span class="spin"></span> 会話全体を読んで分析中…(30秒〜1分)。この画面のまま待てます</div>`;
     setTimeout(() => { if (location.hash === "#card/" + cq) vCard(code); }, 6000);
@@ -443,6 +488,12 @@ function drawCard(code, d) {
     }</div></div>` : ""}
     ${d.attrs["お気に入りキャスト"] ? `<div class="kv"><div class="k">お気に入り</div><div class="v">💛 ${esc(d.attrs["お気に入りキャスト"])}</div></div>` : ""}
   </div>
+  ${d.pstats ? `<div class="card"><h3 class="sec">📊 相手のクセ（やりとりから）</h3>
+    <div class="kv"><div class="k">文の長さ</div><div class="v">平均 約${d.pstats.avg_len}文字</div></div>
+    <div class="kv"><div class="k">絵文字</div><div class="v">1通あたり約${d.pstats.emoji_per_msg}個</div></div>
+    ${d.pstats.reply_median_min != null ? `<div class="kv"><div class="k">返信の速さ</div><div class="v">こちらの送信から中央値 約${d.pstats.reply_median_min}分</div></div>` : ""}
+    ${d.pstats.top_hours && d.pstats.top_hours.length ? `<div class="kv"><div class="k">よく来る時間</div><div class="v">${d.pstats.top_hours.map(h=>h+"時台").join("・")}</div></div>` : ""}
+    <div class="note">${esc(d.pstats.note)}</div></div>` : ""}
   <div class="card"><h3 class="sec">🧠 ペルソナ</h3>${persona}</div>
   ${pf ? `<div class="card"><h3 class="sec">👤 プロフィール</h3>${pf}</div>` : ""}
   ${news ? `<div class="card"><h3 class="sec">📰 ネタ</h3>${news}</div>` : ""}
@@ -450,6 +501,24 @@ function drawCard(code, d) {
   <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>`;
 }
 
+window.personaDel = async (cq, i) => {
+  const code = decodeURIComponent(cq);
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "del", index: i }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("消しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.personaFix = async (cq, i, cur) => {
+  const code = decodeURIComponent(cq);
+  const v = prompt("この項目を直す:", cur);
+  if (v == null || !v.trim()) return;
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "fix", index: i, value: v }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("直しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
 window.personaRun = async cq => {
   const code = decodeURIComponent(cq);
   try {
@@ -475,7 +544,7 @@ async function vEdit(code) {
     `<button type="button" class="chip ${String(cur) === String(v) ? "on" : ""}" data-v="${v}">${lab}</button>`)
     .join("") + `</div>`;
   const bigKeys = ["進行中の話", "NG話題", "関係性メモ", "家族", "趣味・関心", "記念日", "資産・事業"];
-  const REQ = ["呼び名", "本名"];
+  const REQ = ["呼び名"];   // 本名は分からないこと多い=任意
   const attrField = k => {
     const v = d.attrs[k] || "";
     const req = REQ.includes(k);
@@ -496,7 +565,11 @@ async function vEdit(code) {
   <div class="card">
     <label class="f">ランク</label>${chip("rank", [["S", "S(太客)"], ["A", "A"], ["B", "B"]], d.rank)}
     <label class="f">種別</label>${chip("kind", [["customer", "顧客"], ["staff", "店内"], ["peer", "同業"], ["private", "私用"]], d.kind)}
+    <div id="sgBox" style="display:${d.kind === "staff" ? "block" : "none"}">
+      <label class="f">店内の区分</label>${chip("staffgender", [["女", "店内(女)"], ["男", "店内(男)"]], (d.attrs["店内区分"] || ""))}</div>
     <label class="f">立場</label>${chip("stand", [["up", "目上"], ["even", "対等"], ["down", "目下"]], d.stand || "even")}
+    <label class="f">下ネタ対応</label>${chip("flagero", [["0", "なし"], ["1", "いなし(受け流す)"], ["2", "ノリOK"]], String(d.flag_ero || 0))}
+    <label class="f">ガチ恋の線引き</label>${chip("flagkoi", [["0", "OFF"], ["1", "線引きON(長文案も出す)"]], String(d.flag_koi || 0))}
     <label class="f">誕生日</label><input class="f" id="f_birthday" value="${esc(d.birthday)}" placeholder="8月19日">
     ${EDIT_ATTRS.map(attrField).join("")}
     <label class="f">メモ(自由)</label><textarea class="f" id="f_note">${esc(d.note)}</textarea>
@@ -504,19 +577,24 @@ async function vEdit(code) {
   <button class="btn primary" id="btnSave">保存する</button>
   <button class="btn ghost" onclick="history.back()">やめる</button>
   <div class="note">保存すると顧客カードにすぐ反映されます。</div>`;
-  const sel = { rank: d.rank, kind: d.kind, stand: d.stand || "even" };
+  const sel = { rank: d.rank, kind: d.kind, stand: d.stand || "even", staffgender: d.attrs["店内区分"] || "",
+    flagero: String(d.flag_ero || 0), flagkoi: String(d.flag_koi || 0) };
   document.querySelectorAll("[data-chip]").forEach(g => g.addEventListener("click", e => {
     const b = e.target.closest(".chip"); if (!b) return;
     g.querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); sel[g.dataset.chip] = b.dataset.v; dirty = true;
+    if (g.dataset.chip === "kind") {
+      const sb = document.getElementById("sgBox");
+      if (sb) sb.style.display = b.dataset.v === "staff" ? "block" : "none";
+    }
   }));
   $("#view").addEventListener("input", () => dirty = true);
   $("#btnSave").onclick = async () => {
-    for (const rk of ["呼び名", "本名"]) {
-      const el = document.querySelector(`[data-attr=${rk}]`);
+    {
+      const el = document.querySelector(`[data-attr=呼び名]`);
       if (el && !el.value.trim()) {
         el.style.borderColor = "var(--red)"; el.scrollIntoView({ block: "center", behavior: "smooth" });
-        el.focus(); toast(`${rk}を入れてください(呼び名は「表示名をそのまま使う」でOK)`); return;
+        el.focus(); toast("呼び名を入れてください(「表示名をそのまま使う」でOK)"); return;
       }
     }
     const attrs = {};
@@ -525,6 +603,8 @@ async function vEdit(code) {
       if (v !== (d.attrs[k] || "")) attrs[k] = v;
     });
     const body = { fields: { rank: sel.rank, kind: sel.kind, stand: sel.stand,
+      staff_gender: sel.kind === "staff" ? sel.staffgender : "",
+      flag_ero: Number(sel.flagero), flag_koi: Number(sel.flagkoi),
       birthday: $("#f_birthday").value.trim(), note: $("#f_note").value.trim() }, attrs };
     $("#btnSave").textContent = "保存中…";
     try {
@@ -662,10 +742,16 @@ async function drawRep() {
   const r = await prefetchReply(cur);
   if (rep.items[rep.i] && rep.items[rep.i].mid === cur && $("#drafts"))
     $("#drafts").innerHTML =
-      (r.card_keys && r.card_keys.length
-        ? `<div class="note" style="margin:0 0 6px">🗂 カード参照: ${r.card_keys.map(esc).join("・")}</div>` : "")
+      cardRefChip(r.card_keys)
       + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
       || `<div class="note">下書きを作れませんでした(APIキー/通信)。下のボタンで記録だけできます。</div>`);
+}
+function cardRefChip(keys) {
+  if (!keys || !keys.length) return "";
+  const id = "cr" + Math.floor(keys.length + keys[0].length);
+  return `<div class="note" style="margin:0 0 8px;cursor:pointer" onclick="const e=document.getElementById('${id}');e.style.display=e.style.display==='none'?'block':'none'">
+    🗂 <b>カード${keys.length}項目</b>を参照して作成 <span style="color:var(--gold)">▾ 見る</span>
+    <span id="${id}" style="display:none">：${keys.map(esc).join("・")}</span></div>`;
 }
 function draftHtml(j, text) {
   return `<div class="draft" id="dr${j}"><div class="t">${esc(text)}</div>
@@ -679,7 +765,7 @@ window.repFull = async mid => {
 };
 window.repEdit = j => { const d = $("#dr" + j); d.classList.add("sel");
   d.querySelector(".t").style.display = "none"; const ta = d.querySelector("textarea");
-  ta.style.display = "block"; ta.focus(); };
+  ta.style.display = "block"; ta.focus(); autogrow(ta); };
 window.repSend = async j => {
   const d = $("#dr" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
@@ -829,8 +915,7 @@ async function drawAnnRun() {
   const r = await prefetchAnn(cur, p.tone || ann.tone, tpl);
   if (ann.q[ann.i] && ann.q[ann.i].code === cur && $("#drafts"))
     $("#drafts").innerHTML =
-      (r.card_keys && r.card_keys.length
-        ? `<div class="note" style="margin:0 0 6px">🗂 カード参照: ${r.card_keys.map(esc).join("・")}</div>` : "")
+      cardRefChip(r.card_keys)
       + (r.text ? draftHtml(0, r.text).replace("repSend(0)", "annSend(0)")
       : `<div class="note">下書きを作れませんでした。スキップして次へ。</div>`);
 }
@@ -926,7 +1011,7 @@ function drawOrei() {
       ${tapGroup("ヘルプに入ってくれた子(タップで選択)", (_oreiPre && _oreiPre.staff) || [], orei.helpers, "ohelp")}
       ${tapGroup("同席していた他のお客様", (_oreiPre && _oreiPre.guests) || [], orei.guests, "oguest")}
       ${tapGroup("紹介してくれた方", (_oreiPre && _oreiPre.guests) || [], orei.intros, "ointro")}
-      <button class="btn primary" onclick="oreiRecord()">記録してお礼を作る</button>
+      <button class="btn primary" onclick="oreiRecord(this)">記録してお礼を作る</button>
       <div class="note">記録すると来店・同伴・紹介の実績も自動で付きます</div></div>`;
     ["ohelp", "oguest", "ointro"].forEach((gid, k) => {
       const arr = [orei.helpers, orei.guests, orei.intros][k];
@@ -967,10 +1052,11 @@ function oreiRow(c) {
 window.oreiPick = code => { const c = (_contacts || []).find(x => x.code === code);
   orei.main = c; orei.step = "detail"; drawOrei(); };
 window.oreiEdit = j => { const d = $("#or" + j); d.querySelector(".t").style.display = "none";
-  const ta = d.querySelector("textarea"); ta.style.display = "block"; ta.focus(); };
-window.oreiRecord = async () => {
-  orei.dohan = $("#odohan").value.trim(); orei.after = $("#oafter").value.trim();
-  const btn = event.target; btn.textContent = "記録中…";
+  const ta = d.querySelector("textarea"); ta.style.display = "block"; ta.focus(); autogrow(ta); };
+window.oreiRecord = async (btn) => {
+  const d1 = $("#odohan"), d2 = $("#oafter");
+  if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim();
+  if (btn) btn.textContent = "記録中…";
   try {
     const r = await api("/api/liff/orei/record", { method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -981,7 +1067,8 @@ window.oreiRecord = async () => {
           .concat(orei.intros.map(h => ({ contact: h, role: "intro" }))) }) });
     if (!r.ok) throw new Error(r.error || "");
     orei.sid = r.sid; orei.drafts = r.drafts; orei.step = "send"; drawOrei();
-  } catch (e) { btn.textContent = "記録してお礼を作る"; toast(e.message || "記録できませんでした"); }
+  } catch (e) { if (btn) btn.textContent = "記録してお礼を作る";
+    toast("記録できませんでした: " + (e.message || "通信エラー")); }
 };
 window.oreiSend = async j => {
   const d = $("#or" + j), ta = d.querySelector("textarea");
@@ -1069,10 +1156,8 @@ function drawFixup() {
       <input class="f" id="fxYb" value="${esc(sg["呼び名"] || "")}">
       ${sg["呼び名"] ? "" : `<button class="chip" style="margin-top:6px"
         onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code)}">表示名をそのまま使う</button>`}
-      <label class="f">本名 <span style="color:var(--red)">*</span></label>
+      <label class="f">本名（分かれば）</label>
       <input class="f" id="fxHn" value="${esc(sg["本名"] || "")}">
-      ${sg["本名"] ? "" : `<button class="chip" style="margin-top:6px"
-        onclick="document.getElementById('fxHn').value=document.getElementById('fxYb').value||${JSON.stringify(it.code)}">呼び名と同じでOK</button>`}
       <label class="f">誕生日(分かれば)</label>
       <input class="f" id="fxBd" value="${esc(sg["誕生日"] || "")}" placeholder="8月19日">
       <label class="f">種別 <span style="color:var(--red)">*</span></label>
@@ -1096,8 +1181,8 @@ function drawFixup() {
     const body = { code: it.code, "呼び名": $("#fxYb").value.trim(), "本名": $("#fxHn").value.trim(),
       "誕生日": $("#fxBd").value.trim(), kind: sel.kind, stand: sel.stand,
       "所属": ($("#fxBelong") || { value: "" }).value.trim() };
-    if (body.kind !== "priv" && (!body["呼び名"] || !body["本名"] || !body.kind || !body.stand))
-      return toast("＊印は必須です(候補ボタンで1タップ入力できます)");
+    if (body.kind !== "priv" && (!body["呼び名"] || !body.kind || !body.stand))
+      return toast("呼び名・種別・立場は必須です(候補ボタンで1タップ入力できます)");
     if (body.kind === "priv" && !confirm(`${disp(it.name)}を私用として受信ごと削除します。よい？`)) return;
     $("#fxSave").textContent = "保存中…";
     try {
@@ -1142,7 +1227,10 @@ window.readerQr = async () => {
   let r; try { r = await api("/api/liff/reader/code", { method: "POST" }); }
   catch (e) { return toast("発行できませんでした"); }
   const payload = JSON.stringify({ u: location.origin, c: r.code });
+  const host = location.host;
   $("#qrbox").innerHTML = `<div class="card" style="text-align:center">
+    <div style="font-size:13px;color:var(--red);font-weight:700;margin-bottom:8px">
+      ⚠️ これは <u>${esc(host)}</u> の接続QRです<br>この人の端末で読んでいるか確認してください</div>
     <div id="qrimg" style="display:inline-block;background:#fff;padding:12px"></div>
     <div style="font-size:20px;font-weight:700;letter-spacing:3px;margin-top:8px">${esc(r.code)}</div>
     <div class="note">10分間・1回だけ有効。リーダー端末でスキャン(または手動ならこのコードとパスワード)</div></div>`;

@@ -1085,6 +1085,28 @@ def analyze_persona(contact):
     return {"summary": str(obj.get("summary", ""))[:80], "sections": secs}, None
 
 
+def maybe_auto_persona(contact):
+    """v109: txt取り込み時にペルソナも自動生成。無駄打ちを避ける3条件:
+    - CHOUBA_AUTO_PERSONA=0 で無効化(既定ON)
+    - 既にペルソナがある相手はスキップ(再取り込みで毎回焼き直さない)
+    - 会話が3000字未満(雑談・薄い相手)はスキップ=コストの無駄打ち防止
+    バックグラウンド実行なので取り込みの体感速度は変わらない。"""
+    if os.environ.get("CHOUBA_AUTO_PERSONA", "1") != "1":
+        return
+    if not config.ANTHROPIC_API_KEY:
+        return
+    try:
+        if get_persona(contact):
+            return
+        with db.conn() as c:
+            r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
+        if not r or len((r["text"] or "")) < 3000:
+            return
+        persona_async(contact)
+    except Exception as e:
+        print(f"[auto persona] {e}", flush=True)
+
+
 def persona_async(contact):
     ensure()
     _meta_set(f"pstat_{contact}", f"running:{int(time.time())}")
@@ -1117,6 +1139,78 @@ def get_persona(contact):
         return json.loads(r["data"])
     except Exception:
         return None
+
+
+def partner_stats(contact):
+    """v116: 相手の行動データ化。messages(受信)とsent_replies(送信)から集計。
+    ★取得できないもの: 相手の既読(LINE APIにもリーダーにも無い=推定もしない)。
+    取れるもの: 相手の平均文字数・絵文字頻度・活発な時間帯・相手/本人の返信の速さ・やりとり量。"""
+    ensure()
+    from .style_profile import EMOJI_RE
+    with db.conn() as c:
+        recv = [(r["ts"], r["text"] or "") for r in c.execute(
+            "SELECT ts, text FROM messages WHERE contact=? ORDER BY ts", (contact,))]
+        sent = [(r["ts"], r["text"] or "") for r in c.execute(
+            "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts", (contact,))]
+    n = len(recv)
+    if n < 3:
+        return None   # 少なすぎる=出さない(誤った印象を与えない)
+    import datetime
+    lens = [len(t) for _, t in recv]
+    emos = [len(EMOJI_RE.findall(t)) for _, t in recv]
+    avg_len = round(sum(lens) / n)
+    emo_per = round(sum(emos) / n, 1)
+    # 活発な時間帯(JST時刻の最頻2つ)
+    hours = {}
+    for ts, _ in recv:
+        h = datetime.datetime.fromtimestamp(ts + 9 * 3600).hour   # 概算JST
+        hours[h] = hours.get(h, 0) + 1
+    top_hours = sorted(hours, key=lambda h: -hours[h])[:2]
+    # 相手の返信の速さ: 本人が送った直後の相手受信までの間隔(分)の中央値
+    merged = sorted([(t, "me") for t, _ in sent] + [(t, "you") for t, _ in recv])
+    gaps = []
+    for i in range(len(merged) - 1):
+        if merged[i][1] == "me" and merged[i + 1][1] == "you":
+            gaps.append((merged[i + 1][0] - merged[i][0]) / 60.0)
+    gaps = [g for g in gaps if 0 < g < 60 * 48]   # 2日超は「別の会話」として除外
+    reply_med = None
+    if gaps:
+        gaps.sort()
+        reply_med = round(gaps[len(gaps) // 2])
+    return {
+        "n_recv": n, "avg_len": avg_len, "emoji_per_msg": emo_per,
+        "top_hours": top_hours, "reply_median_min": reply_med,
+        "note": "相手の既読タイミングはLINE上取得できないため含みません",
+    }
+
+
+def save_persona(contact, data):
+    """v116: 編集したペルソナを保存(項目削除・修正の反映)。"""
+    ensure()
+    with db.conn() as c:
+        c.execute("INSERT INTO linebot_persona(contact,data,ts) VALUES(?,?,?) "
+                  "ON CONFLICT(contact) DO UPDATE SET data=excluded.data, ts=excluded.ts",
+                  (contact, json.dumps(data, ensure_ascii=False), time.time()))
+
+
+def edit_persona(contact, action, index, value=""):
+    """v116: ペルソナの1項目を削除/修正。戻り: 更新後のpersona or None。"""
+    p = get_persona(contact)
+    if not p or "sections" not in p:
+        return None
+    secs = p.get("sections") or []
+    if action == "del":
+        if 0 <= index < len(secs):
+            secs.pop(index)
+    elif action == "fix":
+        if 0 <= index < len(secs) and value.strip():
+            secs[index]["v"] = value.strip()[:160]
+            secs[index]["conf"] = "中"        # 人手修正=確信度中(引用は残す)
+    elif action == "summary" and value.strip():
+        p["summary"] = value.strip()[:80]
+    p["sections"] = secs
+    save_persona(contact, p)
+    return p
 
 
 def persona_msgs(contact):
@@ -1284,6 +1378,7 @@ def dig_async(contact):
                 ncrit, nauto = save_split(contact, facts)
                 _meta_set(f"dig_{contact}", f"done:{ncrit}:{nauto}")
                 _notify_card_ready(contact, ncrit, nauto)   # v96: LIFF編集への通知1通
+                maybe_auto_persona(contact)                 # v109: ペルソナも同時に
         except Exception as e:
             _meta_set(f"dig_{contact}", f"error:{type(e).__name__}")
             print(f"[linebot dig] {e}", flush=True)
@@ -2041,6 +2136,17 @@ def _casual_draft(code, tone):
     prof = _db.get_profile("_global") or {}
     ex = "／".join((prof.get("samples") or [])[:3])
     role = ("同業(同じ夜職の仲間)" if tone == "peer" else "自分の店の後輩・黒服・スタッフ")
+    # v114: 店内の性別で相手像を具体化(店内女=ヘルプ/ママ, 店内男=黒服/ボーイ)
+    if tone == "staff":
+        try:
+            from . import crm as _crm
+            sg = (_crm.get_attrs(code) or {}).get("店内区分") or ""
+        except Exception:
+            sg = ""
+        if sg == "女":
+            role = "自分の店の女性スタッフ(ヘルプの子・ママ・女性キャスト)"
+        elif sg == "男":
+            role = "自分の店の男性スタッフ(黒服・ボーイ・店長)"
     prompt = (
         f"あなたは本人の下書き係。{role}である「{nm}」へ送る、久しぶりの軽い一言を1つ作る。\n"
         "営業や堅い挨拶にしない。友達/身内へのLINEの軽さ。短く。押し付けない。\n"
