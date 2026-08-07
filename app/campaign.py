@@ -440,11 +440,16 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
     except Exception:
         _cb = ""
     # v118: 関係性(事実)＋許容レベル(本人確定のみ)を配信にも注入
-    _rel = _tol = ""
+    _rel = _tol = _sm = ""
     try:
         from . import linebot as _lb
         _rel = _lb.relationship_prompt_block(v["code"])
         _tol = _lb.tolerance_prompt_block(v["code"])
+    except Exception:
+        pass
+    try:
+        from .style_profile import samples_to_them as _stt
+        _sm = _stt(v["code"])   # v123: この相手への実例(接し方プロファイル)
     except Exception:
         pass
     user_prompt = (
@@ -453,6 +458,7 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
         + (f"{_cb}\n\n" if _cb else "")
         + (f"{_rel}\n\n" if _rel else "")
         + (f"{_tol}\n\n" if _tol else "")
+        + (f"{_sm}\n\n" if _sm else "")
         + "\n".join(ctx_lines)
         + "\n\nこの相手に送る一言を1つ、JSONで。"
     )

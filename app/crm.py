@@ -278,6 +278,14 @@ def get_attrs(contact: str) -> dict:
 _SELF_WORDS = ("自分", "本人", "わたし", "私", "me")
 
 
+def is_self_tanto(tanto: str) -> bool:
+    """v122: 担当が自分か。「自分(Aki)」のような表記も自分扱い(前方一致)。
+    完全一致だけだと本人名入りの値を他人と誤認→不要な控えめトーン事故になる。"""
+    t = (tanto or "").strip()
+    return bool(t) and any(t == w or t.startswith(w + "(") or t.startswith(w + "（")
+                           for w in _SELF_WORDS)
+
+
 def card_prompt_block(code: str) -> str:
     """顧客カードの属性を、下書き/配信生成用のプロンプト断片にする。
     - 事実は「自然に1〜2点だけ活かす」指示付き(詰め込み禁止)
@@ -321,7 +329,7 @@ def card_prompt_block(code: str) -> str:
         block += ("\n【NG話題・厳守】次の話題には絶対に触れない。関連語も本文に書かない: "
                   f"{a['NG話題']}")
     tanto = (a.get("担当") or "").strip()
-    if tanto and tanto not in _SELF_WORDS:
+    if tanto and not is_self_tanto(tanto):
         block += (f"\n【担当への配慮・厳守】この客の担当キャストは自分ではなく「{tanto}」。"
                   "出しゃばらない・営業をかけすぎない・来店や同伴の強い誘いはしない・"
                   "担当を立てる軽やかなトーンで、あくまで控えめに。")

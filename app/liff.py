@@ -154,6 +154,10 @@ def liff_home(request: Request):
         fixup_n = len(_fixup_items())
     except Exception:
         fixup_n = 0
+    try:
+        pending_n = len(linebot.pending_facts())   # v123: 整備のLIFF化
+    except Exception:
+        pending_n = 0
     return {
         "fixup": fixup_n,
         "reader": reader,
@@ -162,8 +166,28 @@ def liff_home(request: Request):
         "neta": neta, "anni": anni, "contacts": n_contacts,
         "estranged": est_sa[:5],
         "sent_week": sent_n, "verbatim_week": verb,
+        "pending_facts": pending_n,
+        "urgent_push": {"on": linebot.urgent_push_enabled(),
+                        "used": linebot.urgent_push_count(),
+                        "cap": linebot.URGENT_PUSH_CAP},
         "last_ingest_ts": last_ts, "now": time.time(),
     }
+
+
+@router.post("/api/liff/notify/toggle")
+async def liff_notify_toggle(request: Request):
+    """v123: 緊急LINE通知のON/OFF。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        body = await request.json()
+        on = bool(body.get("on"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    linebot.set_urgent_push(on)
+    db.track("liff_notify_toggle")
+    return {"ok": True, "on": on}
 
 
 # ============ 🚨 未整備カードの強制仕分け(v103) ============
@@ -579,8 +603,201 @@ def liff_orei_list(request: Request):
                     "name": linebot._yobina(s.get("main_contact") or ""),
                     "dohan": s.get("dohan_venue") or "", "after": s.get("after_venue") or "",
                     "gaiso": (s.get("stype") or "") == "gaiso",
-                    "members": len(s.get("members") or [])})
+                    "members": len(s.get("members") or []),
+                    "unsent": (s.get("member_count") or 0) - (s.get("sent_count") or 0)})
     return {"ok": True, "sittings": out}
+
+
+# ============ 📄 カード印刷ビュー (v123: 共有→PDF用) ============
+
+@router.post("/api/liff/print/prep")
+async def liff_print_prep(request: Request):
+    """10分有効の印刷トークンを発行(外部ブラウザには認証が無いため)。
+    mode=full(自分用・全部) / share(見せる用・NG話題や対応モード等の内心データを除外)。"""
+    if not _authed(request):
+        return _deny()
+    import secrets as _sec
+    from . import linebot
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        mode = body.get("mode") if body.get("mode") in ("full", "share") else "share"
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not db.get_contact(code):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    tok = _sec.token_urlsafe(9)
+    linebot._meta_set(f"prt_{tok}", json.dumps(
+        {"code": code, "mode": mode, "exp": time.time() + 600}, ensure_ascii=False))
+    db.track("liff_print")
+    return {"ok": True, "url": f"/print/{tok}"}
+
+
+@router.get("/print/{tok}")
+def liff_print_view(tok: str):
+    from fastapi.responses import HTMLResponse
+    from . import linebot, crm
+    raw = linebot._meta_get(f"prt_{tok}")
+    try:
+        meta = json.loads(raw) if raw else None
+    except Exception:
+        meta = None
+    if not meta or meta.get("exp", 0) < time.time():
+        return HTMLResponse("<h3>リンクの有効期限が切れています(10分)。LIFFからもう一度出してください。</h3>",
+                            status_code=410)
+    code, mode = meta["code"], meta["mode"]
+    d = db.get_contact(code) or {}
+    a = crm.get_attrs(code) or {}
+    p = linebot.get_persona(code) or {}
+    rel = linebot.relationship_stats(code)
+
+    def esc(s):
+        return (str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+    rows = []
+
+    def add(k, v):
+        if v:
+            rows.append(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>")
+    add("呼び名", a.get("呼び名"))
+    if mode == "full":
+        add("本名", a.get("本名") or d.get("real_name"))
+    add("ランク", d.get("rank"))
+    add("誕生日", d.get("birthday") or a.get("誕生日"))
+    for k in ("仕事・会社", "好きなお酒", "好きな食べ物", "趣味・関心", "家族", "記念日",
+              "住まい・エリア", "お気に入りキャスト", "担当"):
+        add(k, a.get(k))
+    if mode == "full":
+        for k in ("進行中の話", "NG話題", "関係性メモ", "健康", "資産・事業"):
+            add(k, a.get(k))
+    if rel:
+        add("口調", f"自分→{rel['my_register']} ／ 相手→{rel['your_register']}")
+        if rel.get("visits"):
+            add("お席実績", f"{rel['visits']}回" + (f"・同伴{rel['dohan']}" if rel.get("dohan") else ""))
+    pers = ""
+    if mode == "full" and p.get("sections"):
+        pers = ("<h2>ペルソナ</h2><table>" +
+                "".join(f"<tr><th>{esc(s['k'])}</th><td>{esc(s['v'])}</td></tr>"
+                        for s in p["sections"]) + "</table>")
+        tols = [t for t in (p.get("tolerance") or []) if t.get("ok") == 1]
+        if tols:
+            pers += ("<h2>どこまでOKか(確認済み)</h2><table>" +
+                     "".join(f"<tr><th>{esc(t['k'])}</th><td>{esc(t['v'])}</td></tr>"
+                             for t in tols) + "</table>")
+    note = ("" if mode == "full" else
+            "<p class='sub'>※共有用：内心メモ・注意事項は載せていません</p>")
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(code)}</title><style>
+body{{font-family:'Hiragino Mincho ProN','Noto Serif JP',serif;color:#2B2823;max-width:720px;margin:0 auto;padding:28px 22px}}
+h1{{font-size:26px;border-bottom:3px double #A8842F;padding-bottom:8px;color:#1B2A4A}}
+h1 small{{font-size:13px;color:#6B6455;font-weight:400;margin-left:10px}}
+h2{{font-size:15px;color:#A8842F;margin:18px 0 6px}}
+table{{width:100%;border-collapse:collapse}}
+th{{text-align:left;width:9em;font-size:13px;color:#6B6455;font-weight:600;padding:7px 8px;border-bottom:1px solid #E6E1D4;vertical-align:top}}
+td{{font-size:15px;padding:7px 8px;border-bottom:1px solid #E6E1D4}}
+.sub{{color:#6B6455;font-size:12px}}
+.hint{{background:#F7F5EF;border:1px solid #E6E1D4;border-radius:10px;padding:10px 12px;font-size:13px;color:#6B6455;margin:14px 0}}
+@media print{{.hint{{display:none}}}}
+</style></head><body>
+<div class="hint">📄 PDFにする: iPhone=共有ボタン→「プリント」→ピンチアウト→共有→ファイルに保存 ／ 画面のスクショでも可</div>
+<h1>{esc(linebot._yobina(code, a))}<small>{esc(code)}｜帳場くん {time.strftime("%Y/%m/%d")}</small></h1>
+<table>{"".join(rows)}</table>
+{pers}{note}
+</body></html>"""
+    return HTMLResponse(html)
+
+
+# ============ 🔎 整備・🧹見直しのLIFF化 (v123) ============
+
+@router.get("/api/liff/facts")
+def liff_facts(request: Request, scope: str = "pending", code: str = ""):
+    """scope=pending: 全員の確認待ち / scope=review&code=X: その相手の自動反映済み(見直し)。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    linebot.ensure()
+    if scope == "review" and code:
+        rows = linebot.reviewable_facts(code)
+    else:
+        rows = linebot.pending_facts()
+    out = []
+    for f in rows[:120]:
+        try:
+            alts = json.loads(f.get("alts") or "[]")
+        except Exception:
+            alts = []
+        out.append({"id": f["id"], "contact": f["contact"],
+                    "name": linebot._yobina(f["contact"]),
+                    "k": f["k"], "v": f["v"], "src": f.get("src") or "",
+                    "conf": f.get("conf") or "中", "alts": alts[:3]})
+    return {"ok": True, "items": out, "scope": scope}
+
+
+@router.post("/api/liff/facts/act")
+async def liff_facts_act(request: Request):
+    """1項目の確定: ok(そのまま反映)/fix(直して反映)/del(消す)/skip(あとで)。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot, crm
+    try:
+        body = await request.json()
+        fid = int(body.get("id"))
+        action = body.get("action") or ""
+        value = (body.get("value") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if action not in ("ok", "fix", "del", "skip"):
+        return JSONResponse({"error": "bad action"}, status_code=400)
+    f = linebot._get_fact(fid)
+    if not f:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if action == "ok":
+        linebot.apply_fact(f["contact"], f["k"], f["v"])
+        linebot._set_fact_status(fid, "applied")
+    elif action == "fix":
+        if not value:
+            return JSONResponse({"error": "empty value"}, status_code=400)
+        linebot.apply_fact(f["contact"], f["k"], value)
+        with db.conn() as c:
+            c.execute("UPDATE linebot_facts SET status='fixed', v=? WHERE id=?", (value, fid))
+    elif action == "del":
+        linebot._set_fact_status(fid, "deleted")
+        # 自動反映済み(見直し)の削除はカードからも下ろす(値が一致する時のみ=手修正を壊さない)
+        if f.get("status") == "applied" and f["k"] not in ("呼び名", "誕生日"):
+            try:
+                cur = (crm.get_attrs(f["contact"]) or {}).get(f["k"])
+                if cur == f["v"]:
+                    with db.conn() as c:
+                        c.execute("DELETE FROM contact_attrs WHERE contact=? AND akey=?",
+                                  (f["contact"], f["k"]))
+            except Exception as e:
+                print(f"[fact del attr] {e}", flush=True)
+    elif action == "skip":
+        linebot._set_fact_status(fid, "skipped")
+    db.track("liff_fact_act")
+    return {"ok": True}
+
+
+@router.post("/api/liff/orei/resume")
+async def liff_orei_resume(request: Request):
+    """v123(F3): 途中で離脱したお礼を「最近のお席」から再開。送信済みは✓のまま。"""
+    if not _authed(request):
+        return _deny()
+    from . import sittings
+    try:
+        body = await request.json()
+        sid = int(body.get("sid"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    s = sittings.get_sitting(sid)
+    if not s:
+        return JSONResponse({"error": "お席が見つかりません"}, status_code=404)
+    sent = {m["contact"] for m in (s.get("members") or []) if m.get("sent")}
+    drafts_ = sittings.generate_orei(sid)
+    for g in drafts_:
+        if g.get("contact") in sent:
+            g["done"] = True
+    db.track("liff_orei_resume")
+    return {"ok": True, "sid": sid, "drafts": drafts_}
 
 
 # ============ 📥 一括取り込み ============
@@ -793,16 +1010,18 @@ async def liff_reply_drafts(request: Request):
     try:
         body = await request.json()
         mid = int(body.get("mid"))
+        force = bool(body.get("force"))   # v123(D1): 🔁作り直し
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if not db.get_message(mid):
         return JSONResponse({"error": "not found"}, status_code=404)
-    gen = drafts.generate(mid) or []
+    gen = (drafts.regenerate(mid) if force else drafts.generate(mid)) or []
     from . import crm
     m = db.get_message(mid) or {}
     db.track("liff_draft")
     return {"ok": True, "drafts": [{"text": g.get("text", "")} for g in gen if g.get("text")][:3],
-            "card_keys": crm.card_used_keys(m.get("contact") or "")}
+            "card_keys": crm.card_used_keys(m.get("contact") or ""),
+            "gen_note": drafts.last_err(mid) or ("APIキー未設定(Render envに ANTHROPIC_API_KEY)" if not config.ANTHROPIC_API_KEY else "")}
 
 
 @router.post("/api/liff/reply/act")

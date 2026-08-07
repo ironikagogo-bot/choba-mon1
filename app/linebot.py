@@ -152,6 +152,50 @@ def loading(uid, seconds=20):
         pass
 
 
+def urgent_push_enabled():
+    """v123: 緊急のみLINE push(既定ON)。'0'でOFF。"""
+    return _meta_get("urgent_push") != "0"
+
+
+def set_urgent_push(on):
+    _meta_set("urgent_push", "1" if on else "0")
+
+
+def _lp_month_key():
+    return "lp_" + time.strftime("%Y%m")
+
+
+def urgent_push_count():
+    try:
+        return int(_meta_get(_lp_month_key()) or 0)
+    except Exception:
+        return 0
+
+
+URGENT_PUSH_CAP = 150   # 無料枠200通/月のうち緊急用に150。残りはカード完成通知等の予備
+
+
+def push_urgent(contact, reason):
+    """v123: 即対応の受信をLINEチャットに1通で知らせる(Web Pushが購読切れでも届く経路)。
+    月間上限で自動停止=枠切れによる想定外課金を防ぐ。"""
+    if not urgent_push_enabled():
+        return False
+    n = urgent_push_count()
+    if n >= URGENT_PUSH_CAP:
+        if n == URGENT_PUSH_CAP:
+            _meta_set(_lp_month_key(), str(n + 1))
+            push_owner([{"type": "text",
+                         "text": f"🔔 今月の緊急通知が上限({URGENT_PUSH_CAP}通)に達したため、"
+                                 "月末まで通知を止めます。受信箱は通常どおり動いています。"}])
+        return False
+    ok = push_owner([{"type": "text",
+                      "text": f"🔥 {_yobina(contact)}さんから急ぎの気配({reason})。"
+                              "メニューの📨返信から下書きを確認できます。"}])
+    if ok:
+        _meta_set(_lp_month_key(), str(n + 1))
+    return ok
+
+
 def push_owner(messages):
     """本人へpush(課金対象・無料枠200通/月)。v96: LIFF通知用。使いすぎない。"""
     uid = owner_id()

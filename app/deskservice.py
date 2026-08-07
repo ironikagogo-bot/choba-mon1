@@ -95,6 +95,14 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False):
             pass
     if cat == "urgent" and not _unknown:
         title = f"帳場｜即対応 — {contact}"
+        # v123: LINEチャットにも1通(Web Push購読が無くても届く経路。月間上限つき)
+        def _lp():
+            try:
+                from . import linebot as _lb
+                _lb.push_urgent(contact, reason)
+            except Exception as e:
+                log(f"LINE緊急通知に失敗: {e}")
+        threading.Thread(target=_lp, daemon=True).start()
         if predraft:
             def work():
                 ds = drafts.generate(mid)

@@ -157,6 +157,24 @@ def _saved_drafts(message_id: int):
     return [{"text": d["text"], "tone": d["tone"]} for d in rows]
 
 
+# v123(D1): 生成失敗の理由(mid→人向けの短文)。成功で消える
+_LAST_ERR: dict = {}
+
+
+def last_err(message_id: int) -> str:
+    return _LAST_ERR.get(message_id, "")
+
+
+def regenerate(message_id: int) -> list[dict]:
+    """v123: 保存済み下書きを捨てて作り直す(失敗理由バーの🔁用)。"""
+    try:
+        with db.conn() as c:
+            c.execute("DELETE FROM drafts WHERE message_id=?", (message_id,))
+    except Exception as e:
+        print(f"[regen] {e}", flush=True)
+    return generate(message_id)
+
+
 def generate(message_id: int) -> list[dict]:
     existing = _saved_drafts(message_id)
     if existing:
@@ -232,6 +250,14 @@ def _generate_inner(message_id: int) -> list[dict]:
         user_prompt += ("\n【距離感=自動】口調は『この相手に本人が実際に送った文』の実例に合わせる"
                         "(実例が敬語ならこちらも敬語を崩さない・タメ口ならタメ口)。"
                         "この相手への実例が無い場合は、砕けすぎない軽い丁寧語で様子を見る(初手から馴れ馴れしくしない)。")
+    # v123: 接し方プロファイル=この相手への実例を必達見本として注入
+    try:
+        from .style_profile import samples_to_them as _stt
+        _sm = _stt(contact["code"])
+        if _sm:
+            user_prompt += "\n\n" + _sm
+    except Exception:
+        pass
     # v118: 第2層(関係性=ログ集計の事実)と第3層(許容レベル=本人確定済みのみ)を制約として注入
     try:
         from . import linebot as _lb
@@ -328,7 +354,21 @@ def _generate_inner(message_id: int) -> list[dict]:
                     drafts = _review_pass(contact, thread_text, drafts, user_prompt) or drafts
                 except Exception:
                     pass
-    except Exception:
+    except requests.Timeout:
+        _LAST_ERR[message_id] = "AIが時間切れ(混雑)。定型文を表示中 → 🔁で作り直せます"
         drafts = _template_drafts(contact, msg["text"], msg["reason"])
+    except requests.ConnectionError:
+        _LAST_ERR[message_id] = "AIに接続できません(通信)。定型文を表示中 → 🔁で作り直せます"
+        drafts = _template_drafts(contact, msg["text"], msg["reason"])
+    except requests.HTTPError as e:
+        _code = getattr(getattr(e, "response", None), "status_code", "?")
+        _LAST_ERR[message_id] = (f"AIエラー({_code})。" +
+                                 ("APIキーを確認(Render env)" if _code in (401, 403) else "定型文を表示中"))
+        drafts = _template_drafts(contact, msg["text"], msg["reason"])
+    except Exception as e:
+        _LAST_ERR[message_id] = f"生成に失敗({type(e).__name__})。定型文を表示中"
+        drafts = _template_drafts(contact, msg["text"], msg["reason"])
+    else:
+        _LAST_ERR.pop(message_id, None)
     db.save_drafts(message_id, drafts)
     return drafts

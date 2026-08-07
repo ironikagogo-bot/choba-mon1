@@ -211,3 +211,20 @@ def profile_prompt_block(profile: dict) -> str:
                   "言い回し・崩し・句読点の少なさ・端折り方をそのまま真似る):\n")
         block += "\n".join(f"「{s}」" for s in _pick_samples(profile["samples"], 20, 10))
     return block
+
+
+def samples_to_them(code: str, n: int = 3) -> str:
+    """v123: 接し方プロファイル=『この相手に』実際に送った直近の文。
+    グローバルな文体でなく、相手ごとの口調・絵文字・距離感の実例を必達見本として返す。"""
+    from . import db as _db
+    try:
+        with _db.conn() as c:
+            rows = [r["text"] or "" for r in c.execute(
+                "SELECT text FROM sent_replies WHERE contact=? ORDER BY ts DESC LIMIT 12", (code,))]
+    except Exception:
+        return ""
+    picked = [t.strip() for t in rows if 4 <= len(t.strip()) <= 140][:n]
+    if not picked:
+        return ""
+    return ("【この相手への自分の実例(最優先の口調見本。敬語/タメ口・絵文字の量・"
+            "距離感をこのまま再現する)】\n" + "\n".join(f"「{s}」" for s in picked))
