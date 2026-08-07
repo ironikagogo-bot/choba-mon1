@@ -306,27 +306,73 @@ def liff_boot(request: Request):
 # ============ 顧客一覧 ============
 
 @router.get("/api/liff/contacts")
-def liff_contacts(request: Request, q: str = ""):
+def liff_contacts(request: Request, q: str = "", kind: str = ""):
+    """v132: kind= "":顧客のみ(既定) / staff / peer / private / all"""
     if not _authed(request):
         return _deny()
     from . import crm, linebot
     linebot.ensure()
-    rows = crm.search_contacts(q=q)
+    # v141: グループ由来コード(「グループ名: 人名」)の掃除。取り込み元の記載＋人名の別名登録。
+    # 該当カードが無ければ実質no-op(通常0件)
+    try:
+        for ct in db.list_contacts():
+            if ":" in ct["code"] or "：" in ct["code"]:
+                crm.annotate_group_origin(ct["code"])
+    except Exception:
+        pass
+    kinds = None if not kind else ("all" if kind == "all" else [kind])
+    rows = crm.search_contacts(q=q, kinds=kinds)
     order = {"S": 0, "A": 1, "B": 2}
     out = []
     for r in rows:
         attrs = r.get("attrs") or {}
+        g, p = crm.group_split(r["code"])
+        nm = linebot._yobina(r["code"], attrs)
+        if g:
+            nm = nm.replace(r["code"], p)   # 表示は人名に寄せる(コードは不変)
         out.append({
             "code": r["code"],
-            "name": linebot._yobina(r["code"], attrs),
+            "name": nm,
+            "gname": g or "",
             "rank": r.get("rank") or "B",
+            "kind": r.get("kind") or "customer",
+            "sg": attrs.get("店内区分") or "",
             "birthday": r.get("birthday") or "",
             "company": attrs.get("仕事・会社") or r.get("company") or "",
             "ongoing": attrs.get("進行中の話") or "",
             "ng": attrs.get("NG話題") or "",
         })
     out.sort(key=lambda x: (order.get(x["rank"], 3), x["code"]))
+    # v141: 🔒私用タブには「受信ごと削除」にした相手(muted_names)も並べる。
+    # この人たちはカードを持たない=一覧のどこにも出ず、間違えて私用にした時に戻す手段が無かった
+    if kind == "private":
+        have = {o["code"] for o in out}
+        for m in crm.list_muted():
+            nm = (m.get("line_name") or "").strip()
+            if not nm or nm in have:
+                continue
+            out.append({"code": nm, "name": nm, "gname": "", "rank": "–",
+                        "kind": "muted", "sg": "", "birthday": "",
+                        "company": "", "ongoing": "", "ng": ""})
     return {"ok": True, "contacts": out}
+
+
+@router.post("/api/liff/unmute")
+async def liff_unmute(request: Request):
+    """v141: 私用(受信ごと削除)にした相手を戻す。次の受信から通常どおり届く。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "no name"}, status_code=400)
+    crm.unmute(name)
+    db.track("liff_unmute")
+    return {"ok": True}
 
 
 # ============ 顧客カード詳細 ============
@@ -374,10 +420,20 @@ def liff_contact(code: str, request: Request):
             gap = int((time.time() - last) / 86400)
     except Exception:
         pass
+    # v141: グループ由来コードは表示を人名に寄せ、取り込み元を記載
+    _g, _p = crm.group_split(code)
+    if _g:
+        crm.annotate_group_origin(code)
+        attrs = crm.get_attrs(code) or attrs   # 記載直後の「取り込み元」を反映
+    _nm = linebot._yobina(code, attrs)
+    if _g:
+        _nm = _nm.replace(code, _p)
     return {
         "ok": True,
         "code": code,
-        "name": linebot._yobina(code, attrs),
+        "name": _nm,
+        "gname": _g or "",
+        "pname": _p if _g else "",   # v141: グループ由来コードの人名部分(呼び名の既定に使う)
         "rank": d.get("rank") or "B",
         "kind": d.get("kind") or "customer",
         "stand": d.get("stand") or "",
@@ -515,9 +571,39 @@ async def liff_persona_edit(request: Request):
 def liff_reader_status(request: Request):
     if not _authed(request):
         return _deny()
-    from . import readerauth, watchdog
+    from . import readerauth, watchdog, linebot
+    linebot.ensure()
+    diag = None
+    try:
+        raw = linebot._meta_get("reader_diag")
+        diag = json.loads(raw) if raw else None
+    except Exception:
+        pass
     return {"ok": True, "watch": watchdog.status(),
-            "readers": readerauth.list_readers()}
+            "readers": readerauth.list_readers(),
+            "remote": {"q": linebot._meta_get("reader_q") or "",
+                       "ver": linebot._meta_get("reader_ver") or "",
+                       "pending_cmd": linebot._meta_get("reader_cmd") or "",
+                       "diag": diag}}
+
+
+@router.post("/api/liff/reader/cmd")
+async def liff_reader_cmd(request: Request):
+    """v134: リーダーへの遠隔コマンド予約(次のハートビート=最大15分以内に実行される)。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        body = await request.json()
+        cmd = body.get("cmd") or ""
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if cmd not in ("flush", "clearq", "diag"):
+        return JSONResponse({"error": "bad cmd"}, status_code=400)
+    linebot.ensure()
+    linebot._meta_set("reader_cmd", cmd)
+    db.track("liff_reader_cmd")
+    return {"ok": True, "cmd": cmd}
 
 
 @router.post("/api/liff/reader/code")
@@ -619,6 +705,27 @@ def liff_orei_list(request: Request):
                     "members": len(s.get("members") or []),
                     "unsent": (s.get("member_count") or 0) - (s.get("sent_count") or 0)})
     return {"ok": True, "sittings": out}
+
+
+# ============ 🔀 カード統合 (v133) ============
+
+@router.post("/api/liff/merge")
+async def liff_merge(request: Request):
+    """重複カードの統合。absorb(消える側)→keep(残る側)。取り消し不可。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    try:
+        body = await request.json()
+        keep = (body.get("keep") or "").strip()
+        absorb = (body.get("absorb") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    r = crm.merge_contact(keep, absorb)
+    if not r.get("ok"):
+        return JSONResponse({"error": r.get("error") or "統合できませんでした"}, status_code=400)
+    db.track("liff_merge")
+    return {"ok": True}
 
 
 # ============ 🌐 顧客ネット補強 (v125) ============
@@ -843,6 +950,9 @@ def liff_facts(request: Request, scope: str = "pending", code: str = ""):
     linebot.ensure()
     if scope == "review" and code:
         rows = linebot.reviewable_facts(code)
+    elif code:
+        # v141: この相手の確認待ちだけ(カード発の「必ずやらせる」動線。全員分の整理を強制しない)
+        rows = [f for f in linebot.pending_facts() if f["contact"] == code]
     else:
         rows = linebot.pending_facts()
     out = []
@@ -851,8 +961,13 @@ def liff_facts(request: Request, scope: str = "pending", code: str = ""):
             alts = json.loads(f.get("alts") or "[]")
         except Exception:
             alts = []
+        from . import crm as _crm
+        _g, _pn = _crm.group_split(f["contact"])
+        _nm = linebot._yobina(f["contact"])
+        if _g:
+            _nm = _nm.replace(f["contact"], _pn)   # v141: グループ名はここでも表示しない
         out.append({"id": f["id"], "contact": f["contact"],
-                    "name": linebot._yobina(f["contact"]),
+                    "name": _nm,
                     "k": f["k"], "v": f["v"], "src": f.get("src") or "",
                     "conf": f.get("conf") or "中", "alts": alts[:3]})
     return {"ok": True, "items": out, "scope": scope}
@@ -1021,6 +1136,11 @@ def _run_import_job(jid: int, contact: str, text: str):
         facts = linebot._ensure_name_questions(contact, facts)
         ncrit, nauto = linebot.save_split(contact, facts)
         upd("done", f"{ncrit + nauto}")
+        # v140: どのルート(チャット/📥/ショートカット)でも「顧客カード作成完了」を1通通知
+        try:
+            linebot._notify_card_ready(contact, ncrit, nauto)
+        except Exception as e:
+            print(f"[import notify] {e}", flush=True)
         linebot.maybe_auto_persona(contact)   # v109: 一括取り込みでもペルソナ同時生成
         db.track("liff_bulk_import")
     except Exception as e:
@@ -1057,21 +1177,20 @@ async def liff_import(request: Request, files: list[UploadFile] = File(...)):
         contact, cands, name = _match_contact(fname)
         if contact is None and name and not cands:
             contact = name   # 新規カードとして作成(ジョブ内でupsert)
+        # v131: 既存カードへのマッチは「このtxtはこの顧客？」確認を挟む(誤マージ防止)
+        is_existing = bool(contact and db.get_contact(contact))
+        status0 = ("confirm" if is_existing else "queued") if contact else "ambiguous"
         with db.conn() as c:
             cur = c.execute("INSERT INTO liff_import_jobs(fname,contact,status,detail,ts) "
                             "VALUES(?,?,?,?,?)",
-                            (fname, contact or "",
-                             "queued" if contact else "ambiguous",
+                            (fname, contact or "", status0,
                              json.dumps({"cands": cands, "name": name}, ensure_ascii=False)
                              if not contact else "", time.time()))
             jid = cur.lastrowid
-        if contact:
-            # 原文をジョブに退避(assign時の再実行にも使う)
-            linebot._meta_set(f"liffimp_{jid}", text[:200000])
+        linebot._meta_set(f"liffimp_{jid}", text[:200000])
+        if contact and not is_existing:
             threading.Thread(target=_run_import_job, args=(jid, contact, text), daemon=True).start()
-        else:
-            linebot._meta_set(f"liffimp_{jid}", text[:200000])
-        out.append({"id": jid, "fname": fname, "status": "queued" if contact else "ambiguous",
+        out.append({"id": jid, "fname": fname, "status": status0,
                     "contact": contact, "cands": cands})
     return {"ok": True, "jobs": out}
 
@@ -1109,11 +1228,13 @@ def liff_inbox(request: Request):
     out = []
     for it in q:
         full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
+        from . import crm as _crm
         out.append({"mid": it["mid"], "contact": it["contact"],
                     "name": linebot._yobina(it["contact"]),
                     "rank": it.get("rank") or "B", "urgent": bool(it.get("urgent")),
                     "unlinked": bool(it.get("unlinked")), "reason": it.get("reason") or "",
                     "ts": it.get("ts"), "text": full[:600],
+                    "sname": (_crm.get_attrs(it["contact"]) or {}).get("LINE検索名") or "",
                     "truncated": len(full) > 600})
     return {"ok": True, "items": out}
 
@@ -1253,8 +1374,9 @@ async def liff_ann_plan(request: Request):
     (同じ人が複数セグメントに該当しても1回だけ)。トーンは1人ずつkindで判定。"""
     if not _authed(request):
         return _deny()
-    from . import linebot
+    from . import linebot, crm
     linebot.ensure()
+    crm.ensure()
     try:
         body = await request.json()
         segs = body.get("segs") or ([body["seg"]] if body.get("seg") else ["ALL"])
@@ -1273,7 +1395,8 @@ async def liff_ann_plan(request: Request):
             tone = {"peer": "peer", "staff": "staff"}.get(kind, "cust")
             items.append({"code": c_, "name": linebot._yobina(c_),
                           "rank": (db.get_contact(c_) or {}).get("rank") or "B",
-                          "tone": tone})
+                          "tone": tone,
+                          "sname": (crm.get_attrs(c_) or {}).get("LINE検索名") or ""})
     return {"ok": True, "items": items, "deduped": dup}
 
 

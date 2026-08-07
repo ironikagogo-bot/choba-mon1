@@ -243,6 +243,23 @@ class DeskService:
             if not parsed:
                 self.log("→ 取り込まない(LINE以外/要約/相手不明)")
                 return {"status": "ignored"}
+            # v131: グループ/一斉配信の混入対策。送信者不明のグループ通知や、
+            # グループ名らしき相手名(「A & B」「A、B」等)はカード化しない(ぐちゃっと問題)
+            import re as _reg
+            _cn = parsed.get("contact") or ""
+            if (_group and not _sender) or _reg.search(r"[,、]| & |＆", _cn):
+                self.log(f"→ グループ/一斉配信とみなして取り込まない({_cn[:24]})")
+                return {"status": "ignored-group"}
+            # v141: 旧リーダー(〜v0.5)のグループ通知はタイトルが「グループ名: 送信者」。
+            # そのままだとグループ名がカード名に付いて回る(実例: 焼肉大好き: Yuji Tsuboi)。
+            # 人名だけをカード名にし、グループ名は本文頭の【】印として文脈に残す。
+            if not _sender:
+                from . import crm as _crm
+                _g, _p = _crm.group_split(_cn)
+                if _g and _p:
+                    parsed["contact"] = _p
+                    parsed["message"] = f"【{_g}】" + (parsed.get("message") or "")
+                    self.log(f"→ グループ「{_g}」内の{_p}さんとして取り込み")
 
             contact, message = parsed["contact"], parsed["message"]
             msg_id = f"{key}|{ts}" if (key or "").strip() else None

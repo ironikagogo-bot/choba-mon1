@@ -4,6 +4,7 @@
 UI:    http://localhost:8000/
 デモ受信: python scripts/demo_feed.py  (別ターミナル)
 """
+import json
 import os
 import time
 import hmac
@@ -236,13 +237,48 @@ def _reader_token_ok(tok: str, battery=None) -> bool:
 
 @app.post("/api/android/heartbeat")
 async def android_heartbeat(request: Request):
-    """リーダーv0.5からの生存信号。?token=<rdr_トークン or INGEST_TOKEN>&battery=85"""
+    """リーダーv0.5+からの生存信号。?token=…&battery=85&qsize=7&ver=0.6.1
+    v134: ハートビート応答が遠隔コマンド路になる(ポーリング型リモコン)。
+    cmd: flush=今すぐ送信 / clearq=未送信破棄 / diag=診断を送らせる"""
     tok = request.query_params.get("token", "")
     batt = request.query_params.get("battery")
     if not _reader_token_ok(tok, battery=batt):
         return Response(status_code=403)
     from . import watchdog as _wd
     _wd.beat(battery=batt)
+    try:
+        from . import linebot as _lb0
+        _lb0.ensure()
+        from .linebot import _meta_get as _mg, _meta_set as _ms
+        q = request.query_params.get("qsize")
+        if q is not None:
+            _ms("reader_q", str(q))
+        v = request.query_params.get("ver")
+        if v:
+            _ms("reader_ver", str(v)[:16])
+        cmd = _mg("reader_cmd") or ""
+        if cmd:
+            _ms("reader_cmd", "")   # 1回きりで消費
+        return {"ok": True, "cmd": cmd}
+    except Exception:
+        return {"ok": True, "cmd": ""}
+
+
+@app.post("/api/android/diag")
+async def android_diag(request: Request):
+    """v134: リーダーの自己診断レポート受け口(遠隔diagコマンドへの応答)。"""
+    tok = request.query_params.get("token", "")
+    if not _reader_token_ok(tok):
+        return Response(status_code=403)
+    try:
+        body = await request.body()
+        text = body.decode("utf-8", errors="replace")[:4000]
+    except Exception:
+        text = ""
+    from . import linebot as _lb1
+    _lb1.ensure()
+    from .linebot import _meta_set as _ms
+    _ms("reader_diag", json.dumps({"ts": time.time(), "text": text}, ensure_ascii=False))
     return {"ok": True}
 
 
@@ -660,7 +696,8 @@ def inbox():
         kept.append(m)
     # 名無しグループ通知(送信者不明)と同一本文の個別通知が両方ある時は、グループ側を閉じる
     def _is_group_name(cn):
-        return ("," in (cn or "")) or ("、" in (cn or ""))
+        cn = cn or ""
+        return ("," in cn) or ("、" in cn) or (" & " in cn) or ("＆" in cn)
     _texts_indiv = {(m["text"] or "").replace("【グループ】", "").strip()
                     for m in kept if not _is_group_name(m["contact"])}
     _kept2 = []

@@ -190,7 +190,7 @@ def push_urgent(contact, reason):
                                  "月末まで通知を止めます。受信箱は通常どおり動いています。"}])
         return False
     ok = push_owner([{"type": "text",
-                      "text": f"🔥 {_yobina(contact)}さんから急ぎの気配({reason})。"
+                      "text": f"🔥 {_hon_disp(contact)}から急ぎの気配({reason})。"
                               "メニューの📨返信から下書きを確認できます。"}])
     if ok:
         _meta_set(_lp_month_key(), str(n + 1))
@@ -651,6 +651,8 @@ def handle_file(uid, token, message):
     from . import liff as _liff
     _liff._jobs_ensure()
     contact, cands, extracted = _liff._match_contact(name)
+    if not contact and extracted and not cands:
+        contact = extracted   # 既存に無く候補も無い=新規カードとして採用
     if not contact:
         # ファイル名で決まらなければ本文ヘッダ「[LINE] 〇〇とのトーク履歴」から
         _m = _re.search(r"\[LINE\] ?(.+?)とのトーク履歴", text[:300])
@@ -659,10 +661,14 @@ def handle_file(uid, token, message):
             c2, cands2, _ = _liff._match_contact(f"[LINE] {hd}とのトーク履歴.txt")
             contact = c2 or (hd if not cands2 else None)
             cands = cands2 or cands
+    # v131: 既存カードへのマッチは「このtxtはこの顧客？」を確認してからマージ(本人要望。
+    # 誤マージはカード汚染=取り返しがつかないため)。新規カード作成は危険がないので自動。
+    is_existing = bool(contact and db.get_contact(contact))
+    status0 = ("confirm" if is_existing else "queued") if contact else "ambiguous"
     with db.conn() as c:
         cur = c.execute("INSERT INTO liff_import_jobs(fname,contact,status,detail,ts) "
                         "VALUES(?,?,?,?,?)",
-                        (name, contact or "", "queued" if contact else "ambiguous",
+                        (name, contact or "", status0,
                          json.dumps({"cands": cands or [], "name": extracted or ""},
                                     ensure_ascii=False) if not contact else "",
                          time.time()))
@@ -670,18 +676,41 @@ def handle_file(uid, token, message):
     _meta_set(f"liffimp_{jid}", text[:200000])
     db.track("linebot_txt_import")
     liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
-    if contact:
+    if contact and not is_existing:
         threading.Thread(target=_liff._run_import_job, args=(jid, contact, text),
                          daemon=True).start()
+        # v138: 受領カードのボタンもLIFF直行(チャットUIを開かせない・クイックリプライ無し)
+        if liff_id:
+            return reply(token, [{
+                "type": "flex", "altText": f"📄 「{name}」を受け取りました",
+                "contents": {"type": "bubble", "body": {
+                    "type": "box", "layout": "vertical", "paddingAll": "16px", "spacing": "sm",
+                    "contents": [
+                        {"type": "text", "text": "📄 受け取りました", "weight": "bold",
+                         "size": "md", "color": NAVY},
+                        {"type": "text", "wrap": True, "size": "sm",
+                         "text": f"新しい相手「{contact}」として取り込み中(30秒〜1分)。"
+                                 "できあがったら1通お知らせします。この画面での操作は不要です。"}]},
+                    "footer": {"type": "box", "layout": "vertical", "contents": [
+                        {"type": "button", "style": "secondary", "height": "sm",
+                         "action": {"type": "uri", "label": f"🗂 {contact}のカードを見る"[:20],
+                                    "uri": f"https://liff.line.me/{liff_id}#card/{_q(contact, safe='')}"}}]}}}])
         return reply(token, [flexmsg(
             f"📄 「{name}」を受け取りました",
-            f"「{_yobina(contact)}」さんのトークとして取り込みを始めました(30秒〜1分)。\n"
+            f"新しい相手「{contact}」として取り込みを始めました(30秒〜1分)。\n"
             "✓ カード・文体・ペルソナに反映\n"
-            "✓ できあがったら1通お知らせします\n"
-            "✓ 事実の確認(○✕)はお知らせからワンタップ",
-            accent=GREEN,
-            quick=[(f"🗂 {contact}のカード"[:20], f"m=card&c={_q(contact, safe='')}"),
-                   ("ホームへ", "m=home")])])
+            "✓ できあがったら1通お知らせします",
+            accent=GREEN, quick=[("ホームへ", "m=home")])])
+    if contact and is_existing:
+        d0 = db.get_contact(contact) or {}
+        return reply(token, [flexmsg(
+            "📄 このtxtはこの顧客ですか？",
+            f"「{_yobina(contact)}」さん(既存カード・ランク{d0.get('rank','B')})のトークとして"
+            "取り込みます。合っていれば✓を押してください。違う人のカードに混ざるのを防ぐ確認です。",
+            accent=GOLD,
+            quick=[(f"✓ {_yobina(contact)}で取り込む"[:20], f"f=imp&a=ok&j={jid}"),
+                   ("違う人を選ぶ", f"f=imp&a=pick&j={jid}"),
+                   ("やめる", f"f=imp&a=no&j={jid}")])])
     # 相手が特定できない → LIFFの取り込み画面でタップ指定(タイプ入力なし)
     body = ("ファイル名から相手が分かりませんでした。\n"
             "下のボタンから開いて、誰のトークかをタップで選んでください(打ち込み不要)。")
@@ -1068,9 +1097,9 @@ PERSONA_SECTIONS = ("価値観の核", "知性・教養", "コミュニケーシ
                     "効く話題", "避ける話題", "距離の縮め方", "贈り物の方向")
 
 
-def analyze_persona(contact):
+def analyze_persona(contact, sample=50000):
     """生トーク全文＋確認済みファクトから、運用指針としてのペルソナを生成。
-    戻り値: (persona_dict, err)。"""
+    戻り値: (persona_dict, err)。sample=読み込む最大文字数(時間切れ時の縮小リトライ用)。"""
     if not config.ANTHROPIC_API_KEY:
         return None, "APIキー未設定"
     from . import crm
@@ -1080,14 +1109,18 @@ def analyze_persona(contact):
     if len(talk) < 200:
         return None, "会話が少なすぎます(txtを取り込んでください)"
     # 長文は頭と尾を優先(関係の始まりと現在=弧が出る)。
-    # v129: 90000→50000字(Eri 318KBで時間切れリスク。50kでも人物理解には十分)
-    if len(talk) > 50000:
-        talk = talk[:25000] + "\n…(中略)…\n" + talk[-25000:]
+    # v129: 90000→50000字 / v135: 時間切れ時はさらに縮小して再挑戦
+    if len(talk) > sample:
+        half = sample // 2
+        talk = talk[:half] + "\n…(中略)…\n" + talk[-half:]
     attrs = crm.get_attrs(contact)
     facts = "／".join(f"{k}:{v}" for k, v in list(attrs.items())[:15])
-    system = ("あなたは銀座の一流ホステスに仕える有能な秘書。担当のお客様との実際のLINEを読み、"
-              "接客・営業に本当に役立つ人物理解メモを作る。心地よいだけのお世辞や、根拠のない"
-              "安楽椅子心理分析は禁止。断定の強さは根拠の強さに一致させる。")
+    system = ("あなたは接客業向け顧客管理(CRM)アプリの分析エンジン。利用者(ホステス本人)が"
+              "自分自身のLINEトーク履歴から自分用の顧客理解メモを作る正当な業務であり、"
+              "本人の依頼と同意に基づく。会話に私的な内容が含まれても、それは利用者自身の"
+              "会話であり分析してよい。接客・営業に本当に役立つ人物理解メモを作る。"
+              "心地よいだけのお世辞や、根拠のない安楽椅子心理分析は禁止。"
+              "断定の強さは根拠の強さに一致させる。出力は必ずJSONのみ。")
     prompt = (
         f"お客様「{contact}」の人物ペルソナを、次の観点でまとめてください。\n"
         f"観点: {'/'.join(PERSONA_SECTIONS)}\n"
@@ -1113,7 +1146,7 @@ def analyze_persona(contact):
         rr = requests.post("https://api.anthropic.com/v1/messages",
                            headers={"x-api-key": config.ANTHROPIC_API_KEY,
                                     "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                           json={"model": config.ANTHROPIC_MODEL, "max_tokens": 2500,
+                           json={"model": config.ANTHROPIC_MODEL, "max_tokens": 4000,
                                  "system": system, "messages": [{"role": "user", "content": prompt}]},
                            timeout=180)
         if rr.status_code != 200:
@@ -1124,15 +1157,19 @@ def analyze_persona(contact):
             obj = json.loads(t[t.index("{"):t.rindex("}") + 1])
         except (ValueError, json.JSONDecodeError):
             # v101: 空応答・JSON崩れは1回だけ出し直させる(v95知見の再適用)
+            _msgs = [{"role": "user", "content": prompt}]
+            if (out or "").strip():
+                _msgs += [{"role": "assistant", "content": out[:600]},
+                          {"role": "user", "content": "出力が途中で切れた/読めませんでした。"
+                           "各項目のvを簡潔にして、完全なJSONオブジェクトだけを出し直してください。"}]
+            else:
+                _msgs[0]["content"] = prompt + "\n\n(注意: 前回は本文が空でした。必ずJSONオブジェクトを出力してください)"
             rr2 = requests.post("https://api.anthropic.com/v1/messages",
                                 headers={"x-api-key": config.ANTHROPIC_API_KEY,
                                          "anthropic-version": "2023-06-01",
                                          "content-type": "application/json"},
-                                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 2500,
-                                      "system": system,
-                                      "messages": [{"role": "user", "content": prompt},
-                                                   {"role": "assistant", "content": out[:600]},
-                                                   {"role": "user", "content": "出力が読めませんでした。前置き・```を付けず、JSONオブジェクトだけを出し直してください。"}]},
+                                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 4000,
+                                      "system": system, "messages": _msgs},
                                 timeout=180)
             if rr2.status_code != 200:
                 return None, f"API {rr2.status_code}: {rr2.text[:90]}"
@@ -1142,7 +1179,15 @@ def analyze_persona(contact):
     except requests.Timeout:
         return None, "時間切れ"
     except Exception as e:
-        return None, f"AIの返答が読めません:「{(out[:60] + '…') if 'out' in dir() and out else type(e).__name__}」"
+        _snip = (out or "").strip()[:80]
+        _sr = ""
+        try:
+            _sr = rr2.json().get("stop_reason") or ""
+        except Exception:
+            pass
+        if _snip:
+            return None, f"AIの返答が読めません:「{_snip}…」"
+        return None, f"AIが本文を返しませんでした({type(e).__name__}{('/' + _sr) if _sr else ''})"
     secs = []
     for s in (obj.get("sections") or [])[:8]:
         k = str(s.get("k", "")).strip()[:14]
@@ -1193,6 +1238,9 @@ def persona_async(contact):
     def work():
         try:
             p, err = analyze_persona(contact)
+            if err and ("時間切れ" in err or "Timeout" in err):
+                # v135: 長文で時間切れ→半分のサンプルで自動再挑戦(Eri 318KB対策)
+                p, err = analyze_persona(contact, sample=24000)
             if err:
                 _meta_set(f"pstat_{contact}", f"error:{err}")
             else:
@@ -1557,20 +1605,30 @@ def _notify_card_ready(contact, ncrit, nauto):
     if not liff_id:
         return
     try:
-        url = f"https://liff.line.me/{liff_id}#edit/{_q(contact, safe='')}"
-        n = ncrit + nauto
+        # v140: 文言を「顧客カード作成完了」に。
+        # v141: タップ先は常にカード(いきなり全員分の整備モードに放り込まない)。
+        # 確認が残る相手はカード上部＋下部固定バーで「この人の確認だけ」へ誘導する
+        if ncrit > 0:
+            url = f"https://liff.line.me/{liff_id}#card/{_q(contact, safe='')}"
+            body = (f"{_hon_disp(contact)}。呼び名・種別など"
+                    f"大事な確認が{ncrit}件あります(カードの中で○✕するだけ)")
+            label = f"カードを見る(確認{ncrit}件)"
+        else:
+            url = f"https://liff.line.me/{liff_id}#card/{_q(contact, safe='')}"
+            body = f"{_hon_disp(contact)}。{nauto}項目を自動反映しました"
+            label = "カードを見る"
         push_owner([{
-            "type": "flex", "altText": f"✎ {_yobina(contact)}さんのカードができました",
+            "type": "flex", "altText": f"🗂 {_hon_disp(contact)}の顧客カード作成完了",
             "contents": {"type": "bubble",
                          "body": {"type": "box", "layout": "vertical", "paddingAll": "16px",
                                   "contents": [
-                                      {"type": "text", "text": "✎ カードができました", "weight": "bold",
+                                      {"type": "text", "text": "🗂 顧客カード作成完了", "weight": "bold",
                                        "size": "md", "color": "#1B2A4A"},
-                                      {"type": "text", "text": f"{_yobina(contact)}さん・{n}項目",
+                                      {"type": "text", "text": body,
                                        "size": "sm", "color": "#6B6455", "margin": "sm", "wrap": True}]},
                          "footer": {"type": "box", "layout": "vertical", "contents": [
                              {"type": "button", "style": "primary", "color": "#A8842F",
-                              "action": {"type": "uri", "label": "開いて確認する", "uri": url}}]}}}])
+                              "action": {"type": "uri", "label": label, "uri": url}}]}}}])
     except Exception as e:
         print(f"[linebot cardready] {e}", flush=True)
 
@@ -2069,6 +2127,17 @@ def _yobina(code, attrs=None):
     if y and y != code:
         return f"{y}({code})"
     return code
+
+
+def _hon_disp(code, attrs=None):
+    """v141: 通知・表示用に敬称を1回だけ付ける(「HI!さんさん」防止・アプリ横断)。
+    「呼び名(表示名)」形式は呼び名側にだけ敬称を付ける。"""
+    from .campaign import hon
+    nm = _yobina(code, attrs)
+    m = _re.match(r"^(.+?)\((.+)\)$", nm)
+    if m:
+        return f"{hon(m.group(1))}({m.group(2)})"
+    return hon(nm)
 
 
 def crm_list_msgs(pg=0):
@@ -2834,7 +2903,13 @@ def route_postback(uid, data, token):
         db.track("linebot_crm")
         return reply(token, crm_list_msgs(pg))
     if m == "card":
-        return reply(token, card_msgs(_uq(p.get("c", ""))))
+        # v138: 旧チャット版カード(横スクロールのクイックリプライ付き)は廃止。
+        # チャットはUIを展開せず、その相手のLIFFカードへ直行させる(一本化の取りこぼし修正)
+        _c0 = _uq(p.get("c", ""))
+        _r = _liff_redirect_card(f"#card/{_q(_c0, safe='')}") if _c0 else _liff_redirect_card()
+        if _r:
+            return reply(token, _r)
+        return reply(token, card_msgs(_c0))   # LIFF未設定サーバーのみ旧表示
     if m == "style":
         return reply(token, style_msgs())
     if m == "review":
@@ -2852,7 +2927,7 @@ def route_postback(uid, data, token):
     if m == "fact":
         n = len(pending_facts())
         if n:
-            return fact_card(token, prefix=[cover("🔎 カード整備",
+            return fact_card(token, prefix=[cover("✅ 確認",
                                                   f"抽出した{n}件を確認します。全部タップ、1件5秒")])
         digs = _dig_status()
         running, errors, zero = [], [], []
@@ -2918,6 +2993,51 @@ def route_postback(uid, data, token):
     if m == "orei":
         return start_orei(uid, token)
     f = p.get("f")
+    if f == "imp":
+        # v131: txt取り込みの本人確認(✓この顧客で取り込む / 違う人 / やめる)
+        a0 = p.get("a", "")
+        try:
+            jid0 = int(p.get("j", "0"))
+        except Exception:
+            jid0 = 0
+        with db.conn() as c:
+            j0 = c.execute("SELECT * FROM liff_import_jobs WHERE id=?", (jid0,)).fetchone()
+        if not j0 or j0["status"] not in ("confirm", "ambiguous"):
+            return reply(token, [flexmsg("その取り込みは処理済みです☺️",
+                                         quick=[("ホームへ", "m=home")])])
+        text0 = _meta_get(f"liffimp_{jid0}")
+        if a0 == "ok" and j0["contact"] and text0:
+            from . import liff as _liff2
+            with db.conn() as c:
+                c.execute("UPDATE liff_import_jobs SET status='queued' WHERE id=?", (jid0,))
+            threading.Thread(target=_liff2._run_import_job,
+                             args=(jid0, j0["contact"], text0), daemon=True).start()
+            return reply(token, [flexmsg(
+                f"✓ 「{_yobina(j0['contact'])}」さんとして取り込み中(30秒〜1分)",
+                "できあがったら1通お知らせします。",
+                accent=GREEN, quick=[("ホームへ", "m=home")])])
+        if a0 == "pick":
+            liff_id0 = os.environ.get("CHOUBA_LIFF_ID", "")
+            with db.conn() as c:
+                c.execute("UPDATE liff_import_jobs SET status='ambiguous', "
+                          "detail=? WHERE id=?",
+                          (json.dumps({"cands": [j0["contact"]] if j0["contact"] else [],
+                                       "name": j0["contact"] or ""}, ensure_ascii=False), jid0))
+            if liff_id0:
+                return reply(token, [{
+                    "type": "flex", "altText": "相手を選んでください",
+                    "contents": {"type": "bubble", "body": {"type": "box", "layout": "vertical",
+                        "paddingAll": "16px", "spacing": "md", "contents": [
+                        {"type": "text", "text": "📥 相手をタップで選んでください", "weight": "bold", "wrap": True},
+                        {"type": "button", "style": "primary", "color": NAVY, "height": "sm",
+                         "action": {"type": "uri", "label": "📥 開いて選ぶ",
+                                    "uri": f"https://liff.line.me/{liff_id0}#import"}}]}}}])
+            return reply(token, [flexmsg("📥 相手を迎える画面で選んでください", quick=[("ホームへ", "m=home")])])
+        # やめる
+        with db.conn() as c:
+            c.execute("UPDATE liff_import_jobs SET status='error', detail='取り込み中止' WHERE id=?", (jid0,))
+        return reply(token, [flexmsg("取り込みをやめました(データは入っていません)",
+                                     quick=[("ホームへ", "m=home")])])
     if f == "rep":
         return rep_action(uid, token, p.get("a", ""), p)
     if f == "ann":
@@ -2940,8 +3060,8 @@ def route_postback(uid, data, token):
             dig_async(c0)
             return reply(token, [flexmsg(f"🔎 {c0} を掘り直しています…",
                                          "長いトークは分割して全文を読みます(1〜2分)。"
-                                         "終わったら🔎整備を押してください。",
-                                         accent=BLUE, quick=[("🔎 整備を開く", "m=fact"),
+                                         "終わったら✅確認を押してください。",
+                                         accent=BLUE, quick=[("✅ 確認を開く", "m=fact"),
                                                              ("ホームへ", "m=home")])])
         if p.get("a") == "web":
             c0 = _uq(p.get("c", ""))
@@ -2952,9 +3072,9 @@ def route_postback(uid, data, token):
             db.track("linebot_web_research")
             return reply(token, [flexmsg(f"🌐 {c0} を公開情報から調べています…",
                                          "カードの手がかり(本名・会社など)と一致する情報だけを拾います。"
-                                         "1〜3分後に🔎整備を押してください。\n"
+                                         "1〜3分後に✅確認を押してください。\n"
                                          "見つかった情報も○✕で確認してからカードに載ります。",
-                                         accent=BLUE, quick=[("🔎 整備を開く", "m=fact"),
+                                         accent=BLUE, quick=[("✅ 確認を開く", "m=fact"),
                                                              ("ホームへ", "m=home")])])
         return fact_action(uid, token, p.get("a", ""), p)
     if f == "persona":

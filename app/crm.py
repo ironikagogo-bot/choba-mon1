@@ -221,6 +221,48 @@ def list_muted() -> list:
         return [dict(r) for r in c.execute("SELECT * FROM muted_names ORDER BY created_ts DESC")]
 
 
+# ---------- グループ由来コードの分解(v141) ----------
+# 旧リーダー(〜v0.5)のグループ通知はタイトルが「グループ名: 送信者」形式で届き、
+# そのままカードのコードになる(実例: 「焼肉大好き: Yuji Tsuboi」2026-08-07 mon1)。
+# コードは各テーブルのキーなので変更せず、表示と記載で人名に寄せる。
+import re as _re_g
+_GROUP_CODE_RE = _re_g.compile(r"^(?P<g>[^:：]{1,24})[:：]\s+(?P<p>.{1,40})$")
+
+
+def group_split(code: str):
+    """「グループ名: 人名」形式のコードを (グループ名, 人名) に分解。
+    該当しなければ (None, code)。コロン直後に空白がある形のみ対象
+    (時刻「12:30」やURL等の誤検知を避ける)。"""
+    m = _GROUP_CODE_RE.match((code or "").strip())
+    if not m:
+        return None, code
+    return m.group("g").strip(), m.group("p").strip()
+
+
+def annotate_group_origin(code: str):
+    """グループ由来カードに「取り込み元」を記載し、人名を別名に登録する。
+    別名登録で、以後クリーンな人名で届いた受信が同じカードに紐付く(重複カード防止)。
+    既に記載済みなら何もしない。戻り: グループ名 or None"""
+    g, p = group_split(code)
+    if not g:
+        return None
+    try:
+        attrs = get_attrs(code) or {}
+        if not attrs.get("取り込み元"):
+            add_def("取り込み元")
+            set_attr(code, "取り込み元", f"グループ「{g}」のチャットで取り込み")
+        if p and p != code:
+            with db.conn() as c:
+                # 人名が他カードのコード/別名で既に使われていれば触らない
+                used = c.execute("SELECT 1 FROM contact_aliases WHERE line_name=?", (p,)).fetchone()
+                used2 = c.execute("SELECT 1 FROM contacts WHERE code=?", (p,)).fetchone()
+            if not used and not used2:
+                add_alias(p, code)
+    except Exception as e:
+        print(f"[group annotate] {e}", flush=True)
+    return g
+
+
 # ---------- カスタム属性 ----------
 def list_defs() -> list:
     ensure()
@@ -324,7 +366,9 @@ def card_prompt_block(code: str) -> str:
                  "(ゴルフ・食事・旅行・「今度〜行こう」等)は記録当時のもので、今も有効とは限らない。"
                  "現在の予定として書くのは禁止。記録日が古い/不明のものに触れる場合は"
                  "「そういえば前に話してた〇〇、どうなりました？」のような確認・回想の形だけにする。"
-                 "過ぎた日付の予定は過去の出来事として扱う。")
+                 "過ぎた日付の予定は過去の出来事として扱う。"
+                 "回想に使うのも記録から2ヶ月以内のものまで。それより古い出来事は"
+                 "本文に持ち出さない(何ヶ月も前の話を蒸し返すと監視されている印象になる)。")
     if a.get("NG話題"):
         block += ("\n【NG話題・厳守】次の話題には絶対に触れない。関連語も本文に書かない: "
                   f"{a['NG話題']}")
@@ -359,15 +403,21 @@ def contact_detail(code: str) -> dict:
     return c
 
 
-def search_contacts(q: str = "", attr_key: str = "", attr_val: str = "") -> list:
-    """名前/メモ＋属性で顧客を検索。attr_key/attr_val 指定時はその属性値で絞る。"""
+def search_contacts(q: str = "", attr_key: str = "", attr_val: str = "", kinds=None) -> list:
+    """名前/メモ＋属性で検索。kinds=None(既定)は従来どおり顧客のみ。
+    v132: kinds="all"で全種別、["staff","peer"]等のリストでも絞れる(店内・同業のカードに
+    一覧から到達できない問題の解消)。"""
     ensure()
     q = (q or "").strip()
     attr_key = (attr_key or "").strip()
     attr_val = (attr_val or "").strip()
     with db.conn() as c:
         rows = [dict(r) for r in c.execute("SELECT * FROM contacts ORDER BY rank, code")]
-        rows = [r for r in rows if (r.get("kind") or "customer") == "customer"]
+        if kinds is None:
+            rows = [r for r in rows if (r.get("kind") or "customer") == "customer"]
+        elif kinds != "all":
+            _ks = set(kinds if isinstance(kinds, (list, tuple, set)) else [kinds])
+            rows = [r for r in rows if (r.get("kind") or "customer") in _ks]
         rows = [r for r in rows if r.get("linked") != 0]  # 未紐付け(未分類)は顧客リストに出さない
         if attr_key:
             keep = set(r["contact"] for r in c.execute(
@@ -497,6 +547,39 @@ def merge_contact(keep: str, absorb: str) -> dict:
         try:
             c.execute("UPDATE OR IGNORE contact_attrs SET contact=? WHERE contact=?", (keep, absorb))
             c.execute("DELETE FROM contact_attrs WHERE contact=?", (absorb,))
+        except Exception:
+            pass
+        # v133: トーク原文・ペルソナ・ファクト・ネタ・ネット補強も移す
+        for tbl in ("linebot_facts", "news_items", "enrich_suggestions"):
+            try:
+                c.execute(f"UPDATE {tbl} SET contact=? WHERE contact=?", (keep, absorb))
+            except Exception:
+                pass
+        try:
+            rs = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (absorb,)).fetchone()
+            rd = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (keep,)).fetchone()
+            if rs:
+                merged = ((rd["text"] + "\n\n") if rd else "") + rs["text"]
+                c.execute("INSERT INTO linebot_talks(contact,text) VALUES(?,?) "
+                          "ON CONFLICT(contact) DO UPDATE SET text=excluded.text",
+                          (keep, merged[-400000:]))
+                c.execute("DELETE FROM linebot_talks WHERE contact=?", (absorb,))
+        except Exception:
+            pass
+        try:
+            if not c.execute("SELECT 1 FROM linebot_persona WHERE contact=?", (keep,)).fetchone():
+                c.execute("UPDATE linebot_persona SET contact=? WHERE contact=?", (keep, absorb))
+            c.execute("DELETE FROM linebot_persona WHERE contact=?", (absorb,))
+        except Exception:
+            pass
+        # ランクは高い方・対応フラグはORで引き継ぐ
+        try:
+            _ro = {"S": 0, "A": 1, "B": 2}
+            if a and _ro.get(a.get("rank") or "B", 3) < _ro.get(k.get("rank") or "B", 3):
+                c.execute("UPDATE contacts SET rank=? WHERE code=?", (a["rank"], keep))
+            for fl in ("flag_ero", "flag_koi"):
+                if a and int(a.get(fl) or 0) and not int(k.get(fl) or 0):
+                    c.execute(f"UPDATE contacts SET {fl}=? WHERE code=?", (a[fl], keep))
         except Exception:
             pass
         # 文体プロファイルは keepに無い時だけ移す

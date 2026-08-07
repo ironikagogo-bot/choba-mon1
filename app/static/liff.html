@@ -109,6 +109,11 @@ textarea.f{min-height:90px;resize:vertical;overflow:hidden}
 .empty{color:var(--sub);font-size:13px;text-align:center;padding:26px 0}
 #toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:var(--navy);color:#fff;
   border-radius:99px;padding:10px 20px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
+.plink{text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+/* v141: カード下部の固定バー(この人の確認が残っている間だけ出す) */
+.stickyfix{position:fixed;left:10px;right:10px;bottom:12px;z-index:40;display:flex;align-items:center;gap:8px;
+  background:var(--navy);color:#fff;border-radius:14px;padding:13px 16px;font-size:14px;
+  box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer}
 .prog{height:5px;background:#EDE8DB;border-radius:99px;margin:2px 0 12px;overflow:hidden}
 .prog i{display:block;height:100%;background:var(--gold);border-radius:99px;transition:width .3s}
 /* v120: 返信インフォバー(案A) */
@@ -199,6 +204,11 @@ const disp = n => { n = String(n || ""); const m = n.match(/^(.+?)\((.+)\)$/);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const toast = m => { const t = $("#toast"); t.textContent = m; t.classList.add("show");
   clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 2200); };
+// v141: 名前タップ→顧客カード。data-plink="エンコード済みコード" を付けるだけで有効
+document.addEventListener("click", e => {
+  const pl = e.target.closest("[data-plink]");
+  if (pl && pl.dataset.plink) { e.stopPropagation(); nav("#card/" + pl.dataset.plink); }
+});
 
 // ---- 認証つきfetch ----
 async function api(path, opt = {}) {
@@ -325,14 +335,15 @@ function route() {
   if (name === "fixup") return vFixup();
   if (name === "anni") return vAnni();
   if (name === "seibi") return vSeibi(arg ? decodeURIComponent(arg) : "");
+  if (name === "seibip") return vSeibi(arg ? decodeURIComponent(arg) : "", "pending");   // v141: この人の確認だけ
   return vHome();
 }
 
 // ============ 🔎 整備・🧹見直し (v123: チャットからLIFFへ移植) ============
 const seibi = { items: [], i: 0, scope: "pending" };
-async function vSeibi(code) {
-  seibi.scope = code ? "review" : "pending";
-  setHead(code ? "🧹 見直し" : "🔎 整備", code ? disp(code) : "確認待ちの事実", true);
+async function vSeibi(code, scopeOverride) {
+  seibi.scope = scopeOverride || (code ? "review" : "pending");
+  setHead(seibi.scope === "review" && code ? "🧹 見直し" : "✅ 確認", code ? disp(code) : "取り込んだ内容の○✕", true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try {
     d = await api("/api/liff/facts?scope=" + seibi.scope + (code ? "&code=" + encodeURIComponent(code) : ""));
@@ -340,18 +351,21 @@ async function vSeibi(code) {
   seibi.items = d.items || []; seibi.i = 0; seibi.code = code;
   drawSeibi();
 }
+// v141: 全項目を同じ型に統一 —「候補を選ぶ/直す → 金色の✓確定 → 下に消す・あとで」。
+// 種別・立場だけボタン配置が違う/そのまま反映がチップ、の不統一を解消
 function drawSeibi() {
   const n = seibi.items.length;
   if (seibi.i >= n) {
     bust("home"); if (seibi.code) store.del("card_" + seibi.code);
-    $("#view").innerHTML = `<div class="empty" style="font-size:16px">✨ ${seibi.scope === "review" ? "見直し" : "整備"}おわり！おつかれさま👏</div>
+    $("#view").innerHTML = `<div class="empty" style="font-size:16px">✨ ${seibi.scope === "review" ? "見直し" : "確認"}おわり！おつかれさま👏</div>
       <button class="btn ghost" onclick="nav('${seibi.code ? "#card/" + encodeURIComponent(seibi.code) : "#home"}')">${seibi.code ? "カードへ" : "ホームへ"}</button>`;
     return;
   }
   const f = seibi.items[seibi.i];
-  setHead(seibi.scope === "review" ? "🧹 見直し" : "🔎 整備", `${seibi.i + 1}/${n}件`, true);
+  setHead(seibi.scope === "review" ? "🧹 見直し" : "✅ 確認", `${seibi.i + 1}/${n}件`, true);
   const dn = disp(f.name || "");
-  const who = `${esc(dn)}${dn.endsWith("さん") || dn.endsWith("ちゃん") || dn.endsWith("くん") ? "" : "さん"}の`;
+  // v141: 名前タップ=カード閲覧(閲覧系は全面採用の方針)
+  const who = `<span class="plink" data-plink="${encodeURIComponent(f.contact || "")}">${esc(dn)}</span>の`;
   // v127: この項目が「何を登録するものか」を明示
   const HINT = {
     "呼び名": "あなたがこの人を呼ぶ名前。下書きの呼びかけに使います",
@@ -364,6 +378,12 @@ function drawSeibi() {
   };
   const hintKey = Object.keys(HINT).find(k => f.k.includes(k));
   const hint = hintKey ? `<div class="note" style="margin:2px 0 0">💡 ${HINT[hintKey]}</div>` : "";
+  const foot = `
+        <button class="btn primary" style="margin-top:16px" onclick="seibiOk()">✓ この内容で確定する</button>
+        <div class="chips" style="margin-top:8px;justify-content:center">
+          <button class="chip" style="color:var(--red)" onclick="seibiAct('del')">🗑 消す</button>
+          <button class="chip" style="border-style:dashed" onclick="seibiAct('skip')">↷ あとで</button>
+        </div>`;
   // v127: 種別・立場は専用ピッカー(立場が対等固定になる問題の解消)
   if (f.k.includes("種別・立場")) {
     if (seibi.relFor !== seibi.i) {
@@ -377,55 +397,62 @@ function drawSeibi() {
     $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
       <div class="card">
         <div class="note" style="margin-bottom:4px">${who}</div>
-        <div style="font-size:18px;font-weight:800;color:var(--navy)">🔖 種別・立場</div>
+        <div style="font-size:18px;font-weight:800;color:var(--navy)">種別・立場<span class="conf">${CONF_DOT[f.conf] || ""}</span></div>
         ${hint}
         ${f.src ? `<div class="quote">「${esc(f.src)}」</div>` : ""}
         <div class="note" style="margin:10px 0 4px">どういう相手？</div>
         <div class="chips">${["顧客", "店内", "同業", "私用"].map(kc).join("")}</div>
         <div class="note" style="margin:10px 0 4px">立場は？(敬語の深さが変わります)</div>
         <div class="chips">${["目上", "対等", "目下"].map(sc).join("")}</div>
-        <div class="chips" style="margin-top:14px">
-          <button class="chip on" onclick="seibiRelOk()">✓ ${seibi.rk}・${seibi.rs} で反映</button>
-          <button class="chip" style="color:var(--red)" onclick="seibiAct('del')">🗑 消す</button>
-          <button class="chip" style="border-style:dashed" onclick="seibiAct('skip')">↷ あとで</button>
-        </div></div>`;
+        ${foot}</div>`;
     return;
   }
+  // 値の項目: AI案＋別候補を同じ「選ぶチップ」に。選んでから金色✓で確定(種別・立場と同じ操作)
+  if (seibi.valFor !== seibi.i) { seibi.valFor = seibi.i; seibi.val = f.v; }
+  const cands = [f.v].concat((f.alts || []).filter(a => a && a !== f.v));
+  const cc = cands.map(a => `<button class="chip ${seibi.val === a ? "on" : ""}"
+      onclick="seibiVal(${JSON.stringify(a).replace(/"/g, '&quot;')})">${esc(a)}</button>`).join("");
+  const custom = !cands.includes(seibi.val)
+    ? `<button class="chip on" onclick="seibiEdit()">✎ ${esc(seibi.val)}</button>` : "";
   $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
     <div class="card">
       <div class="note" style="margin-bottom:4px">${who}</div>
       <div style="font-size:18px;font-weight:800;color:var(--navy)">${esc(f.k)}<span class="conf">${CONF_DOT[f.conf] || ""}</span></div>
       ${hint}
-      <div style="font-size:17px;margin:6px 0">${esc(f.v)}</div>
       ${f.src ? `<div class="quote">「${esc(f.src)}」</div>` : ""}
-      <div class="chips" style="margin-top:12px">
-        <button class="chip on" onclick="seibiAct('ok')">○ そのまま反映</button>
-        ${(f.alts || []).map((a, j) => `<button class="chip" onclick="seibiFix(${JSON.stringify(a).replace(/"/g, '&quot;')})">→ ${esc(a)}</button>`).join("")}
-        <button class="chip" onclick="seibiFix('')">✎ 直す</button>
-        <button class="chip" style="color:var(--red)" onclick="seibiAct('del')">🗑 消す</button>
-        <button class="chip" style="border-style:dashed" onclick="seibiAct('skip')">↷ あとで</button>
-      </div></div>`;
+      <div class="note" style="margin:10px 0 4px">この内容で合ってる？${cands.length > 1 ? "(タップで選べます)" : ""}</div>
+      <div class="chips">${cc}${custom}
+        <button class="chip" style="border-style:dashed" onclick="seibiEdit()">✎ 自分で書く</button></div>
+      ${foot}</div>`;
 }
 window.seibiRel = (key, val) => { seibi[key] = val; drawSeibi(); };
-window.seibiRelOk = () => {
+window.seibiVal = v => { seibi.val = v; drawSeibi(); };
+window.seibiEdit = async () => {
   const f = seibi.items[seibi.i];
-  const v = `${seibi.rk}（${seibi.rs}）`;
-  fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
-  toast(`✓ ${v} で反映`);
+  const v = await askEdit(`${disp(f.name)}の「${f.k}」を直す`, seibi.val || f.v);
+  if (!v) return;
+  seibi.val = v; drawSeibi();
+};
+// ✓確定(全項目共通)。種別・立場はピッカーの組合せ、他は選択中の値を反映
+window.seibiOk = () => {
+  const f = seibi.items[seibi.i];
+  if (f.k.includes("種別・立場")) {
+    const v = `${seibi.rk}（${seibi.rs}）`;
+    fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
+    toast(`「${v}」を反映しました`);
+  } else if (seibi.val === f.v) {
+    fire("/api/liff/facts/act", { id: f.id, action: "ok" });
+    toast(`「${f.k}」を反映しました`);
+  } else {
+    fire("/api/liff/facts/act", { id: f.id, action: "fix", value: seibi.val });
+    toast(`「${f.k}」を反映しました`);
+  }
   seibi.i += 1; drawSeibi();
 };
 window.seibiAct = action => {
   const f = seibi.items[seibi.i];
   fire("/api/liff/facts/act", { id: f.id, action });
-  toast(action === "ok" ? `✓ ${f.k}を反映` : action === "del" ? `🗑 ${f.k}は消しました` : "↷ あとで");
-  seibi.i += 1; drawSeibi();
-};
-window.seibiFix = async preset => {
-  const f = seibi.items[seibi.i];
-  const v = preset || await askEdit(`${disp(f.name)}さんの「${f.k}」を直す`, f.v);
-  if (!v) return;
-  fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
-  toast(`✓ ${f.k}を「${v}」で反映`);
+  toast(action === "del" ? `「${f.k}」を消しました` : "あとで確認に回しました");
   seibi.i += 1; drawSeibi();
 };
 
@@ -475,10 +502,18 @@ function prefetchAnn(code, tone, template) {
 
 // LINEで送る: shareTargetPicker(本人のLINEから送信) → 不可ならコピー
 // searchName: picker検索用に相手名をクリップボードへ(1000人問題対策=検索欄に貼るだけ)
-async function sendViaLine(text, searchName) {
+// v130: LINE検索でヒットしやすい語に整形(全角スペース・括弧・絵文字で完全一致しない問題)
+function lineSearchWord(name) {
+  let n = String(name || "");
+  const m = n.match(/^(.+?)[(（]/); if (m) n = m[1];          // 括弧以降を捨てる
+  n = n.split(/[\s　・]/)[0] || n;                        // 最初の語だけ(部分一致で探す)
+  return n.replace(/[\u{1F000}-\u{1FFFF}☀-➿]/gu, "").trim() || String(name || "");
+}
+async function sendViaLine(text, searchName, sname) {
   try {
     if (window.liff && liff.isApiAvailable && liff.isApiAvailable("shareTargetPicker")) {
-      if (searchName) { try { await navigator.clipboard.writeText(searchName); } catch (e) {} }
+      const word = (sname || "").trim() || lineSearchWord(searchName);
+      if (word) { try { await navigator.clipboard.writeText(word); } catch (e) {} }
       const res = await liff.shareTargetPicker([{ type: "text", text }]);
       return res ? "sent" : "cancel";   // resなし=ユーザーが閉じた
     }
@@ -551,12 +586,12 @@ function drawHome(d) {
     <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
   </div>
   ${d.fixup ? `<div class="banner" style="border-color:var(--red);background:#F9ECEA;cursor:pointer"
-     onclick="nav('#fixup')">🚨<div class="txt"><b style="color:var(--red)">未整備のカード ${d.fixup}件</b>
+     onclick="nav('#fixup')">🚨<div class="txt"><b style="color:var(--red)">仕上げ待ちのカード ${d.fixup}件</b>
      — 名前と仕分けを確定してください(放置するとデータが使えません)</div><span class="chev">›</span></div>` : ""}
-  ${d.pending_facts ? `<div class="banner" style="cursor:pointer" onclick="nav('#seibi')">🔎<div class="txt">
-     取り込んだ事実の確認待ち <b>${d.pending_facts}件</b> — タップして整備(○✕)</div><span class="chev">›</span></div>` : ""}
+  ${d.pending_facts ? `<div class="banner" style="cursor:pointer" onclick="nav('#seibi')">✅<div class="txt">
+     確認待ち <b>${d.pending_facts}件</b> — AIが拾った内容を○✕するだけ</div><span class="chev">›</span></div>` : ""}
   ${est.length ? `<div class="banner" style="cursor:pointer" onclick="nav('#ann')">🕰<div class="txt">
-     ご無沙汰の太客 <b>${est.length}人</b>(最長 ${esc(est[0].name)}さん ${est[0].gap}日)</div>
+     ご無沙汰の太客 <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
      <span class="chev">›</span></div>` : ""}
   <button class="navcard" onclick="nav('#list')">🗂<div><b>顧客</b>
     <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
@@ -591,31 +626,61 @@ window.notifyTgl = async on => {
 
 // ============ 顧客一覧 ============
 let _contacts = null;
+let _listRows = null;   // v132: 一覧表示中の行(フィルタ別)
+let _listKind = "";   // v132: 一覧の種別フィルタ("":顧客 / staff / peer / all)
 async function vList() {
-  setHead("🗂 顧客", "S/A/B順", true);
-  $("#view").innerHTML = `<input class="search" id="q" placeholder="名前・会社で検索" autocomplete="off">
-    <div id="rows">${store.get("contacts") ? "" : `<div class="empty"><span class="spin"></span></div>`}</div>`;
-  cached("contacts", "/api/liff/contacts", (d) => {
+  setHead("🗂 カード", "S/A/B順", true);
+  const KTABS = [["", "💐お客様"], ["staff", "🏠店内"], ["peer", "🏮同業"], ["private", "🔒私用"], ["all", "全部"]];
+  $("#view").innerHTML = `
+    <div class="chips" style="margin-bottom:8px">${KTABS.map(([k, lab]) =>
+      `<button class="chip ${_listKind === k ? "on" : ""}" onclick="listKind('${k}')">${lab}</button>`).join("")}</div>
+    <input class="search" id="q" placeholder="名前・会社で検索" autocomplete="off">
+    <div id="rows">${store.get("contacts" + _listKind) ? "" : `<div class="empty"><span class="spin"></span></div>`}</div>`;
+  cached("contacts" + _listKind, "/api/liff/contacts" + (_listKind ? "?kind=" + _listKind : ""), (d) => {
     if (!d) { $("#rows").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
-    _contacts = d.contacts; drawList($("#q") ? $("#q").value.trim() : "");
+    if (!_listKind) _contacts = d.contacts;   // 既存機能(お礼・取り込み等)は顧客リストを使う
+    _listRows = d.contacts; drawList($("#q") ? $("#q").value.trim() : "");
   }, 45);
+  const KMARK = { staff: "🏠", peer: "🏮", private: "🔒" };
   const draw = q => {
-    const rows = _contacts.filter(c => !q || c.name.includes(q) || c.code.includes(q) ||
+    const src = _listRows || _contacts || [];
+    const rows = src.filter(c => !q || c.name.includes(q) || c.code.includes(q) ||
       (c.company || "").includes(q));
-    $("#rows").innerHTML = rows.length ? rows.map(c => `
+    const note = _listKind === "private"
+      ? `<div class="note" style="margin-bottom:8px">🔒 私用=受信を取り込まない相手。「↩ 戻す」で次の受信から通常どおり届きます</div>` : "";
+    $("#rows").innerHTML = note + (rows.length ? rows.map(c => c.kind === "muted" ? `
+      <div class="row" style="opacity:.75">
+        <span class="badge" style="background:var(--line);color:var(--sub)">🔕</span>
+        <div class="body"><div class="nm">${esc(disp(c.name))}</div>
+        <div class="meta">受信ごと削除中(カードなし)</div></div>
+        <button class="chip unmutebtn" data-unmute="${encodeURIComponent(c.code)}">↩ 戻す</button></div>` : `
       <div class="row" data-card="${encodeURIComponent(c.code)}">
         <span class="badge ${c.rank}">${c.rank}</span>
-        <div class="body"><div class="nm">${esc(disp(c.name))}</div>
-        <div class="meta">${esc(c.company || "")}${c.ongoing ? " ・📌" + esc(c.ongoing).slice(0, 20) : ""}</div></div>
+        <div class="body"><div class="nm">${(c.kind && c.kind !== "customer") ? (KMARK[c.kind] || "") + (c.kind === "staff" ? (c.sg === "男" ? "🤵" : "👯") : "") + " " : ""}${esc(disp(c.name))}</div>
+        <div class="meta">${c.gname ? "👥グループ「" + esc(c.gname) + "」 " : ""}${esc(c.company || "")}${c.ongoing ? " ・📌" + esc(c.ongoing).slice(0, 20) : ""}</div></div>
         <button class="chip editbtn" data-edit="${encodeURIComponent(c.code)}">✎</button>
         <span class="chev">›</span></div>`).join("")
-      : `<div class="empty">見つかりませんでした</div>`;
+      : `<div class="empty">${_listKind === "private" ? "私用にした相手はいません" : "見つかりませんでした"}</div>`);
   };
   window.drawList = draw;
-  if (_contacts) draw("");
+  window.listKind = k => { _listKind = k; _listRows = null; vList(); };
+  if (_listRows || _contacts) draw("");
   $("#q").addEventListener("input", e => draw(e.target.value.trim()));
   // イベント委譲: ✎は編集・それ以外の行タップはカード(window.event非依存=iOS安全)
-  $("#rows").addEventListener("click", e => {
+  $("#rows").addEventListener("click", async e => {
+    const ub = e.target.closest(".unmutebtn");
+    if (ub) {
+      e.stopPropagation();
+      const nm = decodeURIComponent(ub.dataset.unmute);
+      ub.disabled = true;
+      try {
+        await api("/api/liff/unmute", { method: "POST",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: nm }) });
+        toast(`✓ ${disp(nm)}を戻しました。次の受信から届きます`);
+        bust("contactsprivate"); vList();
+      } catch (err) { ub.disabled = false; toast("戻せませんでした"); }
+      return;
+    }
     const eb = e.target.closest(".editbtn");
     if (eb) { e.stopPropagation(); nav("#edit/" + eb.dataset.edit); return; }
     const row = e.target.closest(".row[data-card]");
@@ -684,13 +749,14 @@ function drawCard(code, d) {
   $("#view").innerHTML = `
   <div style="display:flex;justify-content:flex-end;margin:-4px 0 8px">
     <button class="chip on" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button></div>
-  ${d.pending_facts ? `<div class="banner" onclick="nav('#seibi')">🔎<div class="txt">
-    確認待ち<b>${d.pending_facts}件</b> — タップして整備</div><span class="chev">›</span></div>` : ""}
+  ${d.pending_facts ? `<div class="banner" onclick="nav('#seibip/${cq}')">✅<div class="txt">
+    この人の確認<b>${d.pending_facts}件</b> — タップで○✕するだけ(30秒)</div><span class="chev">›</span></div>` : ""}
   ${d.review_facts ? `<div class="banner" onclick="nav('#seibi/${cq}')">🧹<div class="txt">
     自動反映の見直し<b>${d.review_facts}件</b> — タップで流し見(間違いだけ消す)</div><span class="chev">›</span></div>` : ""}
   ${nowHtml ? `<div class="card"><h3 class="sec">📌 いま効くこと</h3>${nowHtml}</div>` : ""}
   <div class="card"><h3 class="sec">🤝 関係・接し方</h3>
     <div class="kv"><div class="k">種別・立場</div><div class="v">${kindLab}${standLab ? "・" + standLab : ""}</div></div>
+    ${d.gname ? `<div class="kv"><div class="k">取り込み元</div><div class="v">👥 グループ「${esc(d.gname)}」のチャット</div></div>` : ""}
     ${d.flag_koi ? `<div class="kv"><div class="k">モード</div><div class="v">💘 ガチ恋対応</div></div>` : ""}
     ${d.flag_ero == 1 ? `<div class="kv"><div class="k">下ネタ</div><div class="v">いなし</div></div>` : ""}
     ${d.note ? `<div class="kv"><div class="k">メモ</div><div class="v">${esc(d.note)}</div></div>` : ""}
@@ -760,7 +826,10 @@ function drawCard(code, d) {
     <button class="chip" onclick="cardPrint('${cq}','share')">📄 印刷/PDF(見せる用)</button>
     <button class="chip" onclick="cardPrint('${cq}','full')">📄 印刷/PDF(自分用・全部)</button>
   </div>
-  <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>`;
+  <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>
+  ${d.pending_facts ? `<div style="height:70px"></div>
+  <div class="stickyfix" onclick="nav('#seibip/${cq}')">✅ <b>${esc(disp(d.name))}の確認 ${d.pending_facts}件</b>
+    <span style="font-weight:400">○✕するだけ・30秒</span><span class="chev" style="margin-left:auto">›</span></div>` : ""}`;
 }
 // v123: カード印刷ビュー(10分トークン→外部ブラウザ→共有→PDF)
 window.cardPrint = async (cq, mode) => {
@@ -816,6 +885,38 @@ window.enrichAct = async (cq, id, ok) => {
     if (r.error) return toast(r.error);
     store.del("card_" + code); toast(ok ? "✓ カードに入れました" : "✕ 捨てました"); vCard(code);
   } catch (e) { toast("失敗しました"); }
+};
+// v133: 重複カードの統合(absorb=今開いているカードが消え、keepへ全データ移動)
+window.mergePick = async cq => {
+  const absorb = decodeURIComponent(cq);
+  const box = $("#mgBox"); if (!box) return;
+  let all = [];
+  try { all = (await api("/api/liff/contacts?kind=all")).contacts || []; } catch (e) { return toast("一覧を取得できません"); }
+  const draw = q => {
+    const hits = all.filter(c => c.code !== absorb && (!q || c.code.includes(q) || (c.name || "").includes(q))).slice(0, 8);
+    box.innerHTML = `<input class="f" id="mgq" placeholder="残す側のカードを検索" value="${esc(q || "")}"
+        style="flex-basis:100%;font-size:15px;padding:9px 10px;margin-bottom:6px">`
+      + hits.map(c => `<button class="chip" onclick="mergeGo('${cq}', ${JSON.stringify(c.code).replace(/"/g, '&quot;')})">${esc(disp(c.name))}</button>`).join("");
+    const inp = $("#mgq");
+    inp.addEventListener("input", e => { const val = e.target.value.trim(); draw(val);
+      const ni = $("#mgq"); ni.focus(); ni.setSelectionRange(val.length, val.length); });
+    if (q) inp.focus();
+  };
+  draw("");
+};
+window.mergeGo = async (cq, keep) => {
+  const absorb = decodeURIComponent(cq);
+  const ok = await askEdit(`⚠️ 確認: 「${disp(absorb)}」を「${disp(keep)}」に統合します。取り消せません。よければ下に「OK」と入力`, "");
+  if (!ok || ok.trim().toUpperCase() !== "OK") return toast("やめました");
+  try {
+    const r = await api("/api/liff/merge", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keep, absorb }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + keep); store.del("card_" + absorb);
+    Object.keys(localStorage).filter(k => k.startsWith("cb_contacts")).forEach(k => localStorage.removeItem(k));
+    toast(`✓ 「${disp(keep)}」に統合しました`);
+    nav("#card/" + encodeURIComponent(keep));
+  } catch (e) { toast("統合に失敗しました(通信)"); }
 };
 // v122: 担当の自分判定(「自分(Aki)」等の表記も自分扱い=前方一致)
 function isSelfTanto(v) {
@@ -882,8 +983,8 @@ window.personaRun = async cq => {
 };
 
 // ============ カード編集(事前入力・チップ・未保存ガード) ============
-const EDIT_ATTRS = ["呼び名", "本名", "担当", "お気に入りキャスト", "仕事・会社", "進行中の話", "NG話題", "関係性メモ",
-  "家族", "好きなお酒", "好きな食べ物", "趣味・関心", "健康", "記念日", "資産・事業", "年齢"];
+const EDIT_ATTRS = ["呼び名", "本名", "LINE検索名", "担当", "お気に入りキャスト", "仕事・会社", "進行中の話", "NG話題", "関係性メモ",
+  "家族", "好きなお酒", "好きな食べ物", "趣味・関心", "健康", "記念日", "資産・事業", "年齢", "住まい・エリア"];
 async function vEdit(code) {
   setHead("読み込み中…", "", true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
@@ -904,8 +1005,10 @@ async function vEdit(code) {
       ? `<textarea class="f" data-attr="${esc(k)}">${esc(v)}</textarea>`
       : `<input class="f" data-attr="${esc(k)}" value="${esc(v)}" ${req ? 'data-req="1"' : ""}>`;
     if (k === "呼び名" && !v)
+      // v141: JSON.stringifyの二重引用符がonclick属性を壊してボタン無反応だった実バグを修正。
+      // グループ由来カードはグループ名を除いた人名(pname)を入れる
       h += `<button type="button" class="chip" style="margin-top:6px"
-        onclick="const i=document.querySelector('[data-attr=呼び名]');i.value=${JSON.stringify(d.code)};i.dispatchEvent(new Event('input',{bubbles:true}))">表示名をそのまま使う</button>`;
+        onclick="const i=document.querySelector('[data-attr=呼び名]');i.value=${JSON.stringify(d.pname || d.code).replace(/"/g, '&quot;')};i.dispatchEvent(new Event('input',{bubbles:true}))">表示名をそのまま使う</button>`;
     if (k === "担当")
       h += `<button type="button" class="chip" style="margin-top:6px"
         onclick="const i=document.querySelector('[data-attr=担当]');i.value='自分';i.dispatchEvent(new Event('input',{bubbles:true}))">自分が担当</button>
@@ -927,7 +1030,12 @@ async function vEdit(code) {
   </div>
   <button class="btn primary" id="btnSave">保存する</button>
   <button class="btn ghost" onclick="history.back()">やめる</button>
-  <div class="note">保存すると顧客カードにすぐ反映されます。</div>`;
+  <div class="note">保存すると顧客カードにすぐ反映されます。</div>
+  <details class="card" style="margin-top:14px"><summary>🔀 重複カードの統合</summary>
+    <div class="note" style="margin:6px 0">同じ人のカードが2枚ある時に。<b>このカード(${esc(disp(d.name))})が消えて</b>、
+    選んだカードへ会話・履歴・情報が全部移ります(この名前は別名として残り、以後の受信も移動先に入ります)。取り消せません。</div>
+    <div class="chips" id="mgBox"><button class="chip" onclick="mergePick('${encodeURIComponent(code)}')">統合先を選ぶ</button></div>
+  </details>`;
   const sel = { rank: d.rank, kind: d.kind, stand: d.stand || "even", staffgender: d.attrs["店内区分"] || "",
     flagero: String(d.flag_ero || 0), flagkoi: String(d.flag_koi || 0) };
   document.querySelectorAll("[data-chip]").forEach(g => g.addEventListener("click", e => {
@@ -1024,12 +1132,20 @@ async function vImport() {
     $("#jobs").innerHTML = jobs.length ? `<div class="card">` + jobs.map(j => {
       const nm = j.name || j.contact || j.fname;
       const mark = j.contact && impCls[j.contact] ? `・✓${impCls[j.contact]}` : "";
+      // v133: 完了行に仕分けチップを出し続けない(仕分けは処理中の待ち時間だけ。後からはカードで)
       if (j.status === "done") return `<div class="jobrow" style="flex-wrap:wrap">✓ <b>${esc(nm)}</b>
         <span style="font-size:12px;color:var(--green);font-weight:700">完了${mark}</span>
-        <span class="st done" style="cursor:pointer" onclick="nav('#card/${encodeURIComponent(j.contact)}')">カード ›</span>
-        ${clsChips(j)}</div>`;
+        <span class="st done" style="cursor:pointer" onclick="nav('#card/${encodeURIComponent(j.contact)}')">カード ›</span></div>`;
       if (j.status === "error") return `<div class="jobrow">⚠️ ${esc(j.fname)}
         <span class="st err">${esc(j.detail || "失敗")}</span></div>`;
+      if (j.status === "confirm") {
+        // v131: 既存カードへのマージ前確認
+        return `<div class="jobrow" style="flex-wrap:wrap">📄 ${esc(j.fname)}
+          <span class="st amb">この人で合ってる？</span>
+          <span style="flex-basis:100%;margin-top:6px" class="chips">
+          <button class="chip on" onclick="assignJobTo(${j.id}, ${JSON.stringify(j.contact).replace(/"/g, '&quot;')})">✓ ${esc(disp(nm))}として取り込む</button>
+          <button class="chip" style="border-style:dashed" onclick="jobSearch(${j.id})">🔍 違う人を選ぶ</button></span></div>`;
+      }
       if (j.status === "ambiguous") {
         const cands = (j.detail && j.detail.cands) || [];
         const guess = (j.detail && (j.detail.name || j.detail.extracted)) || "";
@@ -1230,7 +1346,7 @@ window.repSend = async j => {
   if (!text) return;
   const edited = text !== orig;
   const it = rep.items[rep.i];
-  const res = await sendViaLine(text, it.contact);
+  const res = await sendViaLine(text, it.contact, it.sname);
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text });
     repAdvance(`✓ ${disp(it.name)}に返信${edited ? "(手直し)" : ""}・文体を学習`); }
   else if (res === "copied") {
@@ -1287,7 +1403,7 @@ window.repSendMine = async () => {
   const text = (ta.value || "").trim();
   if (!text) return toast("本文が空です");
   const it = rep.items[rep.i];
-  const res = await sendViaLine(text, it.contact);
+  const res = await sendViaLine(text, it.contact, it.sname);
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text });
     repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); }
   else if (res === "copied") {
@@ -1421,10 +1537,11 @@ async function drawAnnRun() {
     setHead("📣 配信", "完了", true); return;
   }
   const p = ann.q[ann.i];
-  setHead(`📣 ${ann.i + 1}/${n}｜${esc(disp(p.name))}`,
+  setHead(`📣 ${ann.i + 1}/${n}｜${disp(p.name)}`,
           `ランク${p.rank}・送信済み${ann.sent}${ann.sent >= 8 ? "(8人超・今夜は打ち止め推奨)" : "/8人目安"}`, true);
   $("#view").innerHTML = `<div class="prog"><i style="width:${ann.i / n * 100}%"></i></div>
-    <div class="note" style="margin:0 0 8px">📤送る→相手選択の検索欄を<b>長押し→ペースト</b>で「${esc(p.name)}」が出ます(名前は自動コピー済み)</div>
+    <div class="note" style="margin:0 0 8px">📤送る→相手選択の検索欄に<b>長押し→ペースト</b>(検索語「${esc((p.sname || "").trim() || lineSearchWord(p.name))}」をコピー済み)。
+    出ない時は苗字や名前の一部で検索→見つけたらカードの「LINE検索名」に登録すると次から一発</div>
     <div id="drafts"><div class="skel"></div></div>
     <div class="actbar"><button onclick="annSkip()">スキップ</button>
       <button onclick="annSave();nav('#home')">中断(続きから再開可)</button></div>`;
@@ -1436,7 +1553,7 @@ async function drawAnnRun() {
   if (ann.q[ann.i] && ann.q[ann.i].code === cur && $("#drafts"))
     $("#drafts").innerHTML =
       cardRefChip(r.card_keys)
-      + (r.text ? `<div class="note" style="margin:0 0 4px">📮 宛先: <b style="color:var(--navy)">${esc(disp(p.name))}</b>さん</div>`
+      + (r.text ? `<div class="note" style="margin:0 0 4px">📮 宛先: <b style="color:var(--navy)" class="plink" data-plink="${encodeURIComponent(p.code)}">${esc(disp(p.name))}</b></div>`
         + draftHtml(0, r.text).replace("repSend(0)", "annSend(0)")
       : `<div class="note">下書きを作れませんでした。スキップして次へ。</div>`);
 }
@@ -1445,12 +1562,12 @@ window.annSend = async j => {
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
   if (!text) return;
   const p = ann.q[ann.i], edited = text !== orig;
-  const res = await sendViaLine(text, p.code);
+  const res = await sendViaLine(text, p.code, p.sname);
   if (res === "sent") { fire("/api/liff/ann/sent", { code: p.code, text, edited });
     delete draftCache["a" + p.code]; ann.sent += 1; ann.i += 1; annSave();
     toast(`✓ ${disp(p.name)}に送信`); drawAnnRun(); }
   else if (res === "copied") {
-    d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="annMark('${esc(p.code)}')">✓「${esc(disp(p.name))}」さんに貼り付けて送った</button>
+    d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="annMark('${esc(p.code)}')">✓「${esc(disp(p.name))}」に貼り付けて送った</button>
       <button class="btn ghost" style="flex:0 0 84px" onclick="drawAnnRun()">まだ</button>`;
     d.querySelector(".row").insertAdjacentHTML("afterend",
       `<div class="note" style="margin:6px 0 0;color:var(--red)">⚠️ 貼る前にトークの相手名が「${esc(disp(p.name))}」か確認</div>
@@ -1497,7 +1614,7 @@ function drawOrei() {
       const el = $("#ohist"); if (!el) return;
       const ss = r.sittings || [];
       el.innerHTML = `<h3 class="sec">🕘 最近のお席</h3>` + (ss.length ? ss.map(x =>
-        `<div class="hist"><div class="d">${esc(x.date)}</div>${esc(disp(x.name))}
+        `<div class="hist"><div class="d">${esc(x.date)}</div><span class="plink" data-plink="${encodeURIComponent(x.main || "")}">${esc(disp(x.name))}</span>
          ${x.gaiso ? "・店外" : ""}${x.dohan ? "・同伴(" + esc(x.dohan) + ")" : ""}${x.after ? "・アフター" : ""}
          <span style="color:var(--sub);font-size:11px">・${x.members}人</span>
          ${x.unsent > 0 ? `<button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;margin-left:6px;color:var(--green);font-weight:700"
@@ -1512,7 +1629,7 @@ function drawOrei() {
     return;
   }
   if (orei.step === "detail") {
-    setHead(`🙏 ${esc(disp(orei.main.name))}のお席`, "2/3 どんな夜？", true);
+    setHead(`🙏 ${disp(orei.main.name)}のお席`, "2/3 どんな夜？", true);
     const chip = (on, lab, fn) => `<button class="chip ${on ? "on" : ""}" onclick="${fn}">${lab}</button>`;
     const keep = () => { const d1 = $("#odohan"), d2 = $("#oafter");
       if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim(); };
@@ -1559,7 +1676,7 @@ function drawOrei() {
     v.innerHTML = `<div class="note" style="margin-bottom:10px">✓ お席は記録しました(来店・同伴の実績も自動)。上から順にどうぞ。</div>` +
       orei.drafts.map((g, j) => `
         <div class="draft ${g.done ? "" : ""}" id="or${j}" style="${g.done ? "opacity:.45" : ""}">
-          <div style="font-size:11px;color:var(--sub);margin-bottom:4px">${esc(disp(g.name))}(${esc(g.role_label || g.role)})${g.done ? " ✓送信済み" : ""}</div>
+          <div style="font-size:11px;color:var(--sub);margin-bottom:4px"><span class="plink" data-plink="${encodeURIComponent(g.code || g.contact || "")}">${esc(disp(g.name))}</span>(${esc(g.role_label || g.role)})${g.done ? " ✓送信済み" : ""}</div>
           <div class="t">${esc(g.text)}</div>
           ${g.done ? "" : `<div class="row"><button class="btn green" onclick="oreiSend(${j})">📤 LINEで送る</button>
             <button class="btn ghost" style="flex:0 0 84px" onclick="oreiEdit(${j})">✎ 直す</button></div>`}
@@ -1608,7 +1725,7 @@ window.oreiSend = async j => {
   const d = $("#or" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
   const g = orei.drafts[j];
-  const res = await sendViaLine(text, g.contact);
+  const res = await sendViaLine(text, g.contact, g.sname);
   if (res === "sent" || res === "copied") {
     if (res === "copied") toast("貼り付けて送ったら完了です");
     fire("/api/liff/orei/sent", { sid: orei.sid, contact: g.contact, text, edited: text !== orig });
@@ -1629,8 +1746,8 @@ async function vNews() {
       let whos = [];
       try { whos = x.kw ? JSON.parse(x.who || "[]") : []; } catch (e) {}
       const head = x.kw
-        ? `🏷 「${esc(x.kw)}」好きのお客様${whos.length ? `（${whos.map(w => esc(disp(w))).join("・")}）` : ""}`
-        : `${esc(disp(x.name || x.contact))}（${esc(x.company)}）`;
+        ? `🏷 「${esc(x.kw)}」好きのお客様${whos.length ? `（${whos.map(w => `<span class="plink" data-plink="${encodeURIComponent(w)}">${esc(disp(w))}</span>`).join("・")}）` : ""}`
+        : `<span class="plink" data-plink="${encodeURIComponent(x.contact || "")}">${esc(disp(x.name || x.contact))}</span>（${esc(x.company)}）`;
       return `
       <div class="card" id="nw${j}">
         <div style="font-size:11px;color:var(--gold);font-weight:700">${head}</div>
@@ -1659,7 +1776,7 @@ async function vAnni() {
     if (!d) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
     const items = d.items || [];
     $("#view").innerHTML = items.length ? items.map(x => `
-      <div class="card"><div style="font-weight:700">${esc(disp(x.name))}</div>
+      <div class="card"><div style="font-weight:700" class="plink" data-plink="${encodeURIComponent(x.contact)}">${esc(disp(x.name))}</div>
         <div class="pill gold" style="margin-top:6px">🎂 ${esc(x.label)}（${esc(x.when)}）</div>
         <div style="display:flex;gap:8px;margin-top:10px">
           <button class="btn ghost" style="margin:0;flex:1;padding:11px"
@@ -1688,7 +1805,7 @@ function drawFixup() {
     setHead("🚨 カードの仕分け", "完了", true); return;
   }
   const it = fx.items[fx.i], sg = it.suggest || {};
-  setHead(`🚨 ${fx.i + 1}/${n}｜${esc(disp(it.name))}`, `未確定: ${it.missing.join("・")}`, true);
+  setHead(`🚨 ${fx.i + 1}/${n}｜${disp(it.name)}`, `未確定: ${it.missing.join("・")}`, true);
   const kindChip = (v, lab) => `<button class="chip ${sg.kind === v ? "on" : ""}" data-kind="${v}">${lab}</button>`;
   const standChip = (v, lab) => `<button class="chip ${sg.stand === v ? "on" : ""}" data-stand="${v}">${lab}</button>`;
   $("#view").innerHTML = `<div class="prog"><i style="width:${fx.i / n * 100}%"></i></div>
@@ -1697,7 +1814,7 @@ function drawFixup() {
       <label class="f">呼び名 <span style="color:var(--red)">*</span></label>
       <input class="f" id="fxYb" value="${esc(sg["呼び名"] || "")}">
       ${sg["呼び名"] ? "" : `<button class="chip" style="margin-top:6px"
-        onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code)}">表示名をそのまま使う</button>`}
+        onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code).replace(/"/g, '&quot;')}">表示名をそのまま使う</button>`}
       <label class="f">本名（分かれば）</label>
       <input class="f" id="fxHn" value="${esc(sg["本名"] || "")}">
       <label class="f">誕生日(分かれば)</label>
@@ -1760,11 +1877,35 @@ async function vReader() {
             onclick="readerRevoke(${r.id})">この端末を切断</button></div></div></div>`).join("")
         : `<div class="note">v0.5端末はまだ接続されていません(旧リーダーは表示されません)</div>`}
     </div>
+    ${d.remote ? `<div class="card"><h3 class="sec">🎛 遠隔操作(v0.6.1端末)</h3>
+      <div class="kv"><div class="k">端末側の状態</div><div class="v">
+        ${d.remote.ver ? "v" + esc(d.remote.ver) : "旧バージョン(情報なし)"}
+        ${d.remote.q !== "" ? "・未送信" + esc(d.remote.q) + "件" : ""}
+        ${d.remote.pending_cmd ? `<div style="color:var(--gold)">⏳ 命令「${esc(d.remote.pending_cmd)}」を次の生存信号で実行(最大15分)</div>` : ""}</div></div>
+      <div class="chips" style="margin-top:6px">
+        <button class="chip" onclick="readerCmd('flush')">📤 今すぐ送らせる</button>
+        <button class="chip" onclick="readerCmd('diag')">🩺 診断を送らせる</button>
+        <button class="chip" style="color:var(--red)" onclick="readerCmd('clearq')">🧹 未送信を破棄</button></div>
+      ${d.remote.diag ? `<div class="quote" style="margin-top:8px;white-space:pre-wrap">🩺 ${new Date(d.remote.diag.ts * 1000).toLocaleString("ja-JP")}
+${esc(d.remote.diag.text)}</div>` : ""}
+      <div class="note" style="margin-top:6px">命令は端末の15分ごとの生存信号に載って届きます(即時ではありません)</div></div>` : ""}
     <button class="btn primary" onclick="readerQr()">📱 新しい端末をつなぐ(QR表示)</button>
     <div id="qrbox"></div>
     <div class="note">リーダー端末のアプリで「QRをスキャン」するだけ。カメラが使えない時は、
     アプリに帳場の玄関パスワードを入れれば自動でこのサーバーを見つけます。</div>`;
 }
+window.readerCmd = async cmd => {
+  if (cmd === "clearq") {
+    const ok = await askEdit("⚠️ 端末の未送信キューを全部捨てます。届いていないメッセージは失われます。よければ「OK」と入力", "");
+    if (!ok || ok.trim().toUpperCase() !== "OK") return toast("やめました");
+  }
+  try {
+    const r = await api("/api/liff/reader/cmd", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd }) });
+    if (r.error) return toast(r.error);
+    toast("✓ 予約しました(次の生存信号で実行・最大15分)"); vReader();
+  } catch (e) { toast("予約できませんでした"); }
+};
 window.readerQr = async () => {
   let r; try { r = await api("/api/liff/reader/code", { method: "POST" }); }
   catch (e) { return toast("発行できませんでした"); }
