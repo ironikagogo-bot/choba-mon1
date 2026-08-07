@@ -369,6 +369,7 @@ def liff_contact(code: str, request: Request):
                      "relmemo": attrs.get("関係性メモ") or ""},
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
         "pstats": (lambda: linebot.partner_stats(code))(),
+        "rel": (lambda: linebot.relationship_stats(code))(),   # v118: 第2層(関係性)
         "news": items,
         "history": {"received": msgs, "sent": sents, "seki": seki},
         "pending_facts": pending_n, "review_facts": review_n,
@@ -462,7 +463,7 @@ async def liff_persona_edit(request: Request):
         value = b.get("value") or ""
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    if action not in ("del", "fix", "summary"):
+    if action not in ("del", "fix", "summary", "tolok", "tolng", "tolfix", "toldel"):
         return JSONResponse({"error": "bad action"}, status_code=400)
     p = linebot.edit_persona(code, action, index, value)
     if p is None:
@@ -838,6 +839,7 @@ async def liff_classify(request: Request):
         name = (body.get("contact") or "").strip()
         v = body.get("kind") or ""
         rank = body.get("rank") or ""
+        gender = (body.get("gender") or "").strip()   # v120: 店内の女/男(同僚ホステス/黒服)
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if not name or v not in ("work", "staff", "peer", "priv"):
@@ -851,6 +853,12 @@ async def liff_classify(request: Request):
     elif v == "staff":
         crm.mark_staff(name)
         crm.add_alias(name, name)
+        if gender in ("女", "男"):   # v120: 同僚ホステス/黒服さんの区分→下書きトーンに効く
+            try:
+                crm.add_def("店内区分")
+                crm.set_attr(name, "店内区分", gender)
+            except Exception as e:
+                print(f"[classify gender] {e}", flush=True)
     elif v == "peer":
         db.upsert_contact(name, "B")
         with db.conn() as c:

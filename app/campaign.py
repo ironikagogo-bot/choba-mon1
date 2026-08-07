@@ -34,6 +34,98 @@ def season_label(ts=None) -> str:
     return _SEASON[d.month]
 
 
+# ---------- v119: 軽い話題の材料(事実のみ・捏造ゼロ設計) ----------
+
+_WX_CODE = {0: "快晴", 1: "晴れ", 2: "晴れ時々くもり", 3: "くもり", 45: "霧", 48: "霧",
+            51: "小雨", 53: "小雨", 55: "小雨", 61: "雨", 63: "雨", 65: "大雨",
+            66: "みぞれ", 67: "みぞれ", 71: "雪", 73: "雪", 75: "大雪", 77: "雪",
+            80: "にわか雨", 81: "にわか雨", 82: "激しいにわか雨", 85: "雪", 86: "雪",
+            95: "雷雨", 96: "雷雨", 99: "雷雨"}
+
+
+def _lt_cache_get(k, max_age):
+    try:
+        from . import news as _news
+        _news.ensure()
+        raw = _news._meta_get(k)
+        if raw:
+            ts, _, val = raw.partition("|")
+            age = max_age if val else 600   # 失敗(空)は10分だけキャッシュ=すぐ再挑戦
+            if time.time() - float(ts) < age:
+                return val
+    except Exception:
+        pass
+    return None
+
+
+def _lt_cache_set(k, val):
+    try:
+        from . import news as _news
+        _news._meta_set(k, f"{time.time()}|{val}")
+    except Exception:
+        pass
+
+
+def weather_line():
+    """今日の東京の天気(Open-Meteo実測・3時間キャッシュ)。失敗=空文字(天気に触れないだけ)。"""
+    c = _lt_cache_get("wx_cache", 3 * 3600)
+    if c is not None:
+        return c
+    line = ""
+    try:
+        r = requests.get("https://api.open-meteo.com/v1/forecast",
+                         params={"latitude": 35.68, "longitude": 139.77,
+                                 "daily": "weather_code,temperature_2m_max,temperature_2m_min",
+                                 "timezone": "Asia/Tokyo", "forecast_days": 1},
+                         timeout=8)
+        d = r.json()["daily"]
+        lab = _WX_CODE.get(int(d["weather_code"][0]), "")
+        tmax = round(d["temperature_2m_max"][0])
+        if lab:
+            line = f"今日の東京は{lab}・最高{tmax}°C"
+    except Exception as e:
+        print(f"[weather] {e}", flush=True)
+    _lt_cache_set("wx_cache", line)
+    return line
+
+
+def headlines_today(n=6):
+    """今日の一般ニュース見出し(Google News RSS・3時間キャッシュ)。実在の見出しのみ=捏造ゼロ。"""
+    c = _lt_cache_get("hl_cache", 3 * 3600)
+    if c is not None:
+        return [x for x in c.split("‖") if x]
+    out = []
+    try:
+        from . import news as _news
+        r = requests.get("https://news.google.com/rss",
+                         params={"hl": "ja", "gl": "JP", "ceid": "JP:ja"},
+                         headers={"User-Agent": "Mozilla/5.0 (chouba-neta)"}, timeout=12)
+        r.raise_for_status()
+        items = _news.parse_rss(r.content)
+        out = [i["title"][:60] for i in items[:n]]
+    except Exception as e:
+        print(f"[headlines] {e}", flush=True)
+    _lt_cache_set("hl_cache", "‖".join(out))
+    return out
+
+
+def light_topic_block():
+    """配信プロンプト用「軽い話題の材料」。事実だけを渡し、使い方を縛る。"""
+    mats = []
+    wx = weather_line()
+    if wx:
+        mats.append(f"天気(実測): {wx}")
+    hl = headlines_today()
+    if hl:
+        mats.append("今日の実在ニュース見出し: " + " / ".join(hl))
+    if not mats:
+        return ""
+    return ("【軽い話題の材料(ここにある事実のみ。想像で補わない)】\n" + "\n".join(mats) +
+            "\n使い方: 入り口か結びに1つだけ、さらっと触れる程度。見出しは明るい話題のみ"
+            "(事件・事故・政治・訃報・不祥事は使わない)。記事の中身を推測して語らない(見出しの範囲だけ)。"
+            "合うものが無ければ天気か季節だけでよい。")
+
+
 def _days_since(ts, now):
     if not ts:
         return None
@@ -253,7 +345,7 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
             "出勤のお知らせ": "出勤案内。いつ店にいるかを軽やかに伝え、会いたい気持ちを一言添える。2〜3文＋絵文字1〜2個。",
             "イベントの案内": "イベント告知。楽しそうな雰囲気を出し、来たくなるように。3〜4文＋絵文字。",
             "季節のご挨拶": "季節の挨拶。時候に触れて、相手を気遣い、さりげなく店へ誘う。品よく2〜4文。",
-            "ご無沙汰の相手への軽い挨拶": "久しぶりの掘り起こし。responsibility重くせず、また会いたいと自然に。押し付けない温かさ。2〜3文。",
+            "ご無沙汰の相手への軽い挨拶": "久しぶりの掘り起こし。重くせず、また会いたいと自然に。押し付けない温かさ。2〜3文。",
         }.get(purpose, "")
         ctx_lines.append(f"配信の種類: {purpose}" + (f"（{_tone}）" if _tone else ""))
     if mode != "thanks" and template:
@@ -261,20 +353,34 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
         ctx_lines.append("★最優先・必達内容(この配信で伝えたい本題。この文面の骨にして、"
                         "本人の口調で自然に膨らませる。情報・事実は削らない): 「" + template + "」")
     if mode != "thanks":
-        # v115: 「義務」→「自然な範囲で」。不自然な結びつけを防ぐ
-        ctx_lines.append("個別化は自然な範囲で: 顧客カードに今の文脈へ自然に効く事実があれば1つだけ"
-                         "さりげなく入れる。無ければ入れなくてよい(無理に個人的な話を作らない=不自然になる)。"
-                         "本題＋温かい呼びかけ・気遣いだけでも十分に良い営業文になる。")
+        # v119: 「濃すぎる」対策。個人事実の上限を明文化し、軽い話題を既定の入り口にする
+        ctx_lines.append("【濃度の上限(厳守)】顧客カード・ペルソナ・過去会話からの個人的な事実は"
+                         "1通につき最大1つ。基本は0でよい。2つ以上入れる/会話を細かく引用する/"
+                         "相手をよく研究している感を出す、のは重くて不気味な印象になるので禁止。"
+                         "既定の入り口は天気・季節などの軽い話題＋本題＋短い気遣い。それで十分良い営業文になる。")
+        _lt = light_topic_block()
+        if _lt:
+            ctx_lines.append(_lt)
     # v101: 顧客カードを配信生成にも実接続
     try:
         from . import crm as _crm
         _cb = _crm.card_prompt_block(v["code"])
     except Exception:
         _cb = ""
+    # v118: 関係性(事実)＋許容レベル(本人確定のみ)を配信にも注入
+    _rel = _tol = ""
+    try:
+        from . import linebot as _lb
+        _rel = _lb.relationship_prompt_block(v["code"])
+        _tol = _lb.tolerance_prompt_block(v["code"])
+    except Exception:
+        pass
     user_prompt = (
         f"{profile_prompt_block(profile)}\n\n"
         + (f"{cp}\n\n" if cp else "")
         + (f"{_cb}\n\n" if _cb else "")
+        + (f"{_rel}\n\n" if _rel else "")
+        + (f"{_tol}\n\n" if _tol else "")
         + "\n".join(ctx_lines)
         + "\n\nこの相手に送る一言を1つ、JSONで。"
     )

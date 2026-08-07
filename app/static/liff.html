@@ -93,6 +93,18 @@ textarea.f{min-height:90px;resize:vertical;overflow:hidden}
   border-radius:99px;padding:10px 20px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
 .prog{height:5px;background:#EDE8DB;border-radius:99px;margin:2px 0 12px;overflow:hidden}
 .prog i{display:block;height:100%;background:var(--gold);border-radius:99px;transition:width .3s}
+/* v120: 返信インフォバー(案A) */
+.ibar{background:#fff;border:1px solid var(--border);border-left:4px solid var(--gold);
+  border-radius:14px;padding:12px 14px;margin-bottom:10px}
+.ibar.urgent{border-left-color:var(--red)}
+.ibar .who{font-size:20px;font-weight:800;color:var(--navy)}
+.ibar .when{font-size:13px;color:var(--sub);white-space:nowrap}
+.rtag{display:inline-flex;align-items:center;gap:3px;border-radius:8px;padding:3px 9px;font-size:12.5px;font-weight:700}
+.rt-urgent{background:#FBE9E5;color:var(--red)}
+.rt-visit{background:#F5EDDA;color:#7A5F1E}
+.rt-chat{background:#EDEDEA;color:#555}
+.rt-angry{background:#EFE5F5;color:#6A3B8F}
+.rt-money{background:#E3F0E4;color:#2E7D32}
 .msgcard{background:#EDF0F7;border:1px solid #D4DBEA;border-radius:14px 14px 14px 4px;
   padding:12px 14px;font-size:14px;margin-bottom:10px;white-space:pre-wrap;word-break:break-word}
 .draft{background:#fff;border:2px solid var(--border);border-radius:4px 14px 14px 14px;
@@ -425,8 +437,9 @@ function drawCard(code, d) {
   if (!d) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   if (d.error) { $("#view").innerHTML = `<div class="empty">カードが見つかりません</div>`; return; }
   setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触" + d.gap_days + "日前" : ""}`, true);
-  const sgL = d.attrs && d.attrs["店内区分"] ? "(" + d.attrs["店内区分"] + ")" : "";
-  const kindLab = ({ customer: "顧客", staff: "店内" + sgL, peer: "同業", private: "私用" })[d.kind] || "顧客";
+  const sg = d.attrs && d.attrs["店内区分"] || "";
+  const staffLab = sg === "女" ? "👯同僚ホステス" : sg === "男" ? "🤵黒服さん" : "店内";
+  const kindLab = ({ customer: "💐お客様", staff: staffLab, peer: "🏮よその店の子(同業)", private: "私用" })[d.kind] || "💐お客様";
   const standLab = { up: "目上", even: "対等", down: "目下" }[d.stand] || d.stand || "";
   const now = d.now_keys || {};
   const nowHtml = (now.ongoing ? `<div class="pill green">🟢 ${esc(now.ongoing)}</div>` : "") +
@@ -487,6 +500,9 @@ function drawCard(code, d) {
       : `<span style="color:var(--red);font-weight:700">⚠️ ${esc(d.attrs["担当"])}</span><div class="quote">担当は別の子。立ち居振る舞いに注意(下書きも控えめトーン)</div>`
     }</div></div>` : ""}
     ${d.attrs["お気に入りキャスト"] ? `<div class="kv"><div class="k">お気に入り</div><div class="v">💛 ${esc(d.attrs["お気に入りキャスト"])}</div></div>` : ""}
+    ${d.rel ? `<div class="kv"><div class="k">口調</div><div class="v">自分→${esc(d.rel.my_register)} ／ 相手→${esc(d.rel.your_register)}</div></div>` : ""}
+    ${d.rel && d.rel.initiator ? `<div class="kv"><div class="k">会話の起点</div><div class="v">${esc(d.rel.initiator)}</div></div>` : ""}
+    ${d.rel && d.rel.visits ? `<div class="kv"><div class="k">お席の実績</div><div class="v">🍾 ${d.rel.visits}回${d.rel.dohan ? `・同伴${d.rel.dohan}` : ""}${d.rel.after ? `・アフター${d.rel.after}` : ""}</div></div>` : ""}
   </div>
   ${d.pstats ? `<div class="card"><h3 class="sec">📊 相手のクセ（やりとりから）</h3>
     <div class="kv"><div class="k">文の長さ</div><div class="v">平均 約${d.pstats.avg_len}文字</div></div>
@@ -495,6 +511,24 @@ function drawCard(code, d) {
     ${d.pstats.top_hours && d.pstats.top_hours.length ? `<div class="kv"><div class="k">よく来る時間</div><div class="v">${d.pstats.top_hours.map(h=>h+"時台").join("・")}</div></div>` : ""}
     <div class="note">${esc(d.pstats.note)}</div></div>` : ""}
   <div class="card"><h3 class="sec">🧠 ペルソナ</h3>${persona}</div>
+  ${(d.persona && d.persona.tolerance && d.persona.tolerance.length) ? `<div class="card">
+    <h3 class="sec">🚦 どこまでOKか（下書きの踏み込み上限）</h3>
+    <div class="note" style="margin-bottom:8px">○にした項目だけが下書き生成に効きます(AIの推測をそのまま使わない安全装置)</div>
+    ${d.persona.tolerance.map((t, ti) => {
+      const dec = t.ok === 1 ? "ok" : (t.ok === 0 ? "ng" : "");
+      return `<div class="kv" ${dec === "ng" ? 'style="opacity:.55"' : ""}>
+        <div class="k">${esc(t.k)}<span class="conf">${CONF_DOT[t.conf] || ""}</span></div>
+        <div class="v" ${dec === "ng" ? 'style="text-decoration:line-through"' : ""}>${dec === "ok" ? "✅ " : ""}${esc(t.v)}
+          ${t.src ? `<div class="quote">「${esc(t.src)}」</div>` : ""}
+          <div style="margin-top:4px">
+          ${dec !== "ok" ? `<button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--green)"
+            onclick="personaTol('${cq}',${ti},'tolok')">○ この通り</button>` : ""}
+          ${dec === "" ? `<button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red)"
+            onclick="personaTol('${cq}',${ti},'tolng')">✕ 違う</button>` : ""}
+          <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
+            onclick="personaTolFix('${cq}',${ti},${JSON.stringify(t.v).replace(/"/g,'&quot;')})">✎直す</button>
+          </div></div></div>`; }).join("")}
+  </div>` : ""}
   ${pf ? `<div class="card"><h3 class="sec">👤 プロフィール</h3>${pf}</div>` : ""}
   ${news ? `<div class="card"><h3 class="sec">📰 ネタ</h3>${news}</div>` : ""}
   ${hist ? `<div class="card"><h3 class="sec">🕘 履歴</h3>${hist}</div>` : ""}
@@ -517,6 +551,24 @@ window.personaFix = async (cq, i, cur) => {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "fix", index: i, value: v }) });
     if (r.error) return toast(r.error);
     store.del("card_" + code); toast("直しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.personaTol = async (cq, i, action) => {
+  const code = decodeURIComponent(cq);
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action, index: i }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast(action === "tolok" ? "採用しました(下書きに効きます)" : "外しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.personaTolFix = async (cq, i, cur) => {
+  const code = decodeURIComponent(cq);
+  const v = prompt("この項目を直す(直すと採用扱いになります):", cur);
+  if (v == null || !v.trim()) return;
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "tolfix", index: i, value: v }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("直して採用しました"); vCard(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaRun = async cq => {
@@ -709,42 +761,78 @@ async function drawRep() {
     setHead("📨 いまの返信", "完了", true); return;
   }
   const it = rep.items[rep.i];
-  setHead(`📨 ${rep.i + 1}/${n}｜${esc(disp(it.name))}`,
-          `ランク${it.rank}${it.urgent ? "・🔥急ぎ" : ""}`, true);
-  const mins = it.ts ? Math.floor((Date.now() / 1000 - it.ts) / 60) : null;
-  const when = mins === null ? "" : mins < 60 ? `${mins}分前` : `${Math.floor(mins / 60)}時間前`;
-  let mid = `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>
+  setHead(`📨 返信`, `${rep.i + 1}/${n}件`, true);
+  // v120: いつ来たか(きょう 9:33(19分前) 形式)
+  let whenFull = "";
+  if (it.ts) {
+    const d0 = new Date(it.ts * 1000), now = new Date();
+    const sameDay = d0.toDateString() === now.toDateString();
+    const yest = new Date(now - 86400000).toDateString() === d0.toDateString();
+    const day = sameDay ? "きょう" : yest ? "きのう" : `${d0.getMonth() + 1}/${d0.getDate()}`;
+    const hm = `${d0.getHours()}:${String(d0.getMinutes()).padStart(2, "0")}`;
+    const mins = Math.floor((now / 1000 - it.ts) / 60);
+    const rel = mins < 60 ? `${mins}分前` : mins < 1440 ? `${Math.floor(mins / 60)}時間前` : "";
+    whenFull = `${day} ${hm}${rel ? `（${rel}）` : ""}`;
+  }
+  // v120: 内容タグ(既存トリアージ理由から。追加のAIコストなし)
+  const tag = repTag(it.reason || "");
+  const stat = it.unlinked ? `🆕 未登録` : `ランク${it.rank}`;
+  const bar = `<div class="ibar${it.urgent ? " urgent" : ""}" ${it.unlinked ? "" :
+      `onclick="nav('#card/${encodeURIComponent(it.contact)}')"`}>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <span class="who">${esc(disp(it.name))}</span><span class="when">${whenFull}</span></div>
+    <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">
+      ${it.urgent ? `<span class="rtag rt-urgent">🔥 急ぎ</span>` : ""}
+      <span class="rtag ${tag.c}">${tag.t}</span>
+      <span style="font-size:12.5px;color:var(--sub)">${stat}${it.unlinked ? "" : " ▸カード"}</span></div></div>`;
+  let mid = `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>` + bar + `
     <div class="msgcard">「${esc(it.text)}${it.truncated ? "…" : ""}」
     ${it.truncated ? `<div><a href="#" style="font-size:12px" onclick="repFull(${it.mid});return false">📄 全文を見る</a></div>` : ""}
-    <div style="font-size:11px;color:var(--sub);margin-top:6px">${when}・${esc(it.reason)}</div></div>`;
+    <div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(it.reason)}</div></div>`;
   if (it.unlinked) {
+    // v120: 初客=ランク直押しの1タップ登録。業界の人は2段階
     $("#view").innerHTML = mid + `
-      <div class="card"><h3 class="sec">🆕 はじめての相手です。まず仕分けてください</h3>
-        <div class="chips" style="margin-top:8px">
-          <button class="chip on" onclick="repCls('work')">顧客にする</button>
-          <button class="chip" onclick="repCls('staff')">店内</button>
-          <button class="chip" onclick="repCls('peer')">同業(仲間)</button>
-          <button class="chip" onclick="repCls('priv')">私用(受け取らない)</button>
+      <div class="card"><h3 class="sec">🆕 はじめての相手です</h3>
+        <div class="note" style="margin:4px 0 8px">💐 お客様なら、ランクを押すだけで登録完了</div>
+        <div class="chips">
+          <button class="chip on" onclick="repClsRank('S')">S（太客）</button>
+          <button class="chip" onclick="repClsRank('A')">A</button>
+          <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
+          <button class="chip" style="border-style:dashed" onclick="repClsRank('')">？あとで</button>
+        </div>
+        <div style="height:1px;background:var(--border);margin:12px 0"></div>
+        <div class="chips">
+          <button class="chip" onclick="repInd()">👥 業界の人</button>
+          <button class="chip" onclick="repCls('priv')">🔒 私用(取り込まない)</button>
         </div></div>
-      <div class="actbar"><button onclick="repAct('deferred','↷ あとで(まとめ箱)')">あとで</button>
-        <button onclick="repAct('skipped','↷ スキップ')">スキップ</button></div>`;
+      <div class="actbar"><button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
+        <button onclick="repAct('skipped','✕ 返さない')">✕ 返さない</button></div>`;
     $("#view").classList.add("hasbar");
     return;
   }
   $("#view").innerHTML = mid + `<div id="drafts"><div class="skel"></div><div class="skel"></div></div>
     <div class="actbar">
-      <button onclick="repAct('replied','✓ 自分の文で返信')">自分で書いた</button>
-      <button onclick="repAct('done','✓ 対応済みにしました')">直接返した</button>
-      <button onclick="repAct('deferred','↷ あとで(まとめ箱)')">あとで</button>
-      <button onclick="repAct('skipped','↷ スキップ')">スキップ</button></div>`;
+      <button onclick="repAct('done','✓ 対応した')">✓ 対応した</button>
+      <button onclick="repWrite()">✎ 自分で書く</button>
+      <button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
+      <button onclick="repAct('skipped','✕ 返さない')">✕ 返さない</button></div>`;
   $("#view").classList.add("hasbar");
   const cur = it.mid;
   const r = await prefetchReply(cur);
   if (rep.items[rep.i] && rep.items[rep.i].mid === cur && $("#drafts"))
     $("#drafts").innerHTML =
       cardRefChip(r.card_keys)
+      + ((r.drafts || []).length ? `<div class="note" style="margin:0 2px 6px">💡 直したい時は文章をタップ</div>` : "")
       + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
       || `<div class="note">下書きを作れませんでした(APIキー/通信)。下のボタンで記録だけできます。</div>`);
+}
+function repTag(reason) {
+  if (/来店|日程|同伴|予約|アフター|お誘い/.test(reason)) return { c: "rt-visit", t: "🍾 来店・日程" };
+  if (/金|支払|料金|ツケ|請求/.test(reason)) return { c: "rt-money", t: "💴 お金の話" };
+  if (/不満|不機嫌|怒|催促|クレーム|皮肉/.test(reason)) return { c: "rt-angry", t: "😠 ご機嫌ナナメ" };
+  if (/質問|問いかけ|回答待ち|確認/.test(reason)) return { c: "rt-chat", t: "❓ 質問・確認" };
+  if (/S客/.test(reason)) return { c: "rt-visit", t: "💎 太客さん" };
+  return { c: "rt-chat", t: "💬 近況・雑談" };
 }
 function cardRefChip(keys) {
   if (!keys || !keys.length) return "";
@@ -754,9 +842,9 @@ function cardRefChip(keys) {
     <span id="${id}" style="display:none">：${keys.map(esc).join("・")}</span></div>`;
 }
 function draftHtml(j, text) {
-  return `<div class="draft" id="dr${j}"><div class="t">${esc(text)}</div>
-    <div class="row"><button class="btn green" onclick="repSend(${j})">📤 LINEで送る</button>
-    <button class="btn ghost" style="flex:0 0 84px" onclick="repEdit(${j})">✎ 直す</button></div>
+  // v120: ✎直すボタン廃止→本文タップで編集(送信は緑ボタンのみ=誤送信なし)
+  return `<div class="draft" id="dr${j}"><div class="t" onclick="repEdit(${j})">${esc(text)}</div>
+    <div class="row"><button class="btn green" onclick="repSend(${j})">📤 LINEで送る</button></div>
     <textarea style="display:none">${esc(text)}</textarea></div>`;
 }
 window.repFull = async mid => {
@@ -790,27 +878,64 @@ window.repAct = (action, stampText) => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action, text: "" }); repAdvance(stampText); };
 window.repCls = kind => {
   const it = rep.items[rep.i];
-  if (kind === "work") {
-    $("#view").querySelector(".card").innerHTML = `<h3 class="sec">✓ 顧客カードを作成。ランクは？</h3>
-      <div class="chips" style="margin-top:8px">
-        <button class="chip on" onclick="repClsRank('S')">S(太客)</button>
-        <button class="chip" onclick="repClsRank('A')">A</button>
-        <button class="chip" onclick="repClsRank('B')">B(ふつう)</button>
-        <button class="chip" onclick="repClsRank('')">あとで決める</button></div>`;
-    return;
-  }
   fire("/api/liff/classify", { contact: it.contact, kind });
   bust("contacts");
-  const lab = { staff: "店内", peer: "同業", priv: "私用" }[kind];
   if (kind === "priv") repAdvance(`✓ ${it.name}を私用に(受信ごと削除)`);
-  else repAdvance(`✓ ${it.name}を「${lab}」に仕分け`);
+  else repAdvance(`✓ ${it.name}を仕分けました`);
 };
+// v120: 業界の人=2段階目(同僚ホステス/黒服さん/よその店の子)
+window.repInd = () => {
+  const card = $("#view").querySelector(".card");
+  if (!card) return;
+  card.innerHTML = `<h3 class="sec">👥 業界の人ですね。どの立場？</h3>
+    <div class="chips" style="margin-top:8px">
+      <button class="chip" onclick="repCls2('staff','女')">👯 同僚ホステス</button>
+      <button class="chip" onclick="repCls2('staff','男')">🤵 黒服さん</button>
+      <button class="chip" onclick="repCls2('peer','')">🏮 よその店の子</button></div>
+    <div style="height:1px;background:var(--border);margin:12px 0"></div>
+    <div class="chips"><button class="chip" style="border-style:dashed;color:var(--sub)" onclick="drawRep()">← 戻る</button></div>
+    <div class="note" style="margin-top:8px">💡 同僚・黒服=身内の連絡口調／よその店の子=同業の距離感</div>`;
+};
+window.repCls2 = (kind, gender) => {
+  const it = rep.items[rep.i];
+  fire("/api/liff/classify", { contact: it.contact, kind, gender });
+  bust("contacts");
+  const lab = kind === "peer" ? "よその店の子" : (gender === "男" ? "黒服さん" : "同僚ホステス");
+  repAdvance(`✓ ${it.name}を「${lab}」に仕分け`);
+};
+// v120: ✎自分で書く(書いた文はそのまま送れて文体学習にも入る)
+window.repWrite = () => {
+  const dr = $("#drafts");
+  if (!dr || $("#mywrite")) { const t = $("#mywrite textarea"); if (t) t.focus(); return; }
+  dr.insertAdjacentHTML("afterbegin", `<div class="draft sel" id="mywrite">
+    <textarea placeholder="自分の言葉で書く(送るとこの文体も学習されます)"></textarea>
+    <div class="row"><button class="btn green" onclick="repSendMine()">📤 LINEで送る</button></div></div>`);
+  const ta = $("#mywrite textarea"); ta.focus(); autogrow(ta);
+};
+window.repSendMine = async () => {
+  const ta = $("#mywrite textarea");
+  const text = (ta.value || "").trim();
+  if (!text) return toast("本文が空です");
+  const it = rep.items[rep.i];
+  const res = await sendViaLine(text, it.contact);
+  if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text });
+    repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); }
+  else if (res === "copied") {
+    $("#mywrite .row").innerHTML = `<button class="btn primary" onclick="repMarkMine()">✓ 貼り付けて送った</button>`;
+    $("#mywrite").dataset.text = text;
+    $("#mywrite .row").insertAdjacentHTML("afterend",
+      `<a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く</a>`);
+  }
+};
+window.repMarkMine = () => { const it = rep.items[rep.i];
+  fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "" });
+  repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
 window.repClsRank = rank => {
   const it = rep.items[rep.i];
   fire("/api/liff/classify", { contact: it.contact, kind: "work", rank });
   bust("contacts");
-  it.unlinked = false; drawRep();   // その場で下書きへ進む
-  toast(`✓ 顧客${rank ? "(ランク" + rank + ")" : ""}で登録`);
+  it.unlinked = false; it.rank = rank || "B"; drawRep();   // その場で下書きへ進む
+  toast(`✓ お客様${rank ? "(ランク" + rank + ")" : ""}で登録`);
 };
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============

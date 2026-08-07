@@ -264,6 +264,7 @@ def build_queue():
                       "rank": c.get("rank") or "B",
                       "reason": m.get("reason") or "",
                       "urgent": 1 if m["category"] == "urgent" else 0,
+                      "ts": m.get("ts"),   # v120: 受信時刻(いつ来たかの表示に必須)
                       "text": (m.get("text") or "")[:1000]})
     return items
 
@@ -1036,7 +1037,15 @@ def analyze_persona(contact):
         "- v=結論(120字以内)。src=根拠となる本人の実発言の引用(40字以内)。conf=高/中/低\n"
         "- 根拠が弱い観点はconf=低にするか省く。無理に7つ埋めない\n"
         "- summary=この人を一言で(営業視点・誇張なし・40字以内)\n"
-        '出力はJSONのみ: {"summary":"...","sections":[{"k":"価値観の核","v":"...","src":"...","conf":"高"}]}\n'
+        "さらに『許容レベル』(この相手にどこまで踏み込んでよいか)を別配列で出す。\n"
+        f"観点(この5つに限定): {'/'.join(TOLERANCE_KEYS)}\n"
+        "- 冗談・軽口=どんな冗談に乗ってくる/流すか。営業色の許容=来店を誘う直球をどこまで受けるか。"
+        "距離を詰めた時=馴れ馴れしくした時に乗るか引くか。際どい話題=下ネタ等のライン。"
+        "待たせた時=返信が遅れた時の反応。\n"
+        "- 各項目 v=結論(80字以内)・src=根拠の実発言引用(40字以内)・conf=高/中/低。"
+        "根拠となる実際のやり取りが無い観点は出さない(推測で埋めない)\n"
+        '出力はJSONのみ: {"summary":"...","sections":[{"k":"価値観の核","v":"...","src":"...","conf":"高"}],'
+        '"tolerance":[{"k":"冗談・軽口","v":"...","src":"...","conf":"高"}]}\n'
         f"---\n{talk}"
     )
     try:
@@ -1082,7 +1091,16 @@ def analyze_persona(contact):
                          "conf": s.get("conf") if s.get("conf") in ("高", "中", "低") else "中"})
     if not secs:
         return None, "分析結果が空でした"
-    return {"summary": str(obj.get("summary", ""))[:80], "sections": secs}, None
+    tols = []
+    for t in (obj.get("tolerance") or [])[:5]:
+        k = str(t.get("k", "")).strip()[:14]
+        v = str(t.get("v", "")).strip()
+        if k in TOLERANCE_KEYS and v:
+            tols.append({"k": k, "v": v[:120], "src": str(t.get("src", ""))[:60],
+                         "conf": t.get("conf") if t.get("conf") in ("高", "中", "低") else "中",
+                         "ok": None})   # ok: None=未確定 / 1=本人が採用 / 0=却下(注入しない)
+    return {"summary": str(obj.get("summary", ""))[:80], "sections": secs,
+            "tolerance": tols}, None
 
 
 def maybe_auto_persona(contact):
@@ -1117,6 +1135,23 @@ def persona_async(contact):
             if err:
                 _meta_set(f"pstat_{contact}", f"error:{err}")
             else:
+                # v118: 再分析しても本人の○✕確定を失わない(同じ観点は確定状態を引き継ぐ)
+                try:
+                    old = get_persona(contact) or {}
+                    decided = {t["k"]: t for t in (old.get("tolerance") or [])
+                               if t.get("ok") in (0, 1)}
+                    merged = []
+                    for t in (p.get("tolerance") or []):
+                        if t["k"] in decided:
+                            merged.append(decided[t["k"]])   # 確定済みは旧内容ごと維持
+                        else:
+                            merged.append(t)
+                    for k, t in decided.items():
+                        if not any(x["k"] == k for x in merged):
+                            merged.append(t)
+                    p["tolerance"] = merged
+                except Exception as e:
+                    print(f"[persona merge] {e}", flush=True)
                 with db.conn() as c:
                     c.execute("INSERT INTO linebot_persona(contact,data,ts) VALUES(?,?,?) "
                               "ON CONFLICT(contact) DO UPDATE SET data=excluded.data, ts=excluded.ts",
@@ -1184,6 +1219,121 @@ def partner_stats(contact):
     }
 
 
+# ============ v118: ペルソナ3層化 ============
+# 第1層=人物(既存persona)・第2層=関係性(ログの機械集計=確信度高)・
+# 第3層=許容レベル(LLM推定→本人が○✕で確定。確定済みのみ下書きに注入=誤推定事故防止)
+
+_POLITE_RE = _re.compile(r"(です|ます|でした|ました|ください|ですか|ますか|ですね|ますね|ございま)")
+
+
+def _polite_ratio(texts):
+    """文章群の敬語率(0..1)。判定はヒューリスティック=語尾・丁寧語の出現有無。"""
+    if not texts:
+        return None
+    hit = sum(1 for t in texts if _POLITE_RE.search(t or ""))
+    return hit / len(texts)
+
+
+def _register_label(r):
+    if r is None:
+        return "不明(実例なし)"
+    if r >= 0.7:
+        return "敬語で安定"
+    if r >= 0.3:
+        return "敬語とタメ口の混合"
+    return "タメ口主体"
+
+
+def relationship_stats(contact):
+    """第2層=関係性。messages/sent_replies/sittingsから機械集計(LLM不使用)。
+    - 口調: 自分→相手の敬語率 / 相手→自分の敬語率
+    - 起点: 6時間以上あいた後に先に送るのはどちらが多いか
+    - 来店実績: お席记録の回数・同伴・アフター
+    - 直近30日のやりとり量"""
+    ensure()
+    with db.conn() as c:
+        recv = [(r["ts"], r["text"] or "") for r in c.execute(
+            "SELECT ts, text FROM messages WHERE contact=? ORDER BY ts", (contact,))]
+        sent = [(r["ts"], r["text"] or "") for r in c.execute(
+            "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts", (contact,))]
+    if len(recv) + len(sent) < 3:
+        return None
+    my_pol = _polite_ratio([t for _, t in sent])
+    yr_pol = _polite_ratio([t for _, t in recv])
+    # 会話の起点: 6h空白の後、先に発したのはどちらか
+    merged = sorted([(t, "me") for t, _ in sent] + [(t, "you") for t, _ in recv])
+    me_starts = you_starts = 0
+    for i, (ts, who) in enumerate(merged):
+        if i == 0 or ts - merged[i - 1][0] >= 6 * 3600:
+            if who == "me":
+                me_starts += 1
+            else:
+                you_starts += 1
+    total_starts = me_starts + you_starts
+    initiator = None
+    if total_starts >= 3:
+        r = you_starts / total_starts
+        initiator = ("相手からが多い" if r >= 0.65 else
+                     "自分からが多い" if r <= 0.35 else "半々")
+    # 来店実績(お席记録)
+    visits = dohan = after = 0
+    try:
+        from . import sittings as _si
+        _si.ensure()
+        with db.conn() as c:
+            rows = c.execute(
+                "SELECT s.dohan_venue, s.after_venue FROM sittings s "
+                "WHERE s.main_contact=? OR EXISTS(SELECT 1 FROM sitting_members m "
+                "WHERE m.sitting_id=s.id AND m.contact=?)", (contact, contact)).fetchall()
+        visits = len(rows)
+        dohan = sum(1 for r in rows if (r["dohan_venue"] or "").strip())
+        after = sum(1 for r in rows if (r["after_venue"] or "").strip())
+    except Exception as e:
+        print(f"[rel visits] {e}", flush=True)
+    now = time.time()
+    n30 = sum(1 for ts, _ in merged if now - ts <= 30 * 86400)
+    return {
+        "my_register": _register_label(my_pol), "my_polite": my_pol,
+        "your_register": _register_label(yr_pol), "your_polite": yr_pol,
+        "initiator": initiator, "me_starts": me_starts, "you_starts": you_starts,
+        "visits": visits, "dohan": dohan, "after": after, "n_30d": n30,
+    }
+
+
+def relationship_prompt_block(contact):
+    """第2層を下書きプロンプトへ(事実の集計なので常時注入してよい)。"""
+    rs = relationship_stats(contact)
+    if not rs:
+        return ""
+    lines = [f"- 自分の口調はこの相手に対して「{rs['my_register']}」。この口調を崩さない",
+             f"- 相手の口調は「{rs['your_register']}」"]
+    if rs.get("initiator"):
+        lines.append(f"- 会話の起点は{rs['initiator']}")
+    if rs.get("visits"):
+        v = f"- お席の実績{rs['visits']}回"
+        if rs.get("dohan"):
+            v += f"(うち同伴{rs['dohan']})"
+        lines.append(v)
+    return "【この相手との関係性(ログ集計=事実)】\n" + "\n".join(lines)
+
+
+TOLERANCE_KEYS = ("冗談・軽口", "営業色の許容", "距離を詰めた時", "際どい話題", "待たせた時")
+
+
+def tolerance_prompt_block(contact):
+    """第3層のうち本人が○で確定した項目だけを『踏み込みの上限』として注入。
+    未確定・却下は注入しない=推定ミスがそのまま文面事故になるのを防ぐ。"""
+    p = get_persona(contact)
+    if not p:
+        return ""
+    items = [t for t in (p.get("tolerance") or []) if t.get("ok") == 1]
+    if not items:
+        return ""
+    lines = [f"- {t['k']}: {t['v']}" for t in items]
+    return ("【踏み込みの上限(本人確認済み・厳守)】この範囲を超える馴れ馴れしさ・営業色・際どさは出さない:\n"
+            + "\n".join(lines))
+
+
 def save_persona(contact, data):
     """v116: 編集したペルソナを保存(項目削除・修正の反映)。"""
     ensure()
@@ -1208,6 +1358,21 @@ def edit_persona(contact, action, index, value=""):
             secs[index]["conf"] = "中"        # 人手修正=確信度中(引用は残す)
     elif action == "summary" and value.strip():
         p["summary"] = value.strip()[:80]
+    # v118: 許容レベルの○✕確定・修正・削除
+    tols = p.get("tolerance") or []
+    if action in ("tolok", "tolng", "tolfix", "toldel") and 0 <= index < len(tols):
+        if action == "tolok":
+            tols[index]["ok"] = 1
+        elif action == "tolng":
+            tols[index]["ok"] = 0
+        elif action == "toldel":
+            tols.pop(index)
+        elif action == "tolfix" and value.strip():
+            tols[index]["v"] = value.strip()[:120]
+            tols[index]["ok"] = 1          # 手で直した=本人確認済みとして採用
+            tols[index]["conf"] = "高"
+            tols[index]["src"] = "本人が修正"
+        p["tolerance"] = tols
     p["sections"] = secs
     save_persona(contact, p)
     return p
@@ -2912,7 +3077,8 @@ def line_reset(key: str = "", confirm: str = "", full: str = ""):
             try:
                 if t == "linebot_meta" and not is_full:
                     # ひも付け(owner)だけ残し、他のメタ(受信係状態・掘り等)は消す
-                    c.execute("DELETE FROM linebot_meta WHERE k != 'owner'")
+                    # owner=ひも付け / reader_hb・reader_batt=リーダー死活(消すと監視が「未接続」誤報)
+                    c.execute("DELETE FROM linebot_meta WHERE k NOT IN ('owner','reader_hb','reader_batt')")
                 else:
                     c.execute(f"DELETE FROM {t}")
                 wiped.append(t)

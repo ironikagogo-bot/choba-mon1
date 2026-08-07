@@ -232,6 +232,17 @@ def _generate_inner(message_id: int) -> list[dict]:
         user_prompt += ("\n【距離感=自動】口調は『この相手に本人が実際に送った文』の実例に合わせる"
                         "(実例が敬語ならこちらも敬語を崩さない・タメ口ならタメ口)。"
                         "この相手への実例が無い場合は、砕けすぎない軽い丁寧語で様子を見る(初手から馴れ馴れしくしない)。")
+    # v118: 第2層(関係性=ログ集計の事実)と第3層(許容レベル=本人確定済みのみ)を制約として注入
+    try:
+        from . import linebot as _lb
+        _rel = _lb.relationship_prompt_block(contact["code"])
+        if _rel:
+            user_prompt += "\n\n" + _rel
+        _tol = _lb.tolerance_prompt_block(contact["code"])
+        if _tol:
+            user_prompt += "\n\n" + _tol
+    except Exception:
+        pass
 
     # いなしモード: 下ネタ癖のある相手、または性的な冗談・要求を含む受信は「乗らず・拒まず」で受け流す
     # v30: 注入は「いなしON(flag_ero==1)」の相手のみ。検知→確認は受信箱の下ネタアラームが担う。
