@@ -69,6 +69,74 @@ def ensure():
 
 
 # ---------- 受信の解決(取り込み経路から呼ぶ) ----------
+
+# v145: 表示名の表記ゆれ吸収。グループ着信は同一人物でも「空白・絵文字・敬称・
+# グループ印・大文字小文字」が1:1と揺れるため、完全一致だけでは既存カードに繋がらなかった
+import unicodedata as _ud
+_HON_TAIL = None  # 遅延コンパイル
+
+
+def _norm_name(s: str) -> str:
+    """名前照合用の正規化: NFKC→小文字→末尾敬称除去→空白・記号・絵文字を除去。"""
+    global _HON_TAIL
+    if _HON_TAIL is None:
+        _HON_TAIL = _re_g.compile(r"(さん|様|さま|ちゃん|くん|君|先生)$")
+    s = _ud.normalize("NFKC", (s or "")).strip().lower()
+    s = _HON_TAIL.sub("", s)
+    return "".join(ch for ch in s if ch.isalnum())
+
+
+def find_candidates(display_name: str, limit: int = 3) -> list:
+    """表示名から既存カードの候補を探す。戻り: [{code, why, strong}]。
+    strong=正規化後の完全一致(自動紐付けに使える) / 弱=部分一致(UIで提案のみ)。"""
+    ensure()
+    g, p = group_split(display_name or "")
+    nb = _norm_name(p if g else (display_name or ""))
+    if not nb:
+        return []
+    out, seen = [], set()
+    _self = (display_name or "").strip()
+
+    def hit(code, why, strong):
+        # 自分自身(同名の仮カード)は候補として無意味なので出さない
+        if code and code != _self and code not in seen:
+            seen.add(code)
+            out.append({"code": code, "why": why, "strong": strong})
+
+    with db.conn() as c:
+        # 未紐付けの仮カード(linked=0)は候補にしない(仮カード同士を繋いでも意味がない)
+        codes = [r["code"] for r in c.execute(
+            "SELECT code FROM contacts WHERE COALESCE(linked,1)!=0")]
+        aliases = [(r["line_name"], r["contact"]) for r in
+                   c.execute("SELECT line_name, contact FROM contact_aliases")]
+    for ln, ct in aliases:
+        if _norm_name(ln) == nb:
+            hit(ct, "別名が一致", True)
+    for code in codes:
+        keys = [(code, "表示名")]
+        try:
+            a = get_attrs(code) or {}
+            if a.get("呼び名"):
+                keys.append((a["呼び名"], "呼び名"))
+            if a.get("本名"):
+                keys.append((a["本名"], "本名"))
+        except Exception:
+            pass
+        for k, lab in keys:
+            nk = _norm_name(k)
+            if not nk:
+                continue
+            if nk == nb:
+                hit(code, f"{lab}が一致", True)
+                break
+            if len(nb) >= 3 and len(nk) >= 3 and (nb in nk or nk in nb):
+                hit(code, f"{lab}に近い", False)
+                break
+    strong = [x for x in out if x["strong"]]
+    weak = [x for x in out if not x["strong"]]
+    return (strong + weak)[:limit]
+
+
 def resolve_incoming(display_name: str) -> dict:
     """LINE表示名 → {action, contact}。
       action: 'muted'(破棄) / 'known'(取り込む・contactに解決) / 'unknown'(トレイへ)
@@ -89,6 +157,18 @@ def resolve_incoming(display_name: str) -> dict:
     # エイリアス未登録でも、表示名がそのまま既存顧客codeなら既知扱い
     if db.get_contact(name):
         return {"action": "known", "contact": name}
+    # v145: 表記ゆれの「強一致」がちょうど1件なら自動で既存カードに紐付ける
+    # (グループ着信の別表記で毎回未登録に落ちる問題)。次回からは別名で即一致。
+    # 部分一致(弱)は自動にせず、仕分けUIの候補提案に回す(誤紐付け防止)
+    try:
+        strong = [x for x in find_candidates(name) if x["strong"]]
+        if len(strong) == 1:
+            add_alias(name, strong[0]["code"])
+            print(f"[resolve] 自動紐付け: {name!r} → {strong[0]['code']!r} ({strong[0]['why']})",
+                  flush=True)
+            return {"action": "known", "contact": strong[0]["code"]}
+    except Exception as e:
+        print(f"[resolve cands] {e}", flush=True)
     return {"action": "unknown", "contact": None}
 
 
@@ -484,6 +564,39 @@ def discard_unlinked(code: str):
         c.execute("DELETE FROM contact_attrs WHERE contact=?", (code,))
         c.execute("DELETE FROM contact_aliases WHERE contact=?", (code,))
         c.execute("DELETE FROM contacts WHERE code=?", (code,))
+
+
+def delete_contact_full(code: str) -> dict:
+    """v145: カードの完全消去(取り消し不可)。本体・受信・送信実績・下書き・イベント・
+    属性・別名・事実・トーク原文・ペルソナ・ニュース・ネット補強・文体・お席の同席記録まで
+    すべて消す。muted化はしない(=同じ表示名から再受信すれば、また未登録として現れる)。"""
+    ensure()
+    code = (code or "").strip()
+    if not code or not db.get_contact(code):
+        return {"ok": False, "error": "not found"}
+    deleted = {}
+    with db.conn() as c:
+        ids = [r["id"] for r in c.execute("SELECT id FROM messages WHERE contact=?", (code,))]
+        for mid in ids:
+            c.execute("DELETE FROM drafts WHERE message_id=?", (mid,))
+        for t, col in [("messages", "contact"), ("sent_replies", "contact"),
+                       ("events", "contact"), ("contact_attrs", "contact"),
+                       ("contact_aliases", "contact"), ("pending_links", "line_name"),
+                       ("linebot_facts", "contact"), ("linebot_talks", "contact"),
+                       ("linebot_persona", "contact"), ("news_items", "contact"),
+                       ("enrich_suggestions", "contact"), ("style_profile", "contact"),
+                       ("sitting_members", "contact"), ("sittings", "main_contact")]:
+            try:
+                cur = c.execute(f"DELETE FROM {t} WHERE {col}=?", (code,))
+                if cur.rowcount:
+                    deleted[t] = cur.rowcount
+            except Exception as e:
+                print(f"[delete {t}] {e}", flush=True)
+        for k in (f"lasttalk_{code}", f"pstat_{code}"):
+            c.execute("DELETE FROM linebot_meta WHERE k=?", (k,))
+        c.execute("DELETE FROM contacts WHERE code=?", (code,))
+    print(f"[delete_contact_full] {code!r}: {deleted}", flush=True)
+    return {"ok": True, "deleted": deleted}
 
 
 def rename_contact(old: str, new: str) -> dict:

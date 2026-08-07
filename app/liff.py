@@ -458,6 +458,24 @@ def liff_contact(code: str, request: Request):
     }
 
 
+@router.post("/api/liff/contact_delete")
+async def liff_contact_delete(request: Request):
+    """v145: カードの完全消去(取り消し不可)。UI側でOK入力確認済みの前提。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    r = crm.delete_contact_full(code)
+    if not r.get("ok"):
+        return JSONResponse({"error": r.get("error") or "not found"}, status_code=404)
+    db.track("liff_contact_delete")
+    return r
+
+
 @router.post("/api/liff/contact/{code:path}")
 async def liff_contact_update(code: str, request: Request):
     if not _authed(request):
@@ -1229,12 +1247,22 @@ def liff_inbox(request: Request):
     for it in q:
         full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
         from . import crm as _crm
+        # v145: 未登録相手は既存カードの候補を添える(表記ゆれ・グループ着信の紐付け動線)
+        cands = []
+        if it.get("unlinked"):
+            try:
+                cands = [{"code": x["code"], "name": linebot._yobina(x["code"]),
+                          "why": x["why"], "strong": bool(x["strong"])}
+                         for x in _crm.find_candidates(it["contact"])]
+            except Exception as e:
+                print(f"[inbox cands] {e}", flush=True)
         out.append({"mid": it["mid"], "contact": it["contact"],
                     "name": linebot._yobina(it["contact"]),
                     "rank": it.get("rank") or "B", "urgent": bool(it.get("urgent")),
                     "unlinked": bool(it.get("unlinked")), "reason": it.get("reason") or "",
                     "ts": it.get("ts"), "text": full[:600],
                     "sname": (_crm.get_attrs(it["contact"]) or {}).get("LINE検索名") or "",
+                    "cands": cands,
                     "truncated": len(full) > 600})
     return {"ok": True, "items": out}
 
@@ -1309,8 +1337,16 @@ async def liff_classify(request: Request):
         gender = (body.get("gender") or "").strip()   # v120: 店内の女/男(同僚ホステス/黒服)
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    if not name or v not in ("work", "staff", "peer", "priv"):
+    if not name or v not in ("work", "staff", "peer", "priv", "link"):
         return JSONResponse({"error": "bad params"}, status_code=400)
+    if v == "link":
+        # v145: 既存カードに紐付け(別名化・孤児カードは吸収・トレイ掃除まで一括)
+        target = (body.get("target") or "").strip()
+        if not target or not db.get_contact(target):
+            return JSONResponse({"error": "bad target"}, status_code=400)
+        crm.resolve_pending(name, "link", contact=target)
+        db.track("liff_classify_link")
+        return {"ok": True, "contact": target}
     if v == "work":
         crm.link_contact(name)
         crm.add_alias(name, name)

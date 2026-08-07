@@ -307,11 +307,12 @@ const _mo = new MutationObserver(() => {
   document.querySelectorAll("textarea.f").forEach(t => { if (!t._grown) { t._grown = 1; autogrow(t); } });
 });
 _mo.observe(document.getElementById("view"), { childList: true, subtree: true });
-let _navDepth = 0;   // SPA内で何回遷移したか(メニュー直入りの行き止まり防止)
-$("#btnBack").onclick = () => {
-  if (_navDepth > 0) { _navDepth -= 2; history.back(); }   // hashchangeで+1されるので実質-1
-  else nav("#home");                                        // 直入り→戻る=ホームへ
-};
+let _navDepth = 0;   // (v144から未使用。互換のため残置)
+// v144: ‹は「どの局面でも必ずホーム」(本人指定・迷子防止)。
+// 履歴を辿ると通知直入り・深いフローで行き先が予測できない。文脈への戻りは
+// 画面内ボタン(編集の「やめる」・確認おわりの「カードへ」等)が担う。
+// 書きかけ保護は従来どおりhashchangeの確認ダイアログが効く。
+$("#btnBack").onclick = () => nav("#home");
 
 function setHead(title, sub, back) {
   $("#hdTitle").textContent = title; $("#hdSub").textContent = sub || "";
@@ -918,6 +919,22 @@ window.mergeGo = async (cq, keep) => {
     nav("#card/" + encodeURIComponent(keep));
   } catch (e) { toast("統合に失敗しました(通信)"); }
 };
+// v145: カードの完全消去(取り消し不可→OK入力確認)
+window.cardWipe = async cq => {
+  const code = decodeURIComponent(cq);
+  const ok = await askEdit(`⚠️ 最終確認: 「${disp(code)}」のカードと履歴をすべて消します。取り消せません。よければ下に「OK」と入力`, "");
+  if (!ok || ok.trim().toUpperCase() !== "OK") return toast("やめました");
+  try {
+    const r = await api("/api/liff/contact_delete", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code);
+    Object.keys(localStorage).filter(k => k.startsWith("cb_contacts") || k.startsWith("cb_home") || k.startsWith("cb_inbox")).forEach(k => localStorage.removeItem(k));
+    dirty = false; allowNav = true;
+    toast(`🗑 ${disp(code)}を完全消去しました`);
+    nav("#list");
+  } catch (e) { toast("消去に失敗しました(通信)"); }
+};
 // v122: 担当の自分判定(「自分(Aki)」等の表記も自分扱い=前方一致)
 function isSelfTanto(v) {
   const t = (v || "").trim();
@@ -1035,6 +1052,12 @@ async function vEdit(code) {
     <div class="note" style="margin:6px 0">同じ人のカードが2枚ある時に。<b>このカード(${esc(disp(d.name))})が消えて</b>、
     選んだカードへ会話・履歴・情報が全部移ります(この名前は別名として残り、以後の受信も移動先に入ります)。取り消せません。</div>
     <div class="chips" id="mgBox"><button class="chip" onclick="mergePick('${encodeURIComponent(code)}')">統合先を選ぶ</button></div>
+  </details>
+  <details class="card" style="margin-top:10px"><summary style="color:var(--red)">🗑 このカードを完全消去</summary>
+    <div class="note" style="margin:6px 0">${esc(disp(d.name))}のカード・受信・送信・トーク原文・ペルソナ・お席の記録まで
+    <b>すべて消します。取り消せません。</b>また同じ表示名から受信があれば、未登録として新しく現れます
+    (受信自体を止めたい相手は、消去ではなく仕分けで🔒私用にしてください)。</div>
+    <button class="chip" style="color:var(--red)" onclick="cardWipe('${encodeURIComponent(code)}')">🗑 完全消去する…</button>
   </details>`;
   const sel = { rank: d.rank, kind: d.kind, stand: d.stand || "even", staffgender: d.attrs["店内区分"] || "",
     flagero: String(d.flag_ero || 0), flagkoi: String(d.flag_koi || 0) };
@@ -1263,8 +1286,16 @@ async function drawRep() {
     <div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(it.reason)}</div></div>`;
   if (it.unlinked) {
     // v120: 初客=ランク直押しの1タップ登録。業界の人は2段階
+    // v145: 既存カードの候補があれば最上段に提案(グループ着信の表記ゆれ→重複カード防止)
+    const candHtml = (it.cands || []).length ? `
+        <div class="note" style="margin:4px 0 6px">🔗 もしかして、もうカードがある人？</div>
+        <div class="chips">${it.cands.map(c2 =>
+          `<button class="chip on" onclick="repLink(${JSON.stringify(c2.code).replace(/"/g, '&quot;')})">🔗 ${esc(disp(c2.name))}と同一人物</button>
+           <span style="font-size:11px;color:var(--sub);align-self:center">${esc(c2.why)}</span>`).join("")}</div>
+        <div style="height:1px;background:var(--border);margin:12px 0"></div>` : "";
     $("#view").innerHTML = mid + `
       <div class="card"><h3 class="sec">🆕 はじめての相手です</h3>
+        ${candHtml}
         <div class="note" style="margin:4px 0 8px">💐 お客様なら、ランクを押すだけで登録完了</div>
         <div class="chips">
           <button class="chip on" onclick="repClsRank('S')">S（太客）</button>
@@ -1368,6 +1399,13 @@ window.repCls = kind => {
   bust("contacts");
   if (kind === "priv") repAdvance(`✓ ${it.name}を私用に(受信ごと削除)`);
   else repAdvance(`✓ ${it.name}を仕分けました`);
+};
+// v145: 既存カードへの紐付け(以後この表示名は自動でそのカードに届く)
+window.repLink = target => {
+  const it = rep.items[rep.i];
+  fire("/api/liff/classify", { contact: it.contact, kind: "link", target });
+  bust("contacts"); bust("inbox");
+  repAdvance(`🔗 ${disp(target)}のカードに紐付けました(次からは自動)`);
 };
 // v120: 業界の人=2段階目(同僚ホステス/黒服さん/よその店の子)
 window.repInd = () => {
