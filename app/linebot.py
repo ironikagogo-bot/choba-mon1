@@ -2887,23 +2887,34 @@ MENU_COLS = 4
 
 @router.get("/line/reset")
 @router.post("/line/reset")
-def line_reset(key: str = "", confirm: str = ""):
-    """【テスト用】全データ消去。ブラウザで
-    /line/reset?key=<INGEST_TOKEN>&confirm=RESET を開くと全部消える(顧客・学習・お席・
-    抽出・ひも付け・受信ログ)。取り消せないので confirm=RESET 必須。"""
+def line_reset(key: str = "", confirm: str = "", full: str = ""):
+    """【テスト用】データ消去。/line/reset?key=<INGEST_TOKEN>&confirm=RESET
+    v117: 既定では「顧客・学習・お席・抽出・受信ログ」を消し、**リーダー接続とひも付けは保持**
+    (リセットのたびに再接続・再ひも付けが要る問題を解消)。
+    端末引き渡し等で完全初期化したい時だけ &full=1 を付ける(接続もひも付けも消える)。"""
     if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
         return Response(status_code=403)
     if confirm != "RESET":
         return {"ok": False,
-                "warning": "全データが消えます。取り消せません。",
+                "warning": "データが消えます。取り消せません。",
                 "how": "URLの末尾に &confirm=RESET を付けて、もう一度開いてください。"}
-    wiped = []
+    is_full = str(full) in ("1", "true", "yes")
+    # リーダー接続(reader_tokens/reader_codes)は既定で保護=リセット後も繋がったまま
+    protect_tables = set() if is_full else {"reader_tokens", "reader_codes"}
+    wiped, kept = [], []
     with db.conn() as c:
         tables = [r[0] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")]
         for t in tables:
+            if t in protect_tables:
+                kept.append(t)
+                continue
             try:
-                c.execute(f"DELETE FROM {t}")
+                if t == "linebot_meta" and not is_full:
+                    # ひも付け(owner)だけ残し、他のメタ(受信係状態・掘り等)は消す
+                    c.execute("DELETE FROM linebot_meta WHERE k != 'owner'")
+                else:
+                    c.execute(f"DELETE FROM {t}")
                 wiped.append(t)
             except Exception as e:
                 print(f"[reset {t}] {e}", flush=True)
@@ -2912,8 +2923,11 @@ def line_reset(key: str = "", confirm: str = ""):
     except Exception:
         pass
     ensure()
-    return {"ok": True, "wiped": wiped,
-            "next": "まっさらになりました。トークに玄関パスワードを送って、ひも付けからやり直してください。"}
+    nxt = ("まっさらになりました。リーダー接続とひも付けは保持したので、"
+           "そのまま使えます(再接続・合言葉の再送は不要)。" if not is_full
+           else "完全初期化しました。トークに玄関パスワードを送ってひも付けし直し、"
+                "リーダーもQRで再接続してください。")
+    return {"ok": True, "wiped": wiped, "kept": kept, "full": is_full, "next": nxt}
 
 
 @router.get("/line/setup")
