@@ -194,7 +194,9 @@ def _api_search(contact, anchors, person_ok):
                         "src_title": str(f.get("title", ""))[:80],
                         "src_url": str(f.get("url", ""))[:300],
                         "conf": f.get("conf") if f.get("conf") in ("高", "中") else "中"})
-        return [x for x in res if x["k"] and x["v"]]
+        # v150: 出典URL・引用が無い提案は捨てる(「出典必須」の安全設計をAPI経路でも強制)
+        return [x for x in res if x["k"] and x["v"]
+                and x["src_url"].startswith("http") and x["quote"]]
     except Exception as e:
         print(f"[enrich api-search] {e}", flush=True)
         return None

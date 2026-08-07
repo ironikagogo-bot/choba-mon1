@@ -100,6 +100,71 @@ def liff_page():
     return HTMLResponse(html)
 
 
+# ============ 合言葉レス・オンボーディング (v151) ============
+# 16字の合言葉コピペが実運用の最大の脱落ポイント(2026-08-07 ゆみさん3回失敗)。
+# ワンタイムリンクをタップ→LINEログイン(自動)→ひも付け完了、の0入力方式に置き換える。
+
+@router.get("/line/bindlink")
+def line_bindlink(key: str = ""):
+    """ひも付けリンクの発行(発行者=運用者のみ・72時間有効・1回使うと無効)。
+    既にひも付いていても上書きする=機種変更・ロックアウト復旧を兼ねる。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        return Response(status_code=403)
+    from . import linebot
+    linebot.ensure()
+    import secrets
+    tok = secrets.token_urlsafe(12)
+    linebot._meta_set("bind_tok", f"{tok}|{time.time() + 72 * 3600}")
+    if not LIFF_ID:
+        return JSONResponse({"error": "LIFF未設定(CHOUBA_LIFF_ID)"}, status_code=500)
+    url = f"https://liff.line.me/{LIFF_ID}?bind={tok}"
+    return HTMLResponse(f"""<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<body style="font-family:sans-serif;max-width:440px;margin:40px auto;padding:0 16px">
+<h2>🔑 ひも付けリンク(72時間有効・1回きり)</h2>
+<p>このリンクを<b>本人のLINEに送って、タップしてもらうだけ</b>でひも付けが完了します。
+合言葉の入力は不要です。</p>
+<p style="background:#F5F2EA;border-radius:10px;padding:14px;word-break:break-all;
+  font-size:15px;user-select:all">{url}</p>
+<p style="color:#888;font-size:13px">・タップした人がこの帳場くんの利用者になります(既存のひも付けは上書き)<br>
+・間違った人がタップした場合は、このページを開き直して新しいリンクを発行すれば古いリンクは無効になります</p>
+</body>""")
+
+
+@router.post("/api/liff/bind")
+async def liff_bind(request: Request):
+    """ひも付けリンクの消化。LIFFのIDトークン(本人)+ワンタイムトークンでownerを設定。"""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return JSONResponse({"error": "no token"}, status_code=401)
+    sub = _verify_id_token(auth[7:].strip())
+    if not sub:
+        return JSONResponse({"error": "bad id token"}, status_code=401)
+    try:
+        body = await request.json()
+        tok = (body.get("bind") or "").strip()
+    except Exception:
+        tok = ""
+    from . import linebot
+    linebot.ensure()
+    rec = linebot._meta_get("bind_tok") or ""
+    if not tok or "|" not in rec:
+        return JSONResponse({"error": "リンクが無効です"}, status_code=400)
+    saved, exp = rec.split("|", 1)
+    try:
+        expired = time.time() > float(exp)
+    except ValueError:
+        expired = True
+    if tok != saved or expired:
+        return JSONResponse({"error": "リンクの期限が切れています"}, status_code=400)
+    linebot._meta_set("owner", sub)
+    with db.conn() as c:
+        c.execute("DELETE FROM linebot_meta WHERE k='bind_tok'")
+    print(f"[bind] リンクひも付け完了: …{sub[-6:]}", flush=True)
+    db.track("liff_bind_link")
+    return {"ok": True, "bound": True}
+
+
 @router.get("/api/liff/hello")
 def liff_hello():
     """認証不要の起動確認。リセット後の「ひも付け前」を検知して案内を出すため(v115)。"""
@@ -155,7 +220,7 @@ def liff_home(request: Request):
     except Exception:
         fixup_n = 0
     try:
-        pending_n = len(linebot.pending_facts())   # v123: 整備のLIFF化
+        pending_n = len(linebot.visible_pending())   # v150: 4項目+🌐のみ数える
     except Exception:
         pending_n = 0
     return {
@@ -246,6 +311,43 @@ def liff_fixup(request: Request):
     return {"ok": True, "items": _fixup_items()}
 
 
+@router.post("/api/liff/fixup/bulk")
+async def liff_fixup_bulk_ep(request: Request):
+    """v151: 「ぜんぶおまかせで確定」(審査TOP10-7)。毎晩の赤警告×人数分の宿題を1タップに。
+    既定: 呼び名=表示名の人名部分 / AI推定の種別・立場があれば採用、無ければ顧客・対等。
+    あとからカードでいつでも直せる(=完璧より前進)。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm, linebot
+    n = 0
+    for it in _fixup_items():
+        code = it.get("code") or ""
+        try:
+            sg = it.get("suggest") or {}
+            a = crm.get_attrs(code) or {}
+            yb = (a.get("呼び名") or "").strip() or (sg.get("呼び名") or "").strip()
+            if not yb:
+                g, p = crm.group_split(code)
+                base = (p or code).split()[0] if (p or code).split() else code
+                yb = base.strip("()（）:：・~〜*☆★♪!！?？💕🍸🌸✨ ") or code
+            crm.add_def("呼び名"); crm.set_attr(code, "呼び名", yb)
+            try:
+                crm.add_alias(yb, code)
+            except Exception:
+                pass
+            kind = (sg.get("kind") or "customer").strip() or "customer"
+            stand = (sg.get("stand") or "even").strip() or "even"
+            with db.conn() as c:
+                c.execute("UPDATE contacts SET kind=?, stand=? WHERE code=?", (kind, stand, code))
+                c.execute("UPDATE linebot_facts SET status='confirmed' WHERE contact=? "
+                          "AND k IN ('呼び名','本名','誕生日','🔖種別・立場') AND status='pending'", (code,))
+            n += 1
+        except Exception as e:
+            print(f"[fixup bulk] {code}: {e}", flush=True)
+    db.track("liff_fixup_bulk")
+    return {"ok": True, "done": n}
+
+
 @router.post("/api/liff/fixup/save")
 async def liff_fixup_save(request: Request):
     """1人分の確定。呼び名・本名・種別・立場は必須(サーバー側でも強制)。"""
@@ -276,7 +378,9 @@ async def liff_fixup_save(request: Request):
     if hn:
         crm.add_def("本名"); crm.set_attr(code, "本名", hn)
     try:
-        crm.add_alias(code, yb)
+        # v150: 引数が逆だった実バグ(code側の受信紐付けを実在しない呼び名宛に上書きしていた)。
+        # 正: 「呼び名という表示名が来たらこのカード」= add_alias(line_name=yb, contact=code)
+        crm.add_alias(yb, code)
     except Exception:
         pass
     with db.conn() as c:
@@ -398,8 +502,12 @@ def liff_contact(code: str, request: Request):
         sents = [dict(r) for r in c.execute(
             "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts DESC LIMIT 10", (code,))]
         try:
-            seki = [dict(r) for r in c.execute(
-                "SELECT ts, kind FROM sittings WHERE main_contact=? ORDER BY ts DESC LIMIT 5", (code,))]
+            # v150: ts/kind列は存在せず🕘お席履歴が一度も出ていなかった実バグ(正: created_ts/stype)
+            seki = [{"ts": r["created_ts"],
+                     "kind": ("店外" if (r["stype"] or "") == "gaiso" else "来店")}
+                    for r in c.execute(
+                        "SELECT created_ts, stype FROM sittings WHERE main_contact=? "
+                        "ORDER BY created_ts DESC LIMIT 5", (code,))]
         except Exception:
             seki = []
     try:
@@ -411,7 +519,7 @@ def liff_contact(code: str, request: Request):
     except Exception:
         items = []
     pstat = linebot._meta_get(f"pstat_{code}") or ""
-    pending_n = len([f for f in linebot.pending_facts() if f["contact"] == code])
+    pending_n = len([f for f in linebot.visible_pending() if f["contact"] == code])
     review_n = len(linebot.reviewable_facts(code))
     gap = None
     try:
@@ -489,10 +597,15 @@ async def liff_contact_update(code: str, request: Request):
         return JSONResponse({"error": "not found"}, status_code=404)
     try:
         body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("not dict")
+        fields = body.get("fields") or {}
+        attrs = body.get("attrs") or {}
+        if not isinstance(fields, dict) or not isinstance(attrs, dict):
+            raise ValueError("bad types")
+        fields = dict(fields)
     except Exception:
-        return JSONResponse({"error": "bad json"}, status_code=400)
-    fields = dict(body.get("fields") or {})
-    attrs = body.get("attrs") or {}
+        return JSONResponse({"error": "bad json"}, status_code=400)   # v150: 型不正でも500にしない
     # v114: 種別(kind)は update_contact の許可外だったため保存されていなかった実バグ。
     # set_kind で明示反映する(顧客→店内→同業の切替が効くようになる)。
     kind = (fields.pop("kind", "") or "").strip()
@@ -973,9 +1086,9 @@ def liff_facts(request: Request, scope: str = "pending", code: str = ""):
         rows = linebot.reviewable_facts(code)
     elif code:
         # v141: この相手の確認待ちだけ(カード発の「必ずやらせる」動線。全員分の整理を強制しない)
-        rows = [f for f in linebot.pending_facts() if f["contact"] == code]
+        rows = [f for f in linebot.visible_pending() if f["contact"] == code]
     else:
-        rows = linebot.pending_facts()
+        rows = linebot.visible_pending()
     out = []
     for f in rows[:120]:
         try:
@@ -1055,9 +1168,11 @@ async def liff_orei_resume(request: Request):
         return JSONResponse({"error": "お席が見つかりません"}, status_code=404)
     sent = {m["contact"] for m in (s.get("members") or []) if m.get("sent")}
     drafts_ = sittings.generate_orei(sid)
+    from . import crm as _crm
     for g in drafts_:
         if g.get("contact") in sent:
             g["done"] = True
+        g["sname"] = (_crm.get_attrs(g.get("contact") or "") or {}).get("LINE検索名") or ""  # v150
     db.track("liff_orei_resume")
     return {"ok": True, "sid": sid, "drafts": drafts_}
 
@@ -1157,6 +1272,12 @@ def _run_import_job(jid: int, contact: str, text: str):
         facts = linebot._ensure_name_questions(contact, facts)
         ncrit, nauto = linebot.save_split(contact, facts)
         upd("done", f"{ncrit + nauto}")
+        # v150: 原文メタの掃除(無限蓄積の防止。救済再実行はqueued/runningのみ対象なので不要になる)
+        try:
+            with db.conn() as c:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"liffimp_{jid}",))
+        except Exception:
+            pass
         # v140: どのルート(チャット/📥/ショートカット)でも「顧客カード作成完了」を1通通知
         try:
             linebot._notify_card_ready(contact, ncrit, nauto)
@@ -1208,7 +1329,7 @@ async def liff_import(request: Request, files: list[UploadFile] = File(...)):
                              json.dumps({"cands": cands, "name": name}, ensure_ascii=False)
                              if not contact else "", time.time()))
             jid = cur.lastrowid
-        linebot._meta_set(f"liffimp_{jid}", text[:200000])
+        linebot._meta_set(f"liffimp_{jid}", text[-200000:])   # v150: 末尾=最新を保持
         if contact and not is_existing:
             threading.Thread(target=_run_import_job, args=(jid, contact, text), daemon=True).start()
         out.append({"id": jid, "fname": fname, "status": status0,
@@ -1222,6 +1343,30 @@ def liff_import_status(request: Request):
         return _deny()
     _jobs_ensure()
     from . import linebot
+    # v150: サーバー再起動でrunning/queuedのまま孤児化したジョブの救済。
+    # 原文(liffimp_メタ)が残っていれば再実行、無ければ分かる言葉でエラー化
+    # (「作成中…」が永遠に回り続ける実害の根治。二重起動はアトミックUPDATEで防止)
+    try:
+        with db.conn() as c:
+            stale = [dict(r) for r in c.execute(
+                "SELECT id, contact FROM liff_import_jobs "
+                "WHERE status IN ('queued','running') AND ts < ?", (time.time() - 600,))]
+        for j in stale:
+            text = linebot._meta_get(f"liffimp_{j['id']}") or ""
+            with db.conn() as c:
+                cur = c.execute(
+                    "UPDATE liff_import_jobs SET status=?, detail=?, ts=? "
+                    "WHERE id=? AND status IN ('queued','running')",
+                    (("queued", "再開", time.time(), j["id"]) if (text and j.get("contact"))
+                     else ("error", "取り込みが途中で止まりました。お手数ですがもう一度送ってください",
+                           time.time(), j["id"])))
+                won = cur.rowcount == 1
+            if won and text and j.get("contact"):
+                print(f"[import rescue] job{j['id']} を再開", flush=True)
+                threading.Thread(target=_run_import_job, args=(j["id"], j["contact"], text),
+                                 daemon=True).start()
+    except Exception as e:
+        print(f"[import rescue] {e}", flush=True)
     with db.conn() as c:
         rows = [dict(r) for r in c.execute(
             "SELECT * FROM liff_import_jobs WHERE ts>=? ORDER BY id DESC LIMIT 40",
@@ -1300,7 +1445,9 @@ async def liff_reply_drafts(request: Request):
     db.track("liff_draft")
     return {"ok": True, "drafts": [{"text": g.get("text", "")} for g in gen if g.get("text")][:3],
             "card_keys": crm.card_used_keys(m.get("contact") or ""),
-            "gen_note": drafts.last_err(mid) or ("APIキー未設定(Render envに ANTHROPIC_API_KEY)" if not config.ANTHROPIC_API_KEY else "")}
+            "gen_note": drafts.last_err(mid) or (
+                "いま自動の下書きがお休み中(設定待ち)。下の文は定型です — お店の担当さんに『帳場くんのAI設定』と伝えてください"
+                if not config.ANTHROPIC_API_KEY else "")}   # v150: 技術用語を出さない(詳細はログ)
 
 
 @router.post("/api/liff/reply/act")
@@ -1419,6 +1566,9 @@ async def liff_ann_plan(request: Request):
     try:
         body = await request.json()
         segs = body.get("segs") or ([body["seg"]] if body.get("seg") else ["ALL"])
+        if not isinstance(segs, list):   # v150: 非配列で500にしない
+            return JSONResponse({"error": "segs must be a list"}, status_code=400)
+        segs = [s for s in segs if isinstance(s, str)]
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     now = time.time()
@@ -1505,6 +1655,9 @@ async def liff_orei_record(request: Request):
         after = (body.get("after_venue") or "").strip()
         venue = (body.get("venue") or "").strip()
         helpers = body.get("helpers") or []       # [{contact, role, stand}] role=help/guest/intro/peer
+        if not isinstance(helpers, list):         # v150: 型不正で500にしない
+            helpers = []
+        helpers = [h for h in helpers if isinstance(h, dict)]
         day = body.get("day") or "today"          # today / yesterday
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
@@ -1541,6 +1694,9 @@ async def liff_orei_record(request: Request):
     sid = sittings.create_sitting(label, main, members, stype=stype, venue=venue,
                                   dohan_venue=dohan, after_venue=after)
     drafts_ = sittings.generate_orei(sid)
+    from . import crm as _crm
+    for g in drafts_:   # v150: LINE検索名を添える(g.snameが常にundefinedだった)
+        g["sname"] = (_crm.get_attrs(g.get("contact") or "") or {}).get("LINE検索名") or ""
     db.track("liff_orei_record")
     return {"ok": True, "sid": sid, "drafts": drafts_}
 
@@ -1626,6 +1782,52 @@ async def liff_news_dismiss(request: Request):
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     news.dismiss(nid)
+    return {"ok": True}
+
+
+@router.post("/api/liff/import/retry")
+async def liff_import_retry_ep(request: Request):
+    """v151: エラー行の再実行。原文が残っていれば再アップロード不要でやり直す。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    _jobs_ensure()
+    try:
+        body = await request.json()
+        jid = int(body.get("id"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    with db.conn() as c:
+        r = c.execute("SELECT * FROM liff_import_jobs WHERE id=?", (jid,)).fetchone()
+    if not r:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    text = linebot._meta_get(f"liffimp_{jid}") or ""
+    contact = (dict(r).get("contact") or "").strip()
+    if not text or not contact:
+        return {"ok": False, "need_reupload": True,
+                "msg": "元のデータが残っていませんでした。もう一度トーク履歴を送ってください"}
+    with db.conn() as c:
+        c.execute("UPDATE liff_import_jobs SET status='queued', detail='再実行', ts=? WHERE id=?",
+                  (time.time(), jid))
+    threading.Thread(target=_run_import_job, args=(jid, contact, text), daemon=True).start()
+    db.track("liff_import_retry")
+    return {"ok": True}
+
+
+@router.post("/api/liff/import/dismiss")
+async def liff_import_dismiss(request: Request):
+    """v151: エラー行の掃除(赤い行が永久に残り「壊れてる」第一印象を作る問題)。"""
+    if not _authed(request):
+        return _deny()
+    _jobs_ensure()
+    try:
+        body = await request.json()
+        jid = int(body.get("id"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    with db.conn() as c:
+        c.execute("DELETE FROM liff_import_jobs WHERE id=? AND status='error'", (jid,))
+        c.execute("DELETE FROM linebot_meta WHERE k=?", (f"liffimp_{jid}",))
     return {"ok": True}
 
 

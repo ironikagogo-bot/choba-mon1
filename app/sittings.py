@@ -124,14 +124,37 @@ def mark_sent(sid: int, contact: str):
 
 
 def _name(code: str) -> str:
+    """v150: 呼び名が無い時、生のLINE表示名(グループ印・絵文字・記号入り)をそのまま
+    お礼文に使わない。グループ接頭辞と装飾を落とした最初の語だけを使う。"""
     c = db.get_contact(code) or {}
-    return (c.get("nickname") or "").strip() or code
+    nm = (c.get("nickname") or "").strip()
+    if nm:
+        return nm
+    try:
+        from . import crm
+        _g, p = crm.group_split(code)
+        base = (p or code)
+    except Exception:
+        base = code
+    toks = base.split()
+    base = toks[0] if toks else base
+    base = base.strip("()（）:：・~〜*☆★♪!！?？💕🍸🌸✨ ")
+    return base or code
 
 
 def orei_text(role: str, stand: str, name: str, main: str,
               stype: str = "", venue: str = "",
               dohan_venue: str = "", after_venue: str = "") -> str:
     """役割×立場のテンプレ御礼。同伴・アフターは独立要素として文に織り込む(同じ夜に両方可)。"""
+    # v150: お客様系は敬称を必ず付ける(生表示名の呼び捨て事故防止。hon()は重ね付けしない)
+    try:
+        from .campaign import hon
+        if role in ("customer", "intro", "guest", "after"):
+            name = hon(name)
+        if role == "intro" and main:
+            main = hon(main)
+    except Exception:
+        pass
     _dv = (dohan_venue or "").strip()
     _av = (after_venue or "").strip()
     _gv = (venue or "").strip()

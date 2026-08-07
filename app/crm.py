@@ -65,6 +65,14 @@ def ensure():
             c.execute("ALTER TABLE contact_attrs ADD COLUMN updated_ts REAL")
         except Exception:
             pass
+        # v150: add_alias引数逆バグ(〜v149)の修復。contactが実在せず、line_nameが
+        # 既存カードcodeである壊れた紐付けを自己エイリアスに戻す(受信の迷子防止)
+        try:
+            c.execute("UPDATE contact_aliases SET contact=line_name "
+                      "WHERE contact NOT IN (SELECT code FROM contacts) "
+                      "AND line_name IN (SELECT code FROM contacts)")
+        except Exception as e:
+            print(f"[alias repair] {e}", flush=True)
     _READY = True
 
 
@@ -81,18 +89,21 @@ def _norm_name(s: str) -> str:
     global _HON_TAIL
     if _HON_TAIL is None:
         _HON_TAIL = _re_g.compile(r"(さん|様|さま|ちゃん|くん|君|先生)$")
+    # v150: 記号・絵文字の除去を先に(「田中さん🍸」→敬称が末尾に来てから除去)
     s = _ud.normalize("NFKC", (s or "")).strip().lower()
-    s = _HON_TAIL.sub("", s)
-    return "".join(ch for ch in s if ch.isalnum())
+    s = "".join(ch for ch in s if ch.isalnum())
+    return _HON_TAIL.sub("", s)
 
 
-def find_candidates(display_name: str, limit: int = 3) -> list:
+def find_candidates(display_name: str, limit: int = 3, auto: bool = False) -> list:
     """表示名から既存カードの候補を探す。戻り: [{code, why, strong}]。
-    strong=正規化後の完全一致(自動紐付けに使える) / 弱=部分一致(UIで提案のみ)。"""
+    strong=正規化後の完全一致(自動紐付けに使える) / 弱=部分一致(UIで提案のみ)。
+    v150 auto=True(自動紐付け用)は条件を絞る: 顧客カードのみ・別名/表示名一致のみstrong
+    (呼び名「社長」等の汎用語や店内/同業カードへの誤自動紐付けを防ぐ。UI提案は従来どおり広く)。"""
     ensure()
     g, p = group_split(display_name or "")
     nb = _norm_name(p if g else (display_name or ""))
-    if not nb:
+    if not nb or (auto and len(nb) < 2):
         return []
     out, seen = [], set()
     _self = (display_name or "").strip()
@@ -105,12 +116,14 @@ def find_candidates(display_name: str, limit: int = 3) -> list:
 
     with db.conn() as c:
         # 未紐付けの仮カード(linked=0)は候補にしない(仮カード同士を繋いでも意味がない)
+        kind_cond = " AND COALESCE(kind,'customer')='customer'" if auto else ""
         codes = [r["code"] for r in c.execute(
-            "SELECT code FROM contacts WHERE COALESCE(linked,1)!=0")]
+            "SELECT code FROM contacts WHERE COALESCE(linked,1)!=0" + kind_cond)]
         aliases = [(r["line_name"], r["contact"]) for r in
                    c.execute("SELECT line_name, contact FROM contact_aliases")]
+    code_set = set(codes)
     for ln, ct in aliases:
-        if _norm_name(ln) == nb:
+        if _norm_name(ln) == nb and (not auto or ct in code_set):
             hit(ct, "別名が一致", True)
     for code in codes:
         keys = [(code, "表示名")]
@@ -127,7 +140,8 @@ def find_candidates(display_name: str, limit: int = 3) -> list:
             if not nk:
                 continue
             if nk == nb:
-                hit(code, f"{lab}が一致", True)
+                # auto時は呼び名/本名一致をstrong扱いしない(汎用呼び名の誤爆防止)
+                hit(code, f"{lab}が一致", lab == "表示名" or not auto)
                 break
             if len(nb) >= 3 and len(nk) >= 3 and (nb in nk or nk in nb):
                 hit(code, f"{lab}に近い", False)
@@ -161,7 +175,7 @@ def resolve_incoming(display_name: str) -> dict:
     # (グループ着信の別表記で毎回未登録に落ちる問題)。次回からは別名で即一致。
     # 部分一致(弱)は自動にせず、仕分けUIの候補提案に回す(誤紐付け防止)
     try:
-        strong = [x for x in find_candidates(name) if x["strong"]]
+        strong = [x for x in find_candidates(name, auto=True) if x["strong"]]
         if len(strong) == 1:
             add_alias(name, strong[0]["code"])
             print(f"[resolve] 自動紐付け: {name!r} → {strong[0]['code']!r} ({strong[0]['why']})",
@@ -418,7 +432,10 @@ def stale_by_content(v: str, days: int = 70) -> bool:
     未来の日付(これからの予定)や月日が無い値はFalse(新しい扱い)。"""
     global _MD_PAT
     if _MD_PAT is None:
-        _MD_PAT = _re_g.compile(r"(\d{1,2})\s*/\s*(\d{1,2})|(\d{1,2})月")
+        # v150: 「5/6人」「3/4くらい」「2026/08」「B1/2F」等の非日付スラッシュへの誤爆を防止
+        _MD_PAT = _re_g.compile(
+            r"(?<![\d/])(\d{1,2})\s*/\s*(\d{1,2})(?![\d/])(?!\s*(?:人|名|件|個|割|くらい|ぐらい|F|階))"
+            r"|(?<!\d)(\d{1,2})月(?!曜)")
     import datetime
     hits = _MD_PAT.findall(v or "")
     if not hits:
@@ -586,6 +603,9 @@ def mark_unlinked(code: str):
 def link_contact(code: str):
     ensure()
     with db.conn() as c:
+        # v151: 行が無い相手にUPDATEだけして「登録成功」に見える無言失敗の修正
+        # (成功トーストが出るのにDBに何も書かれず、翌日また未登録に出る)
+        c.execute("INSERT OR IGNORE INTO contacts(code, rank) VALUES(?, 'B')", (code,))
         c.execute("UPDATE contacts SET linked=1 WHERE code=?", (code,))
 
 def is_linked(code: str) -> bool:
@@ -623,13 +643,19 @@ def delete_contact_full(code: str) -> dict:
         ids = [r["id"] for r in c.execute("SELECT id FROM messages WHERE contact=?", (code,))]
         for mid in ids:
             c.execute("DELETE FROM drafts WHERE message_id=?", (mid,))
+        # v150: 席は他の同席者の実績でもあるため、席ごと消さない。
+        # この人の同席行だけ消し、主賓だった席は主賓欄を空にして残す(孤児行も残さない)
+        try:
+            c.execute("UPDATE sittings SET main_contact='' WHERE main_contact=?", (code,))
+        except Exception:
+            pass
         for t, col in [("messages", "contact"), ("sent_replies", "contact"),
                        ("events", "contact"), ("contact_attrs", "contact"),
                        ("contact_aliases", "contact"), ("pending_links", "line_name"),
                        ("linebot_facts", "contact"), ("linebot_talks", "contact"),
                        ("linebot_persona", "contact"), ("news_items", "contact"),
                        ("enrich_suggestions", "contact"), ("style_profile", "contact"),
-                       ("sitting_members", "contact"), ("sittings", "main_contact")]:
+                       ("sitting_members", "contact")]:
             try:
                 cur = c.execute(f"DELETE FROM {t} WHERE {col}=?", (code,))
                 if cur.rowcount:
@@ -660,9 +686,14 @@ def rename_contact(old: str, new: str) -> dict:
         return {"ok": False, "error": "その名前は既に使われています"}
     with db.conn() as c:
         c.execute("UPDATE contacts SET code=? WHERE code=?", (new, old))
+        # v150: linebot_talks/facts/persona/news/enrichが漏れており、改名するとトーク原文・
+        # ペルソナ・確認待ち・ネット提案が無言で切り離される実バグを修正
         for tbl, col in (("messages", "contact"), ("contact_aliases", "contact"),
                           ("contact_attrs", "contact"), ("style_profile", "contact"),
-                          ("sent_replies", "contact"), ("events", "contact")):
+                          ("sent_replies", "contact"), ("events", "contact"),
+                          ("linebot_facts", "contact"), ("linebot_talks", "contact"),
+                          ("linebot_persona", "contact"), ("news_items", "contact"),
+                          ("enrich_suggestions", "contact")):
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
@@ -670,6 +701,12 @@ def rename_contact(old: str, new: str) -> dict:
         for tbl, col in (("sittings", "main_contact"), ("sitting_members", "contact")):
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
+            except Exception:
+                pass
+        for pref in ("lasttalk_", "pstat_"):
+            try:
+                c.execute("UPDATE OR IGNORE linebot_meta SET k=? WHERE k=?",
+                          (pref + new, pref + old))
             except Exception:
                 pass
     # 旧名がLINE表示名だった場合に備えて紐付けを残す(重複はON CONFLICTで吸収)
@@ -849,11 +886,15 @@ def reclassify(from_kind: str, to_kind: str) -> dict:
 
 # ---------- 記念日(命日は扱わない) ----------
 def _md(s: str):
-    s = (s or "").strip()
+    """v151: UI見本・AI抽出は「8月19日」形式なのにMM-DDしか受けず、誕生日機能が
+    全滅していた実バグの修正。8月19日/8/19/08-19/8.19 すべて受ける。"""
+    import unicodedata as _u
+    s = _u.normalize("NFKC", (s or "")).strip()
     if not s:
         return None
     import re as _re
-    m = _re.match(r"^(\d{1,2})[-/](\d{1,2})$", s)
+    m = (_re.search(r"(\d{1,2})\s*月\s*(\d{1,2})\s*日?", s)
+         or _re.match(r"^(\d{1,2})[-/.](\d{1,2})$", s))
     if not m:
         return None
     mm, dd = int(m.group(1)), int(m.group(2))

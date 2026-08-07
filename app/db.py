@@ -95,7 +95,9 @@ def upsert_contact(code: str, rank: str = "B", cycle_days=None, note: str = "",
             "INSERT INTO contacts(code,rank,cycle_days,note,tags,birthday) "
             "VALUES(?,?,?,?,?,?) "
             "ON CONFLICT(code) DO UPDATE SET "
-            "  rank=excluded.rank, "
+            # v150: 既存カードのランクを既定値Bで潰さない(同名の新規仕分けでS客がBに落ちる実害)。
+            # ランク変更は専用経路(set_rank/カード編集)が担う
+            "  rank=CASE WHEN contacts.rank IS NULL OR contacts.rank='' THEN excluded.rank ELSE contacts.rank END, "
             "  note=CASE WHEN excluded.note IS NOT NULL AND excluded.note!='' THEN excluded.note ELSE contacts.note END, "
             "  tags=CASE WHEN excluded.tags IS NOT NULL AND excluded.tags!='' THEN excluded.tags ELSE contacts.tags END, "
             "  birthday=CASE WHEN excluded.birthday IS NOT NULL AND excluded.birthday!='' THEN excluded.birthday ELSE contacts.birthday END, "

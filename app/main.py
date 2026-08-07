@@ -211,12 +211,14 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v149"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v152"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
 def _healthz():
-    return {"ok": True, "ver": APP_VER}
+    # v152: CORSヘッダ付与(モニターダッシュボード(ローカルHTML)から版バッジを読むため)
+    return JSONResponse({"ok": True, "ver": APP_VER},
+                        headers={"Access-Control-Allow-Origin": "*"})
 
 
 @app.get("/healthz/reader")
@@ -421,23 +423,28 @@ def usage_stats(token: str = ""):
         }
         avg_edit = c.execute("SELECT AVG(edit_ratio) FROM sent_replies WHERE ts>=?", (t14,)).fetchone()[0]
         # 当日30分毎×属性別(JST・ダッシュボード用 v99)
+        # v152: 深夜0時で窓が切れて夜の本番(20時〜翌2時)が見えない問題 → 過去12時間の
+        # ローリング窓(halfhours_12h・日付またぎOK)を追加。today_halfhoursは旧ダッシュボード互換で残す
         _jst = datetime.timezone(datetime.timedelta(hours=9))
         _day0 = datetime.datetime.now(_jst).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+        _now = time.time()
+        _h0 = (int(_now) // 1800) * 1800 - 23 * 1800   # 24枠(=12時間)の先頭。末尾枠=現在の30分
         _kindmap = {"customer": "customer", "staff": "staff", "peer": "peer"}
         _slots = [{"received": {}, "sent": {}} for _ in range(48)]
-        for _r in c.execute(
-                "SELECT m.ts, k.kind FROM messages m LEFT JOIN contacts k ON k.code=m.contact "
-                "WHERE m.ts>=?", (_day0,)):
-            _i = min(47, max(0, int((_r[0] - _day0) // 1800)))
-            _k = _kindmap.get(_r[1] or "customer", "other")
-            _slots[_i]["received"][_k] = _slots[_i]["received"].get(_k, 0) + 1
-        for _r in c.execute(
-                "SELECT s.ts, k.kind FROM sent_replies s LEFT JOIN contacts k ON k.code=s.contact "
-                "WHERE s.ts>=?", (_day0,)):
-            _i = min(47, max(0, int((_r[0] - _day0) // 1800)))
-            _k = _kindmap.get(_r[1] or "customer", "other")
-            _slots[_i]["sent"][_k] = _slots[_i]["sent"].get(_k, 0) + 1
+        _slots12 = [{"received": {}, "sent": {}} for _ in range(24)]
+        _lo = min(_day0, _h0)
+        for _key, _sql in (("received", "SELECT m.ts, k.kind FROM messages m LEFT JOIN contacts k ON k.code=m.contact WHERE m.ts>=?"),
+                           ("sent", "SELECT s.ts, k.kind FROM sent_replies s LEFT JOIN contacts k ON k.code=s.contact WHERE s.ts>=?")):
+            for _r in c.execute(_sql, (_lo,)):
+                _k = _kindmap.get(_r[1] or "customer", "other")
+                if _r[0] >= _day0:
+                    _i = min(47, max(0, int((_r[0] - _day0) // 1800)))
+                    _slots[_i][_key][_k] = _slots[_i][_key].get(_k, 0) + 1
+                _j = int((_r[0] - _h0) // 1800)
+                if 0 <= _j <= 23:
+                    _slots12[_j][_key][_k] = _slots12[_j][_key].get(_k, 0) + 1
         today_halfhours = {"start_ts": _day0, "slots": _slots}
+        halfhours_12h = {"start_ts": _h0, "slots": _slots12}
         # 機能の利用状況(14日・未使用機能の検出)
         c.execute("CREATE TABLE IF NOT EXISTS feature_events("
                   "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, ts REAL NOT NULL)")
@@ -452,6 +459,7 @@ def usage_stats(token: str = ""):
         "latency": latency, "by_rank": by_rank, "by_category": by_cat,
         "modes": modes, "avg_edit_ratio": round(avg_edit, 1) if avg_edit is not None else None,
         "features": features, "today_halfhours": today_halfhours,
+        "halfhours_12h": halfhours_12h,
         "reader": _reader_status_safe(),
     }, headers={"Access-Control-Allow-Origin": "*"})
 

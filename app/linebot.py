@@ -231,10 +231,16 @@ def txt(text, quick=None):
 
 
 def _quick(pairs):
-    return {"items": [
-        {"type": "action", "action": {"type": "postback", "label": l[:20], "data": d[:300],
-                                      "displayText": l[:20]}}
-        for (l, d) in pairs[:13]]}
+    # v150: 300字超のdataはカットすると%エスケープ途中で切れて相手名が壊れるため、
+    # 黙って壊さずスキップしてログに出す(LINEのdata上限は300字)
+    items = []
+    for (l, d) in pairs[:13]:
+        if len(d) > 300:
+            print(f"[linebot quick] data300字超のためボタンをスキップ: {l[:20]!r}", flush=True)
+            continue
+        items.append({"type": "action", "action": {"type": "postback", "label": l[:20],
+                                                   "data": d, "displayText": l[:20]}})
+    return {"items": items}
 
 
 def flexmsg(title, body="", accent=GOLD, footer="", quick=None):
@@ -673,7 +679,7 @@ def handle_file(uid, token, message):
                                     ensure_ascii=False) if not contact else "",
                          time.time()))
         jid = cur.lastrowid
-    _meta_set(f"liffimp_{jid}", text[:200000])
+    _meta_set(f"liffimp_{jid}", text[-200000:])   # v150: 末尾=最新を保持
     db.track("linebot_txt_import")
     liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
     if contact and not is_existing:
@@ -747,8 +753,10 @@ def extract_facts(text, partner, self_name):
     """トーク履歴から顧客カード向けの事実をLLM抽出。長文は分割して全文を読む(v83)。
     戻り値: (facts, err)。err=Noneなら成功(0件もあり得る)。"""
     if not config.ANTHROPIC_API_KEY:
-        return [], "APIキー未設定"
-    chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)][:4]  # 最大約17万字
+        return [], "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
+    # v150: 長いトークは「末尾(=最新)優先」で読む。先頭だけ読むと直近の話題・進行中の話の
+    # 根拠(最新メッセージ)が捨てられ、何年も前の話が抽出される実害があった
+    chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)][-4:]  # 最新側の約17万字
     allf, first_err = [], None
     for idx, ch in enumerate(chunks):
         f, e = _extract_chunk(ch, partner, self_name, idx + 1, len(chunks))
@@ -859,7 +867,7 @@ def web_research(contact):
     """🌐 公開情報の人物調査(AnthropicのWeb検索ツールをサーバー側で使用)。
     戻り値: (facts, err)。結果は通常の確認フローに載る(勝手にカードへは書かない)。"""
     if not config.ANTHROPIC_API_KEY:
-        return [], "APIキー未設定"
+        return [], "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
     from . import crm
     attrs = crm.get_attrs(contact)
     hints = "、".join(f"{k}: {v}" for k, v in list(attrs.items())[:10])
@@ -1104,7 +1112,7 @@ def analyze_persona(contact, sample=50000):
     """生トーク全文＋確認済みファクトから、運用指針としてのペルソナを生成。
     戻り値: (persona_dict, err)。sample=読み込む最大文字数(時間切れ時の縮小リトライ用)。"""
     if not config.ANTHROPIC_API_KEY:
-        return None, "APIキー未設定"
+        return None, "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
     from . import crm
     with db.conn() as c:
         r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
@@ -1811,16 +1819,22 @@ def save_split(contact, facts):
     with db.conn() as c:
         existing = set((r["k"], r["v"]) for r in c.execute(
             "SELECT k, v FROM linebot_facts WHERE contact=?", (contact,)))
-    applied = []
+    applied, failed = [], []
     for f in auto:
         if (f["k"], f["v"]) in existing:
             continue
         try:
             apply_fact(contact, f["k"], f["v"])
         except Exception as e:
+            # v150: 反映に失敗したものをappliedと記録しない(再抽出不能になる実害)。
+            # error状態で残せば_prefilter_factsの既知判定に埋もれず後で拾える
             print(f"[linebot auto-apply] {e}", flush=True)
+            failed.append(f)
+            continue
         applied.append(f)
     save_facts(contact, applied, status="applied")
+    if failed:
+        save_facts(contact, failed, status="error")
     with db.conn() as c:
         ncrit = c.execute("SELECT COUNT(*) FROM linebot_facts WHERE contact=? AND status='pending'",
                           (contact,)).fetchone()[0]
@@ -1851,6 +1865,32 @@ def _ensure_name_questions(contact, facts):
     order = {"呼び名": 0, "本名": 1, "誕生日": 2, _REL_KEY: 3}
     facts = sorted(facts, key=lambda f: order.get(f["k"], 9))
     return facts
+
+
+def visible_pending():
+    """v150: ✅確認フローに出す項目=4大項目(呼び名/本名/誕生日/種別立場) + 🌐ネット由来のみ。
+    v147ルール以前の旧pending(好きな食べ物等)が○✕フローに露出して件数も水増しされる問題の修正。
+    旧データは初回に自動でカード反映(applied)へ落とす。"""
+    mig = _meta_get("mig_v150_pending")
+    if not mig:
+        try:
+            moved = 0
+            for f in pending_facts():
+                if _is_critical(f["k"]) or f["k"].startswith("🌐"):
+                    continue
+                try:
+                    apply_fact(f["contact"], f["k"], f["v"])
+                except Exception as e:
+                    print(f"[pending mig apply] {e}", flush=True)
+                _set_fact_status(f["id"], "applied")
+                moved += 1
+            if moved:
+                print(f"[pending mig] 旧pending {moved}件を自動反映に移行", flush=True)
+        except Exception as e:
+            print(f"[pending mig] {e}", flush=True)
+        _meta_set("mig_v150_pending", "1")
+    return [f for f in pending_facts()
+            if _is_critical(f["k"]) or f["k"].startswith("🌐")]
 
 
 def pending_facts():
@@ -1893,7 +1933,7 @@ def apply_fact(contact, k, v):
             c.execute("UPDATE contacts SET birthday=? WHERE code=?", (v, contact))
     elif k == "呼び名":
         try:
-            crm.add_alias(contact, v)
+            crm.add_alias(v, contact)   # v150: 引数逆の実バグ修正(呼び名→カードcode)
         except Exception:
             pass
         crm.add_def("呼び名")
@@ -1906,7 +1946,7 @@ def apply_fact(contact, k, v):
 
 def fact_card(token, prefix=None):
     """次のpending項目を1枚カードで出す。無ければ完了。"""
-    pend = pending_facts()
+    pend = visible_pending()   # v150: 4項目+🌐のみ
     head = prefix or []
     if not pend:
         # 直近で自動反映された相手がいれば「見直す」に誘導
@@ -2873,6 +2913,10 @@ _CHAT_KEEP_M = ("fact", "review", "home", "unbind2", "card", "style", "persona",
 def route_postback(uid, data, token):
     p = dict(kv.split("=", 1) for kv in (data or "").split("&") if "=" in kv)
     m = p.get("m")
+    # v150: ✕違う→入力待ち(factfix)の解除はLIFFリダイレクトより先に行う。
+    # 後ろにあると、リダイレクトで抜けた後も入力待ちが残り、次の雑テキストを修正値として誤食する
+    if get_state(uid)["flow"] == "factfix" and p.get("f") != "fact":
+        set_state(uid, "", {})
     # v104: LIFF設定済みなら、旧チャットUIのタイル/ボタンはLIFF誘導カード1枚に置き換え
     if os.environ.get("CHOUBA_LIFF_ID", ""):
         _redir = {"rep": "#inbox", "crm": "#list", "news": "#news", "dash": "#home",
@@ -2882,10 +2926,6 @@ def route_postback(uid, data, token):
             card = _liff_redirect_card(_redir.get(m, "#home"))
             if card:
                 return reply(token, card)
-    # ✕違う→入力待ち(factfix)のまま別画面へ移動したら、入力待ちを解除する
-    # (次に打った無関係な文字を修正値として誤って食わないため)
-    if get_state(uid)["flow"] == "factfix" and p.get("f") != "fact":
-        set_state(uid, "", {})
     if m == "home":
         st = get_state(uid)
         set_state(uid, "", st["data"])   # カーソルは保持(📨で「続きから」を出せる)
@@ -2928,7 +2968,7 @@ def route_postback(uid, data, token):
         set_persona_enabled(not persona_enabled())
         return reply(token, dash_msgs())
     if m == "fact":
-        n = len(pending_facts())
+        n = len(visible_pending())   # v150: チャット側も4項目+🌐のみ
         if n:
             return fact_card(token, prefix=[cover("✅ 確認",
                                                   f"抽出した{n}件を確認します。全部タップ、1件5秒")])
@@ -3149,11 +3189,22 @@ def _handle(ev, etype, token, uid):
         return
     if not owner:
         if etype == "message" and (ev.get("message") or {}).get("type") == "text":
-            t = ((ev.get("message") or {}).get("text") or "").strip()
-            if config.PASSWORD and hmac.compare_digest(t.encode("utf-8"), config.PASSWORD.encode("utf-8")):
+            raw = ((ev.get("message") or {}).get("text") or "")
+            # v151: 全角英数・前後や途中の空白/改行を吸収してから照合(コピペの揺れで
+            # 3回失敗する実害への対処。IT音痴は「見た目同じなのに違う」を解決できない)
+            t = _re.sub(r"\s+", "", __import__("unicodedata").normalize("NFKC", raw)).strip()
+            pw = _re.sub(r"\s+", "", (config.PASSWORD or ""))
+            if pw and hmac.compare_digest(t.encode("utf-8"), pw.encode("utf-8")):
                 _meta_set("owner", uid)
                 reply(token, [flexmsg("🔑 ひも付けが完了しました", "この帳場くんはあなた専用になりました。",
                                       accent=GREEN)] + home_msgs())
+                return
+            # v151: 惜しい失敗(半分以上一致)には「違っていた」ことを明示する。
+            # 無言で「合言葉をどうぞ」に戻ると、本人には送れていないように見える
+            if pw and t and _difflib.SequenceMatcher(None, t, pw).ratio() > 0.5:
+                reply(token, [flexmsg("🙇 合言葉が少し違っていました",
+                                      "文字を打ち直さず、届いた合言葉を長押し→コピー→"
+                                      "そのまま貼り付けて送るのが確実です。")])
                 return
             if not config.PASSWORD:
                 _meta_set("owner", uid)   # 開発時のみ(パスワード未設定)
@@ -3236,7 +3287,30 @@ MENU_COLS = 4
 
 @router.get("/line/reset")
 @router.post("/line/reset")
-def line_reset(key: str = "", confirm: str = "", full: str = ""):
+def line_reset(request: Request = None, key: str = "", confirm: str = "", full: str = ""):
+    # v150: GETは実行しない(LINEのリンクプレビュー等のクロールで全消去が発火し得るため)。
+    # ブラウザで開くと「実行ボタン」ページが出て、そのボタン(POST)で実行される
+    if request is not None and request.method == "GET" and confirm == "RESET" \
+            and config.INGEST_TOKEN and key == config.INGEST_TOKEN:
+        return Response(content=_danger_confirm_page(
+            "データ消去", "顧客・学習・受信ログを消します(取り消せません)。"
+            + ("接続・ひも付けも消えます(full)。" if str(full) in ("1", "true", "yes") else
+               "リーダー接続とひも付けは保持されます。"),
+            f"/line/reset?key={key}&confirm=RESET" + ("&full=1" if str(full) in ("1", "true", "yes") else "")),
+            media_type="text/html")
+    return _line_reset_impl(key, confirm, full)
+
+
+def _danger_confirm_page(title, desc, action_url):
+    return f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<body style="font-family:sans-serif;max-width:420px;margin:40px auto;padding:0 16px">
+<h2>⚠️ {title}</h2><p>{desc}</p>
+<form method="POST" action="{action_url}">
+<button style="background:#C0402C;color:#fff;border:none;border-radius:10px;padding:14px 22px;font-size:16px">実行する(取り消し不可)</button>
+</form><p style="color:#888;font-size:13px">このページはまだ何も実行していません。ボタンを押すと実行されます。</p></body>"""
+
+
+def _line_reset_impl(key: str = "", confirm: str = "", full: str = ""):
     """【テスト用】データ消去。/line/reset?key=<INGEST_TOKEN>&confirm=RESET
     v117: 既定では「顧客・学習・お席・抽出・受信ログ」を消し、**リーダー接続とひも付けは保持**
     (リセットのたびに再接続・再ひも付けが要る問題を解消)。
@@ -3282,7 +3356,18 @@ def line_reset(key: str = "", confirm: str = "", full: str = ""):
 
 @router.get("/line/unbind")
 @router.post("/line/unbind")
-def line_unbind(key: str = "", confirm: str = ""):
+def line_unbind(request: Request = None, key: str = "", confirm: str = ""):
+    # v150: 解除の実行もGET直実行を避ける(診断表示はGETのまま)
+    if request is not None and request.method == "GET" and confirm == "UNBIND" \
+            and config.INGEST_TOKEN and key == config.INGEST_TOKEN:
+        return Response(content=_danger_confirm_page(
+            "ひも付け解除", "利用者のひも付けだけを外します(データ・リーダー接続は無傷)。"
+            "外した後、本人が合言葉を送り直すと新しくひも付きます。",
+            f"/line/unbind?key={key}&confirm=UNBIND"), media_type="text/html")
+    return _line_unbind_impl(key, confirm)
+
+
+def _line_unbind_impl(key: str = "", confirm: str = ""):
     """v143: ひも付け(owner)だけを外す救済口。データ・リーダー接続・学習は一切消えない。
     使いどころ: 機種変更/チャネル作り直しでuserIdが変わった・別の人が先にひも付けた等で、
     本人が「このアカウントは利用者専用です」と弾かれ続けるデッドロックの解消。

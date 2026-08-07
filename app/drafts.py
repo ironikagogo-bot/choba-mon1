@@ -364,8 +364,9 @@ def _generate_inner(message_id: int) -> list[dict]:
         drafts = _template_drafts(contact, msg["text"], msg["reason"])
     except requests.HTTPError as e:
         _code = getattr(getattr(e, "response", None), "status_code", "?")
-        _LAST_ERR[message_id] = (f"AIエラー({_code})。" +
-                                 ("APIキーを確認(Render env)" if _code in (401, 403) else "定型文を表示中"))
+        _LAST_ERR[message_id] = ("自動の下書きが一時お休み中。定型文を表示しています"
+                                 + ("(設定の問題の可能性。担当さんに連絡を)" if _code in (401, 403) else " → 🔁で作り直せます"))
+        print(f"[drafts] AI HTTP {_code}", flush=True)   # v150: 技術詳細はログのみ
         drafts = _template_drafts(contact, msg["text"], msg["reason"])
     except Exception as e:
         _LAST_ERR[message_id] = f"生成に失敗({type(e).__name__})。定型文を表示中"
