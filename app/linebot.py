@@ -3277,6 +3277,39 @@ def line_reset(key: str = "", confirm: str = "", full: str = ""):
     return {"ok": True, "wiped": wiped, "kept": kept, "full": is_full, "next": nxt}
 
 
+@router.get("/line/unbind")
+@router.post("/line/unbind")
+def line_unbind(key: str = "", confirm: str = ""):
+    """v143: ひも付け(owner)だけを外す救済口。データ・リーダー接続・学習は一切消えない。
+    使いどころ: 機種変更/チャネル作り直しでuserIdが変わった・別の人が先にひも付けた等で、
+    本人が「このアカウントは利用者専用です」と弾かれ続けるデッドロックの解消。
+    (チャットの「ひも付け解除」は現ownerしか実行できないため、事故時は誰も直せない)
+    /line/unbind?key=<INGEST_TOKEN> で現状診断 → &confirm=UNBIND で解除。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        return Response(status_code=403)
+    ensure()
+    cur = _meta_get("owner") or ""
+    with db.conn() as c:
+        try:
+            n_readers = c.execute("SELECT COUNT(*) FROM reader_tokens").fetchone()[0]
+        except Exception:
+            n_readers = 0
+    if confirm != "UNBIND":
+        return {"ok": False,
+                "owner_bound": bool(cur),
+                "owner_tail": ("…" + cur[-6:]) if cur else "(ひも付けなし)",
+                "readers": n_readers,
+                "password_set": bool(config.PASSWORD),
+                "how": "URLの末尾に &confirm=UNBIND を付けて開くと、ひも付けだけ外れます(データは消えません)。",
+                "next": "外した後、本人がこのbotのトークに合言葉(環境変数CHOUBA_PASSWORDと同じ文字列)を送ると、"
+                        "「🔑 ひも付けが完了しました」が出て本人専用になります。"}
+    with db.conn() as c:
+        c.execute("DELETE FROM linebot_meta WHERE k='owner'")
+    return {"ok": True, "unbound": True, "prev_owner_tail": ("…" + cur[-6:]) if cur else "",
+            "next": "本人のLINEトークに合言葉(玄関パスワード)を送ってもらってください。"
+                    "「🔑 ひも付けが完了しました」が出ればLIFFも開けるようになります。"}
+
+
 @router.get("/line/setup")
 @router.post("/line/setup")
 def line_setup(key: str = ""):
