@@ -66,27 +66,80 @@ def _lt_cache_set(k, val):
         pass
 
 
-def weather_line():
-    """今日の東京の天気(Open-Meteo実測・3時間キャッシュ)。失敗=空文字(天気に触れないだけ)。"""
-    c = _lt_cache_get("wx_cache", 3 * 3600)
+def weather_insights(lat=35.670, lon=139.765, label="銀座周辺"):
+    """v121: 時間帯別予報(24h)から「会話に使える読み」を導く。
+    生の気温・天気でなく、夜の雨/猛暑/冷え/過ごしやすさ等の示唆に変換して返す。
+    失敗=None(天気に触れないだけ)。3時間キャッシュ。"""
+    key = f"wxi_{round(lat, 2)}_{round(lon, 2)}"
+    c = _lt_cache_get(key, 3 * 3600)
     if c is not None:
-        return c
-    line = ""
+        try:
+            return json.loads(c) if c else None
+        except Exception:
+            return None
+    out = None
     try:
         r = requests.get("https://api.open-meteo.com/v1/forecast",
-                         params={"latitude": 35.68, "longitude": 139.77,
-                                 "daily": "weather_code,temperature_2m_max,temperature_2m_min",
-                                 "timezone": "Asia/Tokyo", "forecast_days": 1},
+                         params={"latitude": lat, "longitude": lon,
+                                 "hourly": "temperature_2m,apparent_temperature,"
+                                           "precipitation_probability,weather_code",
+                                 "timezone": "Asia/Tokyo", "forecast_hours": 24},
                          timeout=8)
-        d = r.json()["daily"]
-        lab = _WX_CODE.get(int(d["weather_code"][0]), "")
-        tmax = round(d["temperature_2m_max"][0])
-        if lab:
-            line = f"今日の東京は{lab}・最高{tmax}°C"
+        h = r.json()["hourly"]
+        times = h["time"]
+        temps = [x for x in h["temperature_2m"] if x is not None]
+        apps = [x for x in h["apparent_temperature"] if x is not None]
+        eve_idx = [i for i, t in enumerate(times) if 17 <= int(t[11:13]) <= 23]
+        eve_rain = max(((h["precipitation_probability"][i] or 0) for i in eve_idx), default=0)
+        eve_thunder = any((h["weather_code"][i] or 0) >= 95 for i in eve_idx)
+        tmax = max(temps) if temps else None
+        amax = max(apps) if apps else None
+        ins = []
+        if amax is not None and amax >= 35:
+            ins.append("猛暑・体感35度超 → 体調・水分の気遣いの型")
+        elif tmax is not None and tmax >= 32:
+            ins.append("かなり暑い → 暑さの実感の型")
+        if tmax is not None and tmax <= 8:
+            ins.append("かなり冷える → あったかくしてねの型")
+        if eve_thunder:
+            ins.append("夕方〜夜に雷雨予報 → 帰り・お出かけの心配の型")
+        elif eve_rain >= 50:
+            ins.append("夕方〜夜に雨の可能性大 → 傘・足元の型")
+        elif eve_rain >= 30:
+            ins.append("夜ににわか雨あるかも → 軽く傘の型")
+        if not ins and tmax is not None and 18 <= tmax <= 27 and eve_rain < 30:
+            ins.append("過ごしやすい陽気 → 心地よさの一言の型")
+        out = {"label": label, "insights": ins} if ins else None
     except Exception as e:
         print(f"[weather] {e}", flush=True)
-    _lt_cache_set("wx_cache", line)
-    return line
+    _lt_cache_set(key, json.dumps(out, ensure_ascii=False) if out else "")
+    return out
+
+
+def _geocode_area(area):
+    """v121: 地名→座標(Open-Meteoジオコーディング・30日キャッシュ)。失敗=None。"""
+    area = (area or "").strip()[:20]
+    if not area:
+        return None
+    key = "geo_" + area
+    c = _lt_cache_get(key, 30 * 86400)
+    if c is not None:
+        try:
+            return json.loads(c) if c else None
+        except Exception:
+            return None
+    out = None
+    try:
+        r = requests.get("https://geocoding-api.open-meteo.com/v1/search",
+                         params={"name": area, "language": "ja", "count": 1}, timeout=8)
+        res = (r.json().get("results") or [])
+        if res:
+            out = {"lat": res[0]["latitude"], "lon": res[0]["longitude"],
+                   "name": res[0].get("name") or area}
+    except Exception as e:
+        print(f"[geocode] {e}", flush=True)
+    _lt_cache_set(key, json.dumps(out, ensure_ascii=False) if out else "")
+    return out
 
 
 def headlines_today(n=6):
@@ -109,21 +162,40 @@ def headlines_today(n=6):
     return out
 
 
-def light_topic_block():
-    """配信プロンプト用「軽い話題の材料」。事実だけを渡し、使い方を縛る。"""
+def light_topic_block(code=""):
+    """v121: 軽い話題の材料。天気は「予報の読み上げ」でなく実感・気遣いの型に変換させる。
+    相手のカードに住まい・エリアがあればその地域の読みも添える。"""
     mats = []
-    wx = weather_line()
-    if wx:
-        mats.append(f"天気(実測): {wx}")
+    wx = weather_insights()
+    if wx and wx.get("insights"):
+        mats.append(f"天気の読み({wx['label']}・実測から): " + " / ".join(wx["insights"]))
+    # 相手の地域(カードの「住まい・エリア」)があればその地域の読みも
+    if code:
+        try:
+            from . import crm as _crm
+            area = ((_crm.get_attrs(code) or {}).get("住まい・エリア") or "").strip()
+            if area:
+                g = _geocode_area(area)
+                if g:
+                    wx2 = weather_insights(g["lat"], g["lon"], label=area)
+                    if wx2 and wx2.get("insights") and (not wx or wx2["insights"] != wx["insights"]):
+                        mats.append(f"相手の住まい({area})の読み: " + " / ".join(wx2["insights"]))
+        except Exception as e:
+            print(f"[area wx] {e}", flush=True)
     hl = headlines_today()
     if hl:
         mats.append("今日の実在ニュース見出し: " + " / ".join(hl))
     if not mats:
         return ""
     return ("【軽い話題の材料(ここにある事実のみ。想像で補わない)】\n" + "\n".join(mats) +
-            "\n使い方: 入り口か結びに1つだけ、さらっと触れる程度。見出しは明るい話題のみ"
-            "(事件・事故・政治・訃報・不祥事は使わない)。記事の中身を推測して語らない(見出しの範囲だけ)。"
-            "合うものが無ければ天気か季節だけでよい。")
+            "\n【天気の使い方・厳守】天気予報の読み上げ(「今日の東京は晴れ、最高34度」等)は禁止。"
+            "「〜の型」に沿って実感と気遣いの一言に変換する。例: 猛暑→「今日もすごい暑さだね、"
+            "ちゃんと水分とってる？」/ 夜雨→「夜は雨みたいだから、傘忘れずにね」/ "
+            "過ごしやすい→「今日は久しぶりに気持ちいい陽気だね」。"
+            "気温・降水確率などの数字は本文に書かない(会話で数字を言う人はいない)。"
+            "【見出しの使い方】明るい話題のみ(事件・事故・政治・訃報・不祥事は禁止)。"
+            "記事の中身を推測で補わない。合うものが無ければ天気か季節だけでよい。"
+            "どちらも入り口か結びに1つだけ、さらっと。")
 
 
 def _days_since(ts, now):
@@ -358,7 +430,7 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
                          "1通につき最大1つ。基本は0でよい。2つ以上入れる/会話を細かく引用する/"
                          "相手をよく研究している感を出す、のは重くて不気味な印象になるので禁止。"
                          "既定の入り口は天気・季節などの軽い話題＋本題＋短い気遣い。それで十分良い営業文になる。")
-        _lt = light_topic_block()
+        _lt = light_topic_block(v["code"])
         if _lt:
             ctx_lines.append(_lt)
     # v101: 顧客カードを配信生成にも実接続

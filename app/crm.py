@@ -60,6 +60,11 @@ def ensure():
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {ddl}")
             except Exception:
                 pass
+        # v121: 属性の記録日時(昔のアポを今の予定と誤用しないための材料)
+        try:
+            c.execute("ALTER TABLE contact_attrs ADD COLUMN updated_ts REAL")
+        except Exception:
+            pass
     _READY = True
 
 
@@ -243,10 +248,23 @@ def set_attr(contact: str, key: str, value: str):
     ensure()
     with db.conn() as c:
         c.execute(
-            "INSERT INTO contact_attrs(contact,akey,value) VALUES(?,?,?) "
-            "ON CONFLICT(contact,akey) DO UPDATE SET value=excluded.value",
-            (contact, (key or "").strip(), value),
+            "INSERT INTO contact_attrs(contact,akey,value,updated_ts) VALUES(?,?,?,?) "
+            "ON CONFLICT(contact,akey) DO UPDATE SET value=excluded.value, "
+            "updated_ts=excluded.updated_ts",
+            (contact, (key or "").strip(), value, time.time()),
         )
+
+
+def get_attr_dates(contact: str) -> dict:
+    """v121: 属性ごとの記録日時。無ければ含まない(=取り込み時期不明の古いデータ)。"""
+    ensure()
+    out = {}
+    with db.conn() as c:
+        for r in c.execute("SELECT akey, updated_ts FROM contact_attrs WHERE contact=?",
+                           (contact,)):
+            if r["updated_ts"]:
+                out[r["akey"]] = r["updated_ts"]
+    return out
 
 
 def get_attrs(contact: str) -> dict:
@@ -267,19 +285,38 @@ def card_prompt_block(code: str) -> str:
     - 担当が自分以外なら「出しゃばらない」配慮を厳守指示"""
     ensure()
     a = get_attrs(code) or {}
+    dates = get_attr_dates(code)
+    import re as _re2
+    _PERISH = _re2.compile(r"約束|予定|アポ|行こう|行く話|誘われ|今度|来週|来月|近々")
+
+    def _dated(k, label):
+        """時限性のある内容には記録日を付ける(いつの話か をAIに判断させる材料)。"""
+        v = a[k]
+        if k == "進行中の話" or _PERISH.search(v):
+            ts = dates.get(k)
+            when = time.strftime("%Y/%m/%d", time.localtime(ts)) if ts else "記録日不明=古い可能性"
+            return f"- {label}: {v}（記録: {when}）"
+        return f"- {label}: {v}"
+
     lines = []
     if a.get("呼び名"):
         lines.append(f"- 呼び名(この相手をこう呼んでいる): {a['呼び名']}")
     if a.get("進行中の話"):
-        lines.append(f"- 進行中の話(続きに自然に触れると効く): {a['進行中の話']}")
+        lines.append(_dated("進行中の話", "進行中の話"))
     for k in ("関係性メモ", "記念日", "家族", "好きなお酒", "好きな食べ物",
               "趣味・関心", "健康", "仕事・会社", "お気に入りキャスト"):
         if a.get(k):
-            lines.append(f"- {k}: {a[k]}")
+            lines.append(_dated(k, k))
     block = ""
     if lines:
+        today = time.strftime("%Y/%m/%d", time.localtime())
         block = ("この相手の顧客カード(確認済みの事実。全部使わず、今の文脈に合うもの"
-                 "1〜2点だけ自然に活かす。羅列・詰め込みは禁止):\n" + "\n".join(lines))
+                 "1〜2点だけ自然に活かす。羅列・詰め込みは禁止):\n" + "\n".join(lines)
+                 + f"\n【日付の扱い・厳守】今日は{today}。カードや過去会話にある約束・予定・アポ"
+                 "(ゴルフ・食事・旅行・「今度〜行こう」等)は記録当時のもので、今も有効とは限らない。"
+                 "現在の予定として書くのは禁止。記録日が古い/不明のものに触れる場合は"
+                 "「そういえば前に話してた〇〇、どうなりました？」のような確認・回想の形だけにする。"
+                 "過ぎた日付の予定は過去の出来事として扱う。")
     if a.get("NG話題"):
         block += ("\n【NG話題・厳守】次の話題には絶対に触れない。関連語も本文に書かない: "
                   f"{a['NG話題']}")
