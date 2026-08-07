@@ -35,6 +35,7 @@ API_DATA = "https://api-data.line.me"
 router = APIRouter()
 
 GOLD = "#A8842F"; RED = "#C0402C"; BLUE = "#3A5170"; GREEN = "#2f8a4a"; INK = "#2B2823"
+NAVY = "#1B2A4A"
 FWD = "▼ すぐ下の白い吹き出しが下書き。長押し→転送で送れます"
 
 
@@ -644,53 +645,60 @@ def handle_file(uid, token, message):
     except Exception as e:
         return reply(token, [flexmsg("📄 取り込みに失敗しました", f"もう一度送ってみてください({type(e).__name__})",
                                      accent=RED, quick=[("ホームへ", "m=home")])])
-    # 既存の取り込みロジック(v63表示名自動判定・自動登録)をそのまま使う
-    from .style_profile import extract_profile, discover_contacts, extract_contact_profile
-    from .main import _infer_self_name
-    from . import crm
-    self_name = _infer_self_name(text, (db.get_profile("_selfname") or {}).get("name") or "自分")
-    p = extract_profile(text, self_name=self_name)
-    if p.n_messages == 0:
-        return reply(token, [flexmsg("📄 読み込めませんでした",
-                                     "あなたの発言を見つけられませんでした。PWAの設定→取り込みからお名前を指定して試してください。",
-                                     accent=RED, quick=[("ホームへ", "m=home")])])
-    db.save_profile("_global", p.to_dict())
-    db.save_profile("_selfname", {"name": self_name})
-    registered, profiled = [], []
-    for nm in discover_contacts(text, self_name=self_name):
-        cp = extract_contact_profile(text, nm, self_name=self_name)
-        db.save_profile(nm, cp)
-        profiled.append(nm)
-        if not db.get_contact(nm):
-            db.upsert_contact(nm, "B")
-            crm.link_contact(nm)
-            crm.add_alias(nm, nm)
-            registered.append(nm)
+    # v125: チャット受けもLIFF一括取り込みと同一パイプラインへ。
+    # 旧v63は「自分の表示名の推定失敗=全体拒否」だったが、あれは文体学習の都合であって
+    # 取り込み自体を止める理由にならない(入口による挙動差の解消)。
+    from . import liff as _liff
+    _liff._jobs_ensure()
+    contact, cands, extracted = _liff._match_contact(name)
+    if not contact:
+        # ファイル名で決まらなければ本文ヘッダ「[LINE] 〇〇とのトーク履歴」から
+        _m = _re.search(r"\[LINE\] ?(.+?)とのトーク履歴", text[:300])
+        if _m:
+            hd = _m.group(1).strip()
+            c2, cands2, _ = _liff._match_contact(f"[LINE] {hd}とのトーク履歴.txt")
+            contact = c2 or (hd if not cands2 else None)
+            cands = cands2 or cands
+    with db.conn() as c:
+        cur = c.execute("INSERT INTO liff_import_jobs(fname,contact,status,detail,ts) "
+                        "VALUES(?,?,?,?,?)",
+                        (name, contact or "", "queued" if contact else "ambiguous",
+                         json.dumps({"cands": cands or [], "name": extracted or ""},
+                                    ensure_ascii=False) if not contact else "",
+                         time.time()))
+        jid = cur.lastrowid
+    _meta_set(f"liffimp_{jid}", text[:200000])
     db.track("linebot_txt_import")
-    # 📄 原文を保存 → 🔎 抽出はバックグラウンドで(v80: reply1分制限と分離・無言失敗の根絶)
-    _lt = parse_last_talk_ts(text)
-    for nm in profiled[:3]:
-        save_talk(nm, text)
-        if _lt:
-            _meta_set(f"lasttalk_{nm}", str(_lt))
-        dig_async(nm)
-    who = "・".join(profiled[:3]) or "相手"
-    body = (f"✓ あなた={self_name} として {p.n_messages}文を学習\n"
-            f"✓ {who} の口調・話題を記憶\n"
-            + (f"✓ 新規カード: {'・'.join(registered[:5])}" if registered
-               else f"✓ {who} の既存カードを更新\n")
-            + ("\n🔎 AIが情報を整理しています(30秒〜1分)。"
-               "できあがったら「✎ カードができました」で1通お知らせします。"
-               "タップすると編集画面が開きます☺️"
-               if os.environ.get("CHOUBA_LIFF_ID")
-               else "\n🔎 AIが情報を掘っています(30秒〜1分)。"
-                    "重要項目(呼び名・誕生日・種別)だけ確認をお願いします。"
-                    "他は自動でカードに反映され、後から🧹見直せます👇"))
-    quick = [("🔎 確認する", "m=fact"),
-             (f"🗂 {profiled[0]}のカード"[:20], f"m=card&c={_q(profiled[0], safe='')}") if profiled else ("🗂 顧客", "m=crm"),
-             ("ホームへ", "m=home")]
-    return reply(token, [flexmsg(f"📄 「{name}」を取り込みました", body, accent=GREEN,
-                                 quick=quick)])
+    liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
+    if contact:
+        threading.Thread(target=_liff._run_import_job, args=(jid, contact, text),
+                         daemon=True).start()
+        return reply(token, [flexmsg(
+            f"📄 「{name}」を受け取りました",
+            f"「{_yobina(contact)}」さんのトークとして取り込みを始めました(30秒〜1分)。\n"
+            "✓ カード・文体・ペルソナに反映\n"
+            "✓ できあがったら1通お知らせします\n"
+            "✓ 事実の確認(○✕)はお知らせからワンタップ",
+            accent=GREEN,
+            quick=[(f"🗂 {contact}のカード"[:20], f"m=card&c={_q(contact, safe='')}"),
+                   ("ホームへ", "m=home")])])
+    # 相手が特定できない → LIFFの取り込み画面でタップ指定(タイプ入力なし)
+    body = ("ファイル名から相手が分かりませんでした。\n"
+            "下のボタンから開いて、誰のトークかをタップで選んでください(打ち込み不要)。")
+    if liff_id:
+        return reply(token, [{
+            "type": "flex", "altText": "📄 誰のトークか教えてください",
+            "contents": {"type": "bubble", "body": {
+                "type": "box", "layout": "vertical", "paddingAll": "16px", "spacing": "md",
+                "contents": [
+                    {"type": "text", "text": "📄 誰のトークか教えてください", "weight": "bold",
+                     "size": "md", "color": NAVY},
+                    {"type": "text", "text": body, "wrap": True, "size": "sm"},
+                    {"type": "button", "style": "primary", "color": NAVY, "height": "sm",
+                     "action": {"type": "uri", "label": "📥 タップで相手を選ぶ",
+                                "uri": f"https://liff.line.me/{liff_id}#import"}}]}}}])
+    return reply(token, [flexmsg("📄 誰のトークか教えてください", body, accent=GOLD,
+                                 quick=[("ホームへ", "m=home")])])
 
 
 # ============ 📇 txt抽出→タップ確認(カード整備) ============
@@ -745,6 +753,9 @@ def _extract_chunk(talk, partner, self_name, part, total):
         f"{self_name}のことなら sub:\"自分\" とする(後で機械的に除外される)\n"
         "- 履歴に根拠のある事実のみ。推測で作らない。金額・日付・固有名詞は具体的に書く\n"
         f"- 呼び名={self_name}が{partner}を実際どう呼んでいるか(表示名がローマ字や記号のとき特に重要)\n"
+        "- 【vの書き方・厳守】vには値そのものだけを書く。経緯・出典・注釈・複数candidatesを"
+        "括弧や読点で詰め込まない(×「サイトウさん(Akiから)、本人は〜と署名」→○ v=\"サイトウさん\" "
+        "とし、別候補はaltsへ、経緯はsrcへ)。特に呼び名・本名は名前1つだけ\n"
         "- 「進行中の話」=商談・約束・貸し借り・宿題など未完了の件。現状と次の一手まで書く\n"
         "- 「NG話題」=相手が怒った/嫌がった/避けるべき話題\n"
         "- 「関係性メモ」=距離感・呼ばれ方の変化・信頼の証拠など営業に効く観察\n"
@@ -964,7 +975,11 @@ def classify_relationship(text, contact, self_name):
     for k2 in ("customer", "peer", "staff"):
         if k2 != kind:
             alts.append(_rel_value(k2, stand))
-    return {"k": _REL_KEY, "v": v, "src": str(obj.get("why", ""))[:60], "conf": conf, "alts": alts[:2]}
+    # v127: AIの言い訳(判定根拠不足・提供されておらず等)を「出典」として見せない
+    why = str(obj.get("why", ""))[:60]
+    if any(w in why for w in ("提供され", "判定根拠", "根拠不足", "判断材料", "情報のみ", "不足しているため")):
+        why = ""
+    return {"k": _REL_KEY, "v": v, "src": why, "conf": conf, "alts": alts[:2]}
 
 
 # ============ ご無沙汰スクリーニング(秘書の目・v87) ============
@@ -1064,9 +1079,10 @@ def analyze_persona(contact):
     talk = (r["text"] if r else "") or ""
     if len(talk) < 200:
         return None, "会話が少なすぎます(txtを取り込んでください)"
-    # 長文は頭と尾を優先(関係の始まりと現在=弧が出る)
-    if len(talk) > 90000:
-        talk = talk[:45000] + "\n…(中略)…\n" + talk[-45000:]
+    # 長文は頭と尾を優先(関係の始まりと現在=弧が出る)。
+    # v129: 90000→50000字(Eri 318KBで時間切れリスク。50kでも人物理解には十分)
+    if len(talk) > 50000:
+        talk = talk[:25000] + "\n…(中略)…\n" + talk[-25000:]
     attrs = crm.get_attrs(contact)
     facts = "／".join(f"{k}:{v}" for k, v in list(attrs.items())[:15])
     system = ("あなたは銀座の一流ホステスに仕える有能な秘書。担当のお客様との実際のLINEを読み、"
@@ -1099,7 +1115,7 @@ def analyze_persona(contact):
                                     "anthropic-version": "2023-06-01", "content-type": "application/json"},
                            json={"model": config.ANTHROPIC_MODEL, "max_tokens": 2500,
                                  "system": system, "messages": [{"role": "user", "content": prompt}]},
-                           timeout=120)
+                           timeout=180)
         if rr.status_code != 200:
             return None, f"API {rr.status_code}: {rr.text[:90]}"
         out = "".join(b.get("text", "") for b in rr.json().get("content", []))
@@ -1117,7 +1133,7 @@ def analyze_persona(contact):
                                       "messages": [{"role": "user", "content": prompt},
                                                    {"role": "assistant", "content": out[:600]},
                                                    {"role": "user", "content": "出力が読めませんでした。前置き・```を付けず、JSONオブジェクトだけを出し直してください。"}]},
-                                timeout=120)
+                                timeout=180)
             if rr2.status_code != 200:
                 return None, f"API {rr2.status_code}: {rr2.text[:90]}"
             out = "".join(b.get("text", "") for b in rr2.json().get("content", []))

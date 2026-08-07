@@ -5,6 +5,8 @@
 - 本文・顧客名は検索クエリに入れない(会社名のみ)。個人名の外部送信を避ける設計
 """
 import hashlib
+import json as _json
+import re as _re
 import threading
 import time
 import xml.etree.ElementTree as ET
@@ -35,6 +37,12 @@ def ensure():
         );
         CREATE TABLE IF NOT EXISTS news_meta(k TEXT PRIMARY KEY, v TEXT);
         """)
+        # v125: キーワード紐づけ(趣味・お酒など)。kw=キーワード / who=該当顧客名のJSON
+        for ddl in ("kw TEXT DEFAULT ''", "who TEXT DEFAULT ''"):
+            try:
+                c.execute(f"ALTER TABLE news_items ADD COLUMN {ddl}")
+            except Exception:
+                pass
 
 
 def _meta_get(k: str) -> str:
@@ -147,12 +155,80 @@ def refresh(force: bool = False) -> dict:
                               (ct["code"], ct["company"], it["title"], it["link"], opener, h, now))
                 per += 1
                 added += 1
+        # v125: キーワード紐づけ(趣味・好きなお酒など)。実在見出しのみ・1キーワード1件/日
+        kw_added = 0
+        try:
+            kw_added = _refresh_keywords(now)
+        except Exception as e:
+            print(f"[news kw] {e}", flush=True)
         # 全社失敗(ネットワーク断など)の日はマークせず次周回で再挑戦。一部でも取れたら完了扱い
         if not rows or failed < len(rows):
             _meta_set("last_day", jst_day)
-        return {"ran": True, "added": added, "companies": len(rows), "failed": failed}
+        return {"ran": True, "added": added + kw_added, "companies": len(rows), "failed": failed}
     finally:
         _REFRESH_LOCK.release()
+
+
+def _refresh_keywords(now: float) -> int:
+    """v125: 顧客カードの趣味・好きなお酒からキーワードを集め、該当ニュースを紐づける。
+    該当顧客が多いキーワード優先・最大5キーワード/日・1キーワード1件。"""
+    from . import crm
+    kw_map: dict = {}
+    for ct in db.list_contacts():
+        if (ct.get("kind") or "customer") != "customer" or ct.get("linked") == 0:
+            continue
+        a = crm.get_attrs(ct["code"]) or {}
+        for field in ("趣味・関心", "好きなお酒"):
+            for tok in _re.split(r"[、,・/／()（）\s]+", (a.get(field) or "")):
+                tok = tok.strip()
+                if 2 <= len(tok) <= 12 and not tok.isdigit():
+                    kw_map.setdefault(tok, set()).add(ct["code"])
+    added = 0
+    for kw, whos in sorted(kw_map.items(), key=lambda x: -len(x[1]))[:5]:
+        try:
+            items = _fetch_rss(kw)
+        except Exception:
+            continue
+        for it in items[:4]:
+            if it["ts"] and (now - it["ts"]) > _FRESH_DAYS * 86400:
+                continue
+            h = hashlib.sha1(("kw:" + kw + "|" + it["title"]).encode("utf-8")).hexdigest()
+            with db.conn() as c:
+                if c.execute("SELECT 1 FROM news_items WHERE hash=?", (h,)).fetchone():
+                    continue
+            opener = _kw_opener(kw, it["title"])
+            with db.conn() as c:
+                c.execute("INSERT OR IGNORE INTO news_items"
+                          "(contact,company,title,link,opener,hash,created_ts,kw,who) "
+                          "VALUES('','',?,?,?,?,?,?,?)",
+                          (it["title"], it["link"], opener, h, now, kw,
+                           _json.dumps(sorted(whos)[:6], ensure_ascii=False)))
+            added += 1
+            break
+    return added
+
+
+def _kw_opener(kw: str, title: str) -> str:
+    """キーワードニュース→今夜の一言。見出しの範囲だけ・断定しない。"""
+    if not config.ANTHROPIC_API_KEY:
+        return ""
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"x-api-key": config.ANTHROPIC_API_KEY,
+                     "anthropic-version": "2023-06-01",
+                     "content-type": "application/json"},
+            json={"model": config.ANTHROPIC_MODEL, "max_tokens": 200,
+                  "messages": [{"role": "user", "content":
+                      f"銀座のホステスが「{kw}」好きのお客様との会話で使う一言ネタを1つ。\n"
+                      f"今日のニュース見出し: {title}\n"
+                      "条件: 1〜2文・見出し以上の事実を断定しない(「〜みたいですね」程度)・"
+                      "相手が気持ちよく話し始められる振り方。出力は本文のみ。"}]},
+            timeout=30)
+        r.raise_for_status()
+        return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()[:200]
+    except Exception:
+        return ""
 
 
 def list_items(limit: int = 20) -> list[dict]:

@@ -394,6 +394,7 @@ def liff_contact(code: str, request: Request):
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
         "pstats": (lambda: linebot.partner_stats(code))(),
         "rel": (lambda: linebot.relationship_stats(code))(),   # v118: 第2層(関係性)
+        "enrich": _enrich_data(code),                          # v125: ネット補強
         "news": items,
         "history": {"received": msgs, "sent": sents, "seki": seki},
         "pending_facts": pending_n, "review_facts": review_n,
@@ -445,6 +446,18 @@ async def liff_contact_update(code: str, request: Request):
             print(f"[liff attr {k}] {e}", flush=True)
     db.track("liff_card_edit")
     return {"ok": True}
+
+
+def _enrich_data(code):
+    """v125: カード詳細に載せるネット補強の状態。"""
+    try:
+        from . import enrich as _en
+        _en.ensure()
+        return {"scope": _en.scope(code), "stat": _en.status(code),
+                "items": _en.suggestions(code)}
+    except Exception as e:
+        print(f"[enrich data] {e}", flush=True)
+        return None
 
 
 def _has_talk(code):
@@ -608,6 +621,59 @@ def liff_orei_list(request: Request):
     return {"ok": True, "sittings": out}
 
 
+# ============ 🌐 顧客ネット補強 (v125) ============
+
+@router.post("/api/liff/enrich/run")
+async def liff_enrich_run(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import enrich
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not db.get_contact(code):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    enrich.run_async(code)
+    db.track("liff_enrich_run")
+    return {"ok": True}
+
+
+@router.post("/api/liff/enrich/act")
+async def liff_enrich_act(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import enrich
+    try:
+        body = await request.json()
+        sid = int(body.get("id"))
+        ok = bool(body.get("ok"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    r = enrich.act(sid, ok)
+    if r is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    db.track("liff_enrich_act")
+    return {"ok": True}
+
+
+@router.post("/api/liff/enrich/scope")
+async def liff_enrich_scope(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import enrich
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        person_ok = bool(body.get("person_ok"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    enrich.set_scope(code, person_ok)
+    db.track("liff_enrich_scope")
+    return {"ok": True}
+
+
 # ============ 📄 カード印刷ビュー (v123: 共有→PDF用) ============
 
 @router.post("/api/liff/print/prep")
@@ -634,6 +700,7 @@ async def liff_print_prep(request: Request):
 
 
 @router.get("/print/{tok}")
+@router.get("/api/liff/printview/{tok}")   # v126: /print が環境要因で開けない時の別口(API名前空間=実績あり)
 def liff_print_view(tok: str):
     from fastapi.responses import HTMLResponse
     from . import linebot, crm
@@ -655,34 +722,93 @@ def liff_print_view(tok: str):
         return (str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
     rows = []
 
+    # v128: 情報量を全部盛りに(本人指摘:少なすぎる)。full=カードの全情報 / share=内心系のみ除外
+    used = set()
+
     def add(k, v):
         if v:
             rows.append(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>")
-    add("呼び名", a.get("呼び名"))
+
+    def addk(k, label=None):
+        used.add(k)
+        add(label or k, a.get(k))
+    _SENSITIVE = {"NG話題", "関係性メモ", "健康", "資産・事業", "進行中の話", "検索範囲"}
+    _KL = {"customer": "💐お客様", "staff": "店内", "peer": "同業", "private": "私用"}
+    _SL = {"up": "目上", "senior": "目上", "even": "対等", "equal": "対等", "down": "目下", "junior": "目下"}
+    addk("呼び名")
     if mode == "full":
+        used.add("本名")
         add("本名", a.get("本名") or d.get("real_name"))
     add("ランク", d.get("rank"))
+    add("種別・立場", f"{_KL.get(d.get('kind') or 'customer', d.get('kind'))}"
+        + (f"({a.get('店内区分')})" if a.get("店内区分") else "")
+        + (f"・{_SL.get(d.get('stand'), '')}" if d.get("stand") else ""))
+    used.add("店内区分")
+    used.add("誕生日")
     add("誕生日", d.get("birthday") or a.get("誕生日"))
-    for k in ("仕事・会社", "好きなお酒", "好きな食べ物", "趣味・関心", "家族", "記念日",
-              "住まい・エリア", "お気に入りキャスト", "担当"):
-        add(k, a.get(k))
+    for k in ("年齢", "仕事・会社", "家族", "好きなお酒", "好きな食べ物", "趣味・関心",
+              "記念日", "住まい・エリア", "担当", "お気に入りキャスト"):
+        addk(k)
     if mode == "full":
         for k in ("進行中の話", "NG話題", "関係性メモ", "健康", "資産・事業"):
-            add(k, a.get(k))
+            addk(k)
+        if int(d.get("flag_koi") or 0):
+            add("対応モード", "💘 ガチ恋・線引き")
+        if int(d.get("flag_ero") or 0) == 1:
+            add("対応モード", "下ネタいなし")
+        for nk, nl in (("note", "メモ"), ("note_pos", "喜ぶ・強み"), ("note_neg", "地雷・注意")):
+            add(nl, d.get(nk))
+    # 残りの属性を全部(🌐ネット由来含む)。shareでは内心系を除外
+    for k in sorted(a.keys()):
+        if k in used or (mode != "full" and k in _SENSITIVE):
+            continue
+        add(k, a[k])
     if rel:
         add("口調", f"自分→{rel['my_register']} ／ 相手→{rel['your_register']}")
+        if rel.get("initiator"):
+            add("会話の起点", rel["initiator"])
         if rel.get("visits"):
-            add("お席実績", f"{rel['visits']}回" + (f"・同伴{rel['dohan']}" if rel.get("dohan") else ""))
+            add("お席実績", f"{rel['visits']}回" + (f"・同伴{rel['dohan']}" if rel.get("dohan") else "")
+                + (f"・アフター{rel['after']}" if rel.get("after") else ""))
+    try:
+        ps = linebot.partner_stats(code)
+    except Exception:
+        ps = None
+    if ps:
+        add("相手のクセ", f"平均{ps['avg_len']}字・絵文字{ps['emoji_per_msg']}個/通"
+            + (f"・返信中央値{ps['reply_median_min']}分" if ps.get("reply_median_min") is not None else "")
+            + (f"・活発な時間 {'/'.join(str(h) + '時' for h in ps.get('top_hours', []))}" if ps.get("top_hours") else ""))
     pers = ""
-    if mode == "full" and p.get("sections"):
-        pers = ("<h2>ペルソナ</h2><table>" +
-                "".join(f"<tr><th>{esc(s['k'])}</th><td>{esc(s['v'])}</td></tr>"
-                        for s in p["sections"]) + "</table>")
-        tols = [t for t in (p.get("tolerance") or []) if t.get("ok") == 1]
+    if mode == "full" and (p.get("sections") or p.get("summary")):
+        pers = "<h2>🧠 ペルソナ</h2>"
+        if p.get("summary"):
+            pers += f"<p style='font-weight:700;margin:4px 0'>{esc(p['summary'])}</p>"
+        if p.get("sections"):
+            pers += ("<table>" + "".join(
+                f"<tr><th>{esc(s['k'])}</th><td>{esc(s['v'])}"
+                + (f"<div class='sub'>「{esc(s['src'])}」</div>" if s.get("src") else "") + "</td></tr>"
+                for s in p["sections"]) + "</table>")
+        tols = p.get("tolerance") or []
         if tols:
-            pers += ("<h2>どこまでOKか(確認済み)</h2><table>" +
-                     "".join(f"<tr><th>{esc(t['k'])}</th><td>{esc(t['v'])}</td></tr>"
-                             for t in tols) + "</table>")
+            _M = {1: "✓確認済み", 0: "✕不採用", None: "未確認"}
+            pers += ("<h2>🚦 どこまでOKか</h2><table>" +
+                     "".join(f"<tr><th>{esc(t['k'])}<div class='sub'>{_M.get(t.get('ok'), '未確認')}</div></th>"
+                             f"<td>{esc(t['v'])}</td></tr>" for t in tols) + "</table>")
+    # 直近の履歴(自分用のみ)
+    if mode == "full":
+        try:
+            with db.conn() as c:
+                recent = [("📩", r["ts"], r["text"]) for r in c.execute(
+                    "SELECT ts, text FROM messages WHERE contact=? ORDER BY ts DESC LIMIT 4", (code,))]
+                recent += [("📤", r["ts"], r["text"]) for r in c.execute(
+                    "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts DESC LIMIT 4", (code,))]
+            recent.sort(key=lambda x: -(x[1] or 0))
+            if recent:
+                pers += ("<h2>🕘 直近のやりとり</h2><table>" + "".join(
+                    f"<tr><th>{time.strftime('%m/%d', time.localtime(ts))} {mk}</th>"
+                    f"<td>{esc((tx or '')[:70])}</td></tr>" for mk, ts, tx in recent[:8]) + "</table>")
+        except Exception:
+            pass
     note = ("" if mode == "full" else
             "<p class='sub'>※共有用：内心メモ・注意事項は載せていません</p>")
     html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">
@@ -819,11 +945,12 @@ def _match_contact(fname: str):
     m = _NAME_RE.search(fname or "")
     name = (m.group(1).strip() if m else "") or None
     if not name:
-        # 「○○とのトーク履歴.txt」等のゆるい形も拾う
+        # 「○○とのトーク履歴.txt」「LINE ○○とのトーク.txt」等のゆるい形も拾う
         m2 = re.search(r"(.+?)\s*とのトーク", fname or "")
-        name = (m2.group(1).strip() if m2 else "") or None
-        if name and name.startswith("[LINE]"):
-            name = name[6:].strip() or None
+        if m2:
+            _nm = m2.group(1).strip()
+            _nm = re.sub(r"^\[?LINE\]?\s*", "", _nm).strip()   # v129: 裸の「LINE 」接頭辞も除去
+            name = _nm or None
     if not name:
         return None, [], None
     cands = set()

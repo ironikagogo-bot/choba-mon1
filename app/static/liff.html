@@ -169,11 +169,30 @@ dialog .btn{margin-top:8px;padding:12px}
   <button class="btn primary" id="dlgStay">とどまる</button>
   <button class="btn ghost" id="dlgGo">保存せず離れる</button>
 </dialog>
+<dialog id="edlg" style="background:var(--panel);color:var(--ink)">
+  <div id="edlgTitle" style="font-weight:700;margin-bottom:8px;color:var(--navy)"></div>
+  <textarea id="edlgTa" style="width:100%;border:1.5px solid var(--gold);border-radius:10px;padding:10px;
+    font-size:16px;min-height:64px;font-family:inherit;background:var(--panel);color:var(--ink)"></textarea>
+  <div style="display:flex;gap:8px;margin-top:10px">
+    <button class="btn primary" id="edlgOk" style="margin:0;flex:1">✓ 保存</button>
+    <button class="btn ghost" id="edlgNo" style="margin:0;flex:0 0 92px">やめる</button>
+  </div>
+</dialog>
 <script>
 "use strict";
 const LIFF_ID = "__LIFF_ID__";
 let ID_TOKEN = "", ING = "";
 const $ = s => document.querySelector(s);
+// v127: JS標準prompt()の廃止(iOSでドメイン名入りシステムダイアログが出て興ざめ+既定値も出ない)
+function askEdit(title, value) {
+  return new Promise(res => {
+    const d = $("#edlg"); $("#edlgTitle").textContent = title;
+    const ta = $("#edlgTa"); ta.value = value || "";
+    $("#edlgOk").onclick = () => { d.close(); res((ta.value || "").trim() || null); };
+    $("#edlgNo").onclick = () => { d.close(); res(null); };
+    d.showModal(); setTimeout(() => { ta.focus(); try { autogrow(ta); } catch (e) {} }, 60);
+  });
+}
 const disp = n => { n = String(n || ""); const m = n.match(/^(.+?)\((.+)\)$/);
   if (m) n = m[1];
   return /(さん|様|さま|ちゃん|くん|君|ママ|先生)$/.test(n) ? n : n + "さん"; };
@@ -331,10 +350,52 @@ function drawSeibi() {
   }
   const f = seibi.items[seibi.i];
   setHead(seibi.scope === "review" ? "🧹 見直し" : "🔎 整備", `${seibi.i + 1}/${n}件`, true);
+  const dn = disp(f.name || "");
+  const who = `${esc(dn)}${dn.endsWith("さん") || dn.endsWith("ちゃん") || dn.endsWith("くん") ? "" : "さん"}の`;
+  // v127: この項目が「何を登録するものか」を明示
+  const HINT = {
+    "呼び名": "あなたがこの人を呼ぶ名前。下書きの呼びかけに使います",
+    "本名": "分かる場合だけ。空でもOK",
+    "誕生日": "お祝い配信・記念日一覧に使います",
+    "種別・立場": "下書きの口調が決まる一番大事な項目です",
+    "進行中の話": "続きに触れると効く未完了の件",
+    "NG話題": "下書きが絶対に触れない話題",
+    "担当": "この客の担当キャスト。自分なら「自分」",
+  };
+  const hintKey = Object.keys(HINT).find(k => f.k.includes(k));
+  const hint = hintKey ? `<div class="note" style="margin:2px 0 0">💡 ${HINT[hintKey]}</div>` : "";
+  // v127: 種別・立場は専用ピッカー(立場が対等固定になる問題の解消)
+  if (f.k.includes("種別・立場")) {
+    if (seibi.relFor !== seibi.i) {
+      seibi.relFor = seibi.i;
+      const v = f.v || "";
+      seibi.rk = v.startsWith("同業") ? "同業" : v.startsWith("店内") ? "店内" : v.startsWith("私用") ? "私用" : "顧客";
+      seibi.rs = (/先輩|目上/.test(v)) ? "目上" : (/後輩|目下/.test(v)) ? "目下" : "対等";
+    }
+    const kc = k => `<button class="chip ${seibi.rk === k ? "on" : ""}" onclick="seibiRel('rk','${k}')">${k === "顧客" ? "💐お客様" : k === "店内" ? "🏠店内(同僚/黒服)" : k === "同業" ? "🏮同業" : "🔒私用"}</button>`;
+    const sc = s => `<button class="chip ${seibi.rs === s ? "on" : ""}" onclick="seibiRel('rs','${s}')">${s === "目上" ? "🙇目上(先輩・年上)" : s === "対等" ? "🤝対等" : "👇目下(後輩)"}</button>`;
+    $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
+      <div class="card">
+        <div class="note" style="margin-bottom:4px">${who}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--navy)">🔖 種別・立場</div>
+        ${hint}
+        ${f.src ? `<div class="quote">「${esc(f.src)}」</div>` : ""}
+        <div class="note" style="margin:10px 0 4px">どういう相手？</div>
+        <div class="chips">${["顧客", "店内", "同業", "私用"].map(kc).join("")}</div>
+        <div class="note" style="margin:10px 0 4px">立場は？(敬語の深さが変わります)</div>
+        <div class="chips">${["目上", "対等", "目下"].map(sc).join("")}</div>
+        <div class="chips" style="margin-top:14px">
+          <button class="chip on" onclick="seibiRelOk()">✓ ${seibi.rk}・${seibi.rs} で反映</button>
+          <button class="chip" style="color:var(--red)" onclick="seibiAct('del')">🗑 消す</button>
+          <button class="chip" style="border-style:dashed" onclick="seibiAct('skip')">↷ あとで</button>
+        </div></div>`;
+    return;
+  }
   $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
     <div class="card">
-      <div class="note" style="margin-bottom:4px">${esc(disp(f.name))}${(f.name || "").endsWith("さん") ? "" : "さん"}の</div>
+      <div class="note" style="margin-bottom:4px">${who}</div>
       <div style="font-size:18px;font-weight:800;color:var(--navy)">${esc(f.k)}<span class="conf">${CONF_DOT[f.conf] || ""}</span></div>
+      ${hint}
       <div style="font-size:17px;margin:6px 0">${esc(f.v)}</div>
       ${f.src ? `<div class="quote">「${esc(f.src)}」</div>` : ""}
       <div class="chips" style="margin-top:12px">
@@ -345,18 +406,26 @@ function drawSeibi() {
         <button class="chip" style="border-style:dashed" onclick="seibiAct('skip')">↷ あとで</button>
       </div></div>`;
 }
+window.seibiRel = (key, val) => { seibi[key] = val; drawSeibi(); };
+window.seibiRelOk = () => {
+  const f = seibi.items[seibi.i];
+  const v = `${seibi.rk}（${seibi.rs}）`;
+  fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
+  toast(`✓ ${v} で反映`);
+  seibi.i += 1; drawSeibi();
+};
 window.seibiAct = action => {
   const f = seibi.items[seibi.i];
   fire("/api/liff/facts/act", { id: f.id, action });
   toast(action === "ok" ? `✓ ${f.k}を反映` : action === "del" ? `🗑 ${f.k}は消しました` : "↷ あとで");
   seibi.i += 1; drawSeibi();
 };
-window.seibiFix = preset => {
+window.seibiFix = async preset => {
   const f = seibi.items[seibi.i];
-  const v = preset || prompt(`${f.k}を直す:`, f.v);
-  if (v == null || !v.trim()) return;
-  fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v.trim() });
-  toast(`✓ ${f.k}を「${v.trim()}」で反映`);
+  const v = preset || await askEdit(`${disp(f.name)}さんの「${f.k}」を直す`, f.v);
+  if (!v) return;
+  fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
+  toast(`✓ ${f.k}を「${v}」で反映`);
   seibi.i += 1; drawSeibi();
 };
 
@@ -491,8 +560,8 @@ function drawHome(d) {
      <span class="chev">›</span></div>` : ""}
   <button class="navcard" onclick="nav('#list')">🗂<div><b>顧客</b>
     <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
-  <button class="navcard" onclick="nav('#import')">📥<div><b>一括取り込み</b>
-    <div class="desc">トーク履歴.txtをまとめて登録</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#import')">📥<div><b>相手を迎える</b>
+    <div class="desc">トーク履歴(.txt)ごと迎え入れる — チャットに送ってもOK</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#inbox')">📨<div><b>いまの返信</b>
     <div class="desc">急ぎ${d.urgent}件・未登録${d.unlinked}件</div></div>
     ${d.queue ? `<span class="n">${d.queue}</span>` : `<span class="chev">›</span>`}</button>
@@ -666,6 +735,24 @@ function drawCard(code, d) {
             onclick="personaTolFix('${cq}',${ti},${JSON.stringify(t.v).replace(/"/g,'&quot;')})">✎直す</button>
           </div></div></div>`; }).join("")}
   </details>` : ""}
+  ${d.enrich ? `<details class="card" ${(d.enrich.items || []).length ? "open" : ""}>
+    <summary>🌐 ネットの公開情報${(d.enrich.items || []).length ? `（未確認${d.enrich.items.length}件）` : ""}</summary>
+    <div class="chips" style="margin-bottom:8px">
+      <button class="chip ${d.enrich.scope !== "person" ? "on" : ""}" onclick="enrichScope('${cq}',0)">🏢 会社のみ</button>
+      <button class="chip ${d.enrich.scope === "person" ? "on" : ""}" onclick="enrichScope('${cq}',1)">👤 個人名もOK</button>
+    </div>
+    ${(d.enrich.items || []).map(s => `<div class="kv"><div class="k">${esc(s.k)}<span class="conf">${CONF_DOT[s.conf] || ""}</span></div>
+      <div class="v">${esc(s.v)}
+        ${s.quote ? `<div class="quote">「${esc(s.quote)}」</div>` : ""}
+        ${s.src_url ? `<div style="font-size:11px;margin-top:2px"><a href="${esc(s.src_url)}" target="_blank" style="color:#3866b0">出典: ${esc(s.src_title || s.src_url)}</a></div>` : ""}
+        <div style="margin-top:4px">
+          <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--green)" onclick="enrichAct('${cq}',${s.id},1)">○ カードに入れる</button>
+          <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red)" onclick="enrichAct('${cq}',${s.id},0)">✕ 違う</button>
+        </div></div></div>`).join("")}
+    ${d.enrich.stat && d.enrich.stat.startsWith("running") ? `<div class="note"><span class="spin"></span> 検索中…(30秒〜1分。開き直すと結果が出ます)</div>`
+      : `<button class="btn ghost" style="margin-top:8px" onclick="enrichRun('${cq}')">🌐 公開情報を検索する</button>`}
+    <div class="note" style="margin-top:6px">カードの会社・仕事と一致した結果だけ提案します。個人名検索は「👤OK」の相手のみ。○を押すまでカードには入りません</div>
+  </details>` : ""}
   ${pf ? `<details class="card"><summary>👤 プロフィール</summary>${pf}</details>` : ""}
   ${news ? `<details class="card" open><summary>📰 ネタ</summary>${news}</details>` : ""}
   ${hist ? `<details class="card"><summary>🕘 履歴</summary>${hist}</details>` : ""}
@@ -682,12 +769,54 @@ window.cardPrint = async (cq, mode) => {
     const r = await api("/api/liff/print/prep", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, mode }) });
     if (r.error) return toast(r.error);
-    const url = location.origin + r.url;
-    if (window.liff && liff.openWindow) liff.openWindow({ url, external: true });
-    else window.open(url, "_blank");
-  } catch (e) { toast("印刷ビューを開けませんでした"); }
+    if (!r.url) return toast("印刷リンクを作れませんでした(サーバーが古い可能性)");
+    // v126: /print が開けない環境向けにAPI名前空間の別口を使う + リンク表示フォールバック
+    const url = location.origin + "/api/liff/printview/" + r.url.split("/").pop();
+    let opened = false;
+    try {
+      if (window.liff && liff.openWindow) { liff.openWindow({ url, external: true }); opened = true; }
+      else if (window.open(url, "_blank")) opened = true;
+    } catch (e) {}
+    // 開けたかどうかに関わらず、リンクも画面に出す(長押し→Safariで開く の保険)
+    const v = $("#view");
+    if (v && !$("#prtlink")) v.insertAdjacentHTML("afterbegin",
+      `<div id="prtlink" class="card" style="border-color:var(--gold)">
+        📄 印刷ページ${opened ? "を別ブラウザで開きました。開かない場合は" : ":"}
+        <a href="${url}" target="_blank" style="color:#3866b0;word-break:break-all">こちらを長押し→「Safariで開く」</a>
+        <div class="note" style="margin-top:4px">開いたら 共有→プリント→ピンチアウト→共有→PDF保存(10分有効)</div>
+        <button class="chip" style="margin-top:6px;padding:5px 10px;min-height:0;font-size:12px"
+          onclick="document.getElementById('prtlink').remove()">閉じる</button></div>`);
+  } catch (e) { toast("印刷ビューを開けませんでした(通信)"); }
 };
 
+// v125: ネット補強
+window.enrichScope = async (cq, personOk) => {
+  const code = decodeURIComponent(cq);
+  try {
+    const r = await api("/api/liff/enrich/scope", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, person_ok: !!personOk }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast(personOk ? "👤 個人名も検索します(この人だけ)" : "🏢 会社のみ検索"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.enrichRun = async cq => {
+  const code = decodeURIComponent(cq);
+  try {
+    const r = await api("/api/liff/enrich/run", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("🌐 検索を始めました(30秒〜1分)"); vCard(code);
+  } catch (e) { toast("開始できませんでした"); }
+};
+window.enrichAct = async (cq, id, ok) => {
+  const code = decodeURIComponent(cq);
+  try {
+    const r = await api("/api/liff/enrich/act", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ok: !!ok }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast(ok ? "✓ カードに入れました" : "✕ 捨てました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
 // v122: 担当の自分判定(「自分(Aki)」等の表記も自分扱い=前方一致)
 function isSelfTanto(v) {
   const t = (v || "").trim();
@@ -715,8 +844,8 @@ window.personaDel = async (cq, i) => {
 };
 window.personaFix = async (cq, i, cur) => {
   const code = decodeURIComponent(cq);
-  const v = prompt("この項目を直す:", cur);
-  if (v == null || !v.trim()) return;
+  const v = await askEdit("ペルソナのこの項目を直す", cur);
+  if (!v) return;
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "fix", index: i, value: v }) });
     if (r.error) return toast(r.error);
@@ -733,8 +862,8 @@ window.personaTol = async (cq, i, action) => {
 };
 window.personaTolFix = async (cq, i, cur) => {
   const code = decodeURIComponent(cq);
-  const v = prompt("この項目を直す(直すと採用扱いになります):", cur);
-  if (v == null || !v.trim()) return;
+  const v = await askEdit("直すとそのまま採用になります", cur);
+  if (!v) return;
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "tolfix", index: i, value: v }) });
     if (r.error) return toast(r.error);
@@ -842,19 +971,23 @@ async function vEdit(code) {
 
 // ============ 📥 一括取り込み ============
 let _pollT = null;
+const impCls = {};   // v127: この画面でランク仕分け済みのcontact
 async function vImport() {
-  setHead("📥 一括取り込み", "トーク履歴.txtをまとめて", true);
+  setHead("📥 相手を迎える", "トーク履歴(.txt)ごと迎え入れる", true);
   $("#view").innerHTML = `
-  <div class="card">
-    <div style="font-size:13px;color:var(--sub)">
-      ①各トークで「トーク履歴を送信」→「“ファイル”に保存」<br>
-      ②たまったら下のボタンでまとめて選択(最大20)
-    </div>
-    <input type="file" id="files" accept=".txt,text/plain" multiple style="display:none">
-    <button class="btn green" onclick="document.getElementById('files').click()">📄 ファイルを選ぶ</button>
-  </div>
-  <div class="seclabel">取り込み状況</div>
-  <div class="card" id="jobs"><div class="empty">まだありません</div></div>`;
+  <input type="file" id="files" accept=".txt,text/plain" multiple style="display:none">
+  <button class="btn primary" style="padding:20px;font-size:17px;margin:0 0 8px"
+    onclick="document.getElementById('files').click()">📂 トーク履歴(.txt)を選ぶ<br>
+    <span style="font-size:12px;font-weight:400;opacity:.85">何ファイルでもまとめてOK</span></button>
+  <div class="card" style="border-color:var(--gold)">
+    <div style="font-weight:700;margin-bottom:6px">💡 いちばん簡単な方法（このボタンすら不要）</div>
+    <div class="note" style="margin:0">①その人のトークの右上≡ → その他 → <b>トーク履歴を送信</b><br>
+    ②共有シートで <b>LINE → 帳場くん</b> を選ぶ<br>
+    これだけで自動で取り込みが始まります(保存もアプリも不要)。<br>
+    上の📂は「ファイルに保存済みのtxt」をまとめて入れる時用です</div></div>
+  <div id="jobs"></div>
+  <div class="card" style="border-style:dashed;margin-top:10px">
+    <div class="note" style="margin:0">💡 ふだんの受信はリーダーが自動で貯めています。ここは<b>過去のやり取りごと迎え入れたい相手</b>のとき専用。取り込み中は画面を閉じてOK(終わったら通知が来ます)</div></div>`;
   $("#files").addEventListener("change", async e => {
     const fs = [...e.target.files]; if (!fs.length) return;
     const fd = new FormData(); fs.forEach(f => fd.append("files", f));
@@ -870,29 +1003,66 @@ async function vImport() {
     let d; try { d = await api("/api/liff/import/status"); } catch (e) { return; }
     const jobs = d.jobs || [];
     if (!_contacts) { try { _contacts = (await api("/api/liff/contacts")).contacts; } catch (e) {} }
-    $("#jobs").innerHTML = jobs.length ? jobs.map(j => {
+    // v127(B改): 1画面完結。行の中で進行表示と仕分けまで終わる
+    const clsChips = j => {
+      if (!j.contact || impCls[j.contact]) return "";
+      if (impCls["_ind_" + j.contact]) {   // 業界の人→内訳
+        return `<span style="flex-basis:100%;margin-top:6px" class="chips">
+          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'staff','女')">👯 同僚ホステス</button>
+          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'staff','男')">🤵 黒服さん</button>
+          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'peer','')">🏮 よその店の子</button></span>`;
+      }
+      const cq = JSON.stringify(j.contact).replace(/"/g, '&quot;');
+      return `<span style="flex-basis:100%;margin-top:6px" class="chips">
+        <span style="font-size:12px;color:var(--sub);align-self:center">どんな相手？→</span>
+        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'S')">S（太客）</button>
+        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'A')">A</button>
+        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'B')">B</button>
+        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impIndOpen(${cq})">👥業界</button>
+        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impPriv(${cq})">🔒私用</button></span>`;
+    };
+    $("#jobs").innerHTML = jobs.length ? `<div class="card">` + jobs.map(j => {
       const nm = j.name || j.contact || j.fname;
-      if (j.status === "done") return `<div class="jobrow">✓ <b>${esc(nm)}</b>
-        <span style="font-size:12px;color:var(--sub)">${esc(j.detail)}項目反映</span>
-        <span class="st done" style="cursor:pointer" onclick="nav('#edit/${encodeURIComponent(j.contact)}')">カードを確認 ›</span></div>`;
+      const mark = j.contact && impCls[j.contact] ? `・✓${impCls[j.contact]}` : "";
+      if (j.status === "done") return `<div class="jobrow" style="flex-wrap:wrap">✓ <b>${esc(nm)}</b>
+        <span style="font-size:12px;color:var(--green);font-weight:700">完了${mark}</span>
+        <span class="st done" style="cursor:pointer" onclick="nav('#card/${encodeURIComponent(j.contact)}')">カード ›</span>
+        ${clsChips(j)}</div>`;
       if (j.status === "error") return `<div class="jobrow">⚠️ ${esc(j.fname)}
         <span class="st err">${esc(j.detail || "失敗")}</span></div>`;
       if (j.status === "ambiguous") {
-        // v123: タイプ入力→タップ選択に変更(候補チップ+新規+検索)
         const cands = (j.detail && j.detail.cands) || [];
         const guess = (j.detail && (j.detail.name || j.detail.extracted)) || "";
-        return `<div class="jobrow" style="flex-wrap:wrap">⚠️ ${esc(j.fname)}
-          <span class="st amb">誰のトーク？タップで選択</span>
+        return `<div class="jobrow" style="flex-wrap:wrap">📄 ${esc(j.fname)}
+          <span class="st amb">誰のトーク？</span>
           <span style="flex-basis:100%;margin-top:6px" class="chips" id="jc${j.id}">
           ${cands.slice(0, 4).map(c => `<button class="chip on" onclick="assignJobTo(${j.id}, ${JSON.stringify(c).replace(/"/g, '&quot;')})">${esc(c)}</button>`).join("")}
           ${guess && !cands.includes(guess) ? `<button class="chip" onclick="assignJobTo(${j.id}, ${JSON.stringify(guess).replace(/"/g, '&quot;')})">🆕 「${esc(guess)}」で新規</button>` : ""}
           <button class="chip" style="border-style:dashed" onclick="jobSearch(${j.id})">🔍 他から選ぶ</button></span></div>`;
       }
-      return `<div class="jobrow"><span class="spin"></span> ${esc(nm)}<span class="st run">処理中…</span></div>`;
-    }).join("") : `<div class="empty">まだありません</div>`;
+      return `<div class="jobrow" style="flex-wrap:wrap"><span class="spin"></span> <b>${esc(nm)}</b>
+        <span class="st run">作成中…${mark}</span>${clsChips(j)}</div>`;
+    }).join("") + `</div>`
+      : "";
     if (jobs.some(j => j.status === "queued" || j.status === "running"))
       _pollT = setTimeout(poll, 3000);
   }
+  // v127: 待ち時間の仕分け(その場でランク/種別)
+  window.impRank = (code, rank) => {
+    fire("/api/liff/classify", { contact: code, kind: "work", rank });
+    impCls[code] = "お客様" + rank; bust("contacts"); toast(`✓ ${code}を${rank}で登録`); poll();
+  };
+  window.impIndOpen = code => { impCls["_ind_" + code] = 1; poll(); };
+  window.impInd = (code, kind, gender) => {
+    fire("/api/liff/classify", { contact: code, kind, gender });
+    delete impCls["_ind_" + code];
+    impCls[code] = kind === "peer" ? "よその店の子" : (gender === "男" ? "黒服さん" : "同僚ホステス");
+    bust("contacts"); toast(`✓ ${code}を仕分けました`); poll();
+  };
+  window.impPriv = code => {
+    fire("/api/liff/classify", { contact: code, kind: "priv" });
+    impCls[code] = "私用"; bust("contacts"); toast(`✓ ${code}を私用に`); poll();
+  };
   window.assignJobTo = async (id, v) => {
     if (!v) return;
     try {
@@ -984,7 +1154,8 @@ async function drawRep() {
           <button class="chip on" onclick="repClsRank('S')">S（太客）</button>
           <button class="chip" onclick="repClsRank('A')">A</button>
           <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
-          <button class="chip" style="border-style:dashed" onclick="repClsRank('')">？あとで</button>
+          <button class="chip" style="border-style:dashed"
+            onclick="repAct('deferred','↷ 仕分けも返信もあとで(まとめ箱へ)')">↷ あとで(仕分けごと)</button>
         </div>
         <div style="height:1px;background:var(--border);margin:12px 0"></div>
         <div class="chips">
@@ -1453,17 +1624,25 @@ async function vNews() {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   const items = d.items || [];
   $("#view").innerHTML = `<button class="btn ghost" style="margin:0 0 12px" onclick="newsRefresh(this)">↻ ネタを集め直す</button>` +
-    (items.length ? items.map((x, j) => `
+    (items.length ? items.map((x, j) => {
+      // v125: キーワード紐づけ(趣味・お酒)は該当者一覧を表示
+      let whos = [];
+      try { whos = x.kw ? JSON.parse(x.who || "[]") : []; } catch (e) {}
+      const head = x.kw
+        ? `🏷 「${esc(x.kw)}」好きのお客様${whos.length ? `（${whos.map(w => esc(disp(w))).join("・")}）` : ""}`
+        : `${esc(disp(x.name || x.contact))}（${esc(x.company)}）`;
+      return `
       <div class="card" id="nw${j}">
-        <div style="font-size:11px;color:var(--gold);font-weight:700">${esc(disp(x.name || x.contact))}（${esc(x.company)}）</div>
+        <div style="font-size:11px;color:var(--gold);font-weight:700">${head}</div>
         <div style="font-weight:700;font-size:14px;margin:4px 0">${esc(x.title)}</div>
         ${x.opener ? `<div class="pill gold" style="margin-top:4px">💬 ${esc(x.opener)}</div>` : ""}
+        ${x.link ? `<div style="font-size:11px;margin-top:4px"><a href="${esc(x.link)}" target="_blank" style="color:#3866b0">▸ 記事を開く</a></div>` : ""}
         <div class="row" style="display:flex;gap:8px;margin-top:10px">
           ${x.opener ? `<button class="btn green" style="margin:0;flex:1;padding:11px" onclick='newsSend(${JSON.stringify(x.opener)})'>📤 これで話しかける</button>` : ""}
-          <button class="btn ghost" style="margin:0;flex:0 0 96px;padding:11px" onclick="nav('#card/${encodeURIComponent(x.contact)}')">🗂 カード</button>
+          ${x.contact ? `<button class="btn ghost" style="margin:0;flex:0 0 96px;padding:11px" onclick="nav('#card/${encodeURIComponent(x.contact)}')">🗂 カード</button>` : ""}
           <button class="btn ghost" style="margin:0;flex:0 0 44px;padding:11px" onclick="newsDismiss(${x.id ?? x.nid ?? j},'nw${j}')">✕</button>
-        </div></div>`).join("")
-      : `<div class="empty">まだありません。顧客カードに会社名を入れると毎朝ここに集まります。</div>`);
+        </div></div>`; }).join("")
+      : `<div class="empty">まだありません。顧客カードに会社名・趣味・好きなお酒を入れると毎朝ここに集まります。</div>`);
 }
 window.newsSend = async opener => { await sendViaLine(opener); };
 window.newsDismiss = (nid, elid) => { fire("/api/liff/news/dismiss", { nid });
