@@ -408,6 +408,42 @@ def is_self_tanto(tanto: str) -> bool:
                            for w in _SELF_WORDS)
 
 
+# v148: 値の中身の月日から古さを判定(「3/2〜9来日」を8月に🟢進行中と出す事故の根治)。
+# txtを取り込んだ日=記録日になるため、記録日だけでは古い話題を検出できない
+_MD_PAT = None
+
+
+def stale_by_content(v: str, days: int = 70) -> bool:
+    """値に含まれる月日(3/2・3月など)の「直近の過去の該当日」がdays日より古ければTrue。
+    未来の日付(これからの予定)や月日が無い値はFalse(新しい扱い)。"""
+    global _MD_PAT
+    if _MD_PAT is None:
+        _MD_PAT = _re_g.compile(r"(\d{1,2})\s*/\s*(\d{1,2})|(\d{1,2})月")
+    import datetime
+    hits = _MD_PAT.findall(v or "")
+    if not hits:
+        return False
+    today = datetime.date.today()
+    latest = None
+    for a, b, c in hits:
+        try:
+            mo = int(a or c)
+            dy = int(b) if b else 15
+        except ValueError:
+            continue
+        if not (1 <= mo <= 12 and 1 <= dy <= 31):
+            continue
+        try:
+            d1 = datetime.date(today.year, mo, min(dy, 28))
+        except ValueError:
+            continue
+        if d1 > today:
+            return False   # 未来の日付あり=これからの予定として新しい扱い
+        if latest is None or d1 > latest:
+            latest = d1
+    return latest is not None and (today - latest).days > days
+
+
 def card_prompt_block(code: str) -> str:
     """顧客カードの属性を、下書き/配信生成用のプロンプト断片にする。
     - 事実は「自然に1〜2点だけ活かす」指示付き(詰め込み禁止)
@@ -420,9 +456,13 @@ def card_prompt_block(code: str) -> str:
     _PERISH = _re2.compile(r"約束|予定|アポ|行こう|行く話|誘われ|今度|来週|来月|近々")
 
     def _dated(k, label):
-        """時限性のある内容には記録日を付ける(いつの話か をAIに判断させる材料)。"""
+        """時限性のある内容には記録日を付ける(いつの話か をAIに判断させる材料)。
+        v148: 中身の月日が2ヶ月超前の時限情報は、生成コンテキストから丸ごと外す。"""
         v = a[k]
         if k == "進行中の話" or _PERISH.search(v):
+            if stale_by_content(v):
+                print(f"[card prompt] 古い時限情報を除外: {k}={v[:30]!r}", flush=True)
+                return ""
             ts = dates.get(k)
             when = time.strftime("%Y/%m/%d", time.localtime(ts)) if ts else "記録日不明=古い可能性"
             return f"- {label}: {v}（記録: {when}）"
@@ -432,11 +472,15 @@ def card_prompt_block(code: str) -> str:
     if a.get("呼び名"):
         lines.append(f"- 呼び名(この相手をこう呼んでいる): {a['呼び名']}")
     if a.get("進行中の話"):
-        lines.append(_dated("進行中の話", "進行中の話"))
+        _l = _dated("進行中の話", "進行中の話")
+        if _l:
+            lines.append(_l)
     for k in ("関係性メモ", "記念日", "家族", "好きなお酒", "好きな食べ物",
               "趣味・関心", "健康", "仕事・会社", "お気に入りキャスト"):
         if a.get(k):
-            lines.append(_dated(k, k))
+            _l = _dated(k, k)
+            if _l:
+                lines.append(_l)
     block = ""
     if lines:
         today = time.strftime("%Y/%m/%d", time.localtime())

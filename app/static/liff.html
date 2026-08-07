@@ -752,8 +752,8 @@ function drawCard(code, d) {
     <button class="chip on" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button></div>
   ${d.pending_facts ? `<div class="banner" onclick="nav('#seibip/${cq}')">✅<div class="txt">
     この人の確認<b>${d.pending_facts}件</b> — タップで○✕するだけ(30秒)</div><span class="chev">›</span></div>` : ""}
-  ${d.review_facts ? `<div class="banner" onclick="nav('#seibi/${cq}')">🧹<div class="txt">
-    自動反映の見直し<b>${d.review_facts}件</b> — タップで流し見(間違いだけ消す)</div><span class="chev">›</span></div>` : ""}
+  <!-- v147: 🧹見直しフロー廃止(本人指摘「重要な個人情報だけ確認、あとは各々編集」)。
+       自動反映分はカードに出ている=間違いは✎編集で直す。確認(○✕)は呼び名・本名・誕生日・種別立場のみ -->
   ${nowHtml ? `<div class="card"><h3 class="sec">📌 いま効くこと</h3>${nowHtml}</div>` : ""}
   <div class="card"><h3 class="sec">🤝 関係・接し方</h3>
     <div class="kv"><div class="k">種別・立場</div><div class="v">${kindLab}${standLab ? "・" + standLab : ""}</div></div>
@@ -816,8 +816,9 @@ function drawCard(code, d) {
           <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--green)" onclick="enrichAct('${cq}',${s.id},1)">○ カードに入れる</button>
           <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red)" onclick="enrichAct('${cq}',${s.id},0)">✕ 違う</button>
         </div></div></div>`).join("")}
-    ${d.enrich.stat && d.enrich.stat.startsWith("running") ? `<div class="note"><span class="spin"></span> 検索中…(30秒〜1分。開き直すと結果が出ます)</div>`
-      : `<button class="btn ghost" style="margin-top:8px" onclick="enrichRun('${cq}')">🌐 公開情報を検索する</button>`}
+    ${d.enrich.stat && d.enrich.stat.startsWith("running") ? `<div class="note"><span class="spin"></span> Webを検索中…(1〜3分。開き直すと結果が出ます)</div>`
+      : `${d.enrich.stat === "done:0" && !(d.enrich.items || []).length ? `<div class="note">前回の検索では、確信の持てる公開情報が見つかりませんでした。カードの「仕事・会社」を正式名称にすると精度が上がります</div>` : ""}
+        <button class="btn ghost" style="margin-top:8px" onclick="enrichRun('${cq}')">🌐 公開情報を検索する</button>`}
     <div class="note" style="margin-top:6px">カードの会社・仕事と一致した結果だけ提案します。個人名検索は「👤OK」の相手のみ。○を押すまでカードには入りません</div>
   </details>` : ""}
   ${pf ? `<details class="card"><summary>👤 プロフィール</summary>${pf}</details>` : ""}
@@ -1134,24 +1135,8 @@ async function vImport() {
     let d; try { d = await api("/api/liff/import/status"); } catch (e) { return; }
     const jobs = d.jobs || [];
     if (!_contacts) { try { _contacts = (await api("/api/liff/contacts")).contacts; } catch (e) {} }
-    // v127(B改): 1画面完結。行の中で進行表示と仕分けまで終わる
-    const clsChips = j => {
-      if (!j.contact || impCls[j.contact]) return "";
-      if (impCls["_ind_" + j.contact]) {   // 業界の人→内訳
-        return `<span style="flex-basis:100%;margin-top:6px" class="chips">
-          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'staff','女')">👯 同僚ホステス</button>
-          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'staff','男')">🤵 黒服さん</button>
-          <button class="chip" onclick="impInd(${JSON.stringify(j.contact).replace(/"/g, '&quot;')},'peer','')">🏮 よその店の子</button></span>`;
-      }
-      const cq = JSON.stringify(j.contact).replace(/"/g, '&quot;');
-      return `<span style="flex-basis:100%;margin-top:6px" class="chips">
-        <span style="font-size:12px;color:var(--sub);align-self:center">どんな相手？→</span>
-        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'S')">S（太客）</button>
-        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'A')">A</button>
-        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impRank(${cq},'B')">B</button>
-        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impIndOpen(${cq})">👥業界</button>
-        <button class="chip" style="padding:7px 12px;font-size:13px" onclick="impPriv(${cq})">🔒私用</button></span>`;
-    };
+    // v146: 旧clsChips(作成中の行での並行仕分け)は廃止。アップ中にタブが並ぶと混乱する(本人指摘)。
+    // 種別・立場は完了後の✅確認フロー、ランクはカードで
     $("#jobs").innerHTML = jobs.length ? `<div class="card">` + jobs.map(j => {
       const nm = j.name || j.contact || j.fname;
       const mark = j.contact && impCls[j.contact] ? `・✓${impCls[j.contact]}` : "";
@@ -1179,29 +1164,16 @@ async function vImport() {
           ${guess && !cands.includes(guess) ? `<button class="chip" onclick="assignJobTo(${j.id}, ${JSON.stringify(guess).replace(/"/g, '&quot;')})">🆕 「${esc(guess)}」で新規</button>` : ""}
           <button class="chip" style="border-style:dashed" onclick="jobSearch(${j.id})">🔍 他から選ぶ</button></span></div>`;
       }
-      return `<div class="jobrow" style="flex-wrap:wrap"><span class="spin"></span> <b>${esc(nm)}</b>
-        <span class="st run">作成中…${mark}</span>${clsChips(j)}</div>`;
+      // v146: 作成中の行に仕分けチップを出さない(アップ中にタブが並ぶと混乱する・本人指摘)。
+      // 種別・立場は完了後の✅確認フローが聞くので、ここで並行入力させる必要はない
+      return `<div class="jobrow"><span class="spin"></span> <b>${esc(nm)}</b>
+        <span class="st run">作成中…${mark}</span></div>`;
     }).join("") + `</div>`
       : "";
     if (jobs.some(j => j.status === "queued" || j.status === "running"))
       _pollT = setTimeout(poll, 3000);
   }
-  // v127: 待ち時間の仕分け(その場でランク/種別)
-  window.impRank = (code, rank) => {
-    fire("/api/liff/classify", { contact: code, kind: "work", rank });
-    impCls[code] = "お客様" + rank; bust("contacts"); toast(`✓ ${code}を${rank}で登録`); poll();
-  };
-  window.impIndOpen = code => { impCls["_ind_" + code] = 1; poll(); };
-  window.impInd = (code, kind, gender) => {
-    fire("/api/liff/classify", { contact: code, kind, gender });
-    delete impCls["_ind_" + code];
-    impCls[code] = kind === "peer" ? "よその店の子" : (gender === "男" ? "黒服さん" : "同僚ホステス");
-    bust("contacts"); toast(`✓ ${code}を仕分けました`); poll();
-  };
-  window.impPriv = code => {
-    fire("/api/liff/classify", { contact: code, kind: "priv" });
-    impCls[code] = "私用"; bust("contacts"); toast(`✓ ${code}を私用に`); poll();
-  };
+  // (v146: 旧impRank/impInd/impPrivは clsChips 廃止に伴い削除)
   window.assignJobTo = async (id, v) => {
     if (!v) return;
     try {

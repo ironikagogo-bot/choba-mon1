@@ -444,7 +444,10 @@ def liff_contact(code: str, request: Request):
         "aliases": d.get("aliases") or [],
         "attrs": attrs,
         "profile_keys": [k for k in _PROFILE_KEYS if attrs.get(k)],
-        "now_keys": {"ongoing": attrs.get("進行中の話") or "",
+        # v148: 中身の月日が2ヶ月超前の「進行中の話」は🟢いま効くことに出さない
+        # (txt取り込み日=記録日のため、中身の日付で判定。値自体は✎編集に残る)
+        "now_keys": {"ongoing": ("" if crm.stale_by_content(attrs.get("進行中の話") or "")
+                                 else (attrs.get("進行中の話") or "")),
                      "ng": attrs.get("NG話題") or "",
                      "relmemo": attrs.get("関係性メモ") or ""},
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
