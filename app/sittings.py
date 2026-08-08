@@ -52,19 +52,21 @@ ROLE_LABEL = {"customer": "主賓客", "intro": "紹介者", "guest": "同席顧
 
 def create_sitting(date_label: str, main: str, members: list,
                    stype: str = "", venue: str = "",
-                   dohan_venue: str = "", after_venue: str = "") -> int:
+                   dohan_venue: str = "", after_venue: str = "", visit_ts=None) -> int:
     """members = [{contact, role, stand}]。主賓客は role=customer で含める。
     stype: ''=店内お席あり / gaiso=店外のみ。venue=店外のみの行き先。
     dohan_venue/after_venue: 同伴・アフターのお店(空=なし)。同じ夜に両方あってよい。
+    visit_ts: 実際にお席があった日時(未指定なら今)。v161: 日付指定記録で過去日を選べるように
+    なったため、created_ts/来店実績/イベントすべてこの日時で記録する(「今」で上書きしない)。
     来店/同伴/紹介の実績イベントも自動記録。"""
     ensure()
-    now = time.time()
+    ts = visit_ts if visit_ts is not None else time.time()
     with db.conn() as c:
         cur = c.execute(
             "INSERT INTO sittings(date_label, main_contact, stype, venue, dohan_venue, after_venue, created_ts) "
             "VALUES(?,?,?,?,?,?,?)",
             (date_label or "", main or "", stype or "", venue or "",
-             dohan_venue or "", after_venue or "", now))
+             dohan_venue or "", after_venue or "", ts))
         sid = cur.lastrowid
         for m in members or []:
             code = (m.get("contact") or "").strip()
@@ -77,15 +79,15 @@ def create_sitting(date_label: str, main: str, members: list,
     if main:
         try:
             if stype != "gaiso":   # 店内お席ありは来店扱い
-                db.set_last_visit(main)
+                db.set_last_visit(main, ts)
             if (dohan_venue or "").strip():
-                db.add_event(main, "dohan", f"{main} 同伴({dohan_venue})", "confirmed")
+                db.add_event(main, "dohan", f"{main} 同伴({dohan_venue})", "confirmed", ts)
         except Exception:
             pass
     for m in members or []:
         if m.get("role") == "intro" and m.get("contact"):
             try:
-                db.add_event(main or "", "intro", f"{m['contact']} → {main} 紹介", "confirmed")
+                db.add_event(main or "", "intro", f"{m['contact']} → {main} 紹介", "confirmed", ts)
             except Exception:
                 pass
     return sid

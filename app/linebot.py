@@ -356,14 +356,13 @@ def _finish_message(mid, action, sent_text=None):
               "skipped": "skipped"}[action]
     db.set_status(mid, status)
     if status == "replied":
+        # v160: 「anchor以前(過去)のみ」だった一括クローズをdb.close_rally_siblingsへ統一。
+        # build_queueは常にその相手の一番古い未対応を選ぶため、旧条件では返信直後に来ていた
+        # 新しい連投が閉じられず、毎回「新しい未対応」として再出現するバグがあった。
+        # 同種の実装がmain.py act()にも重複していたため両方をこのヘルパーに揃えた。
         try:
-            with db.conn() as c:
-                _thread = [dict(r) for r in c.execute(
-                    "SELECT id, contact, ts FROM messages WHERE status IN ('open','deferred')")]
-            for _m in _thread:
-                if (_m["contact"] == msg["contact"] and _m["id"] != mid
-                        and (_m["ts"] or 0) <= (msg["ts"] or 0)):
-                    db.set_status(_m["id"], "replied", auto=True)
+            db.close_rally_siblings(msg["contact"], mid, msg["ts"], "replied",
+                                     config.RALLY_WINDOW_MIN * 60)
         except Exception:
             pass
         if action == "replied" and (sent_text or "").strip():
@@ -833,7 +832,12 @@ def _extract_chunk(talk, partner, self_name, part, total):
         '[{"k":"誕生日","v":"8月19日","src":"来週誕生日なんだ","conf":"高","alts":[],"sub":"相手"}]\n'
         f"---\n{talk}"
     )
-    system = ("あなたは接客業向け顧客管理(CRM)アプリの抽出エンジン。利用者(ホステス本人)が"
+    if config.MODE == "general":   # v158
+        system = ("あなたは人間関係メモアプリの抽出エンジン。利用者(本人)が自分自身のトーク履歴から"
+                  "相手のメモを作る正当な用途であり、本人の依頼と同意に基づく。"
+                  "出力は必ずJSON配列のみ。説明文・前置き・コードブロック記号は書かない。")
+    else:
+        system = ("あなたは接客業向け顧客管理(CRM)アプリの抽出エンジン。利用者(ホステス本人)が"
               "自分自身のトーク履歴から自分の顧客メモを作る正当な業務であり、本人の依頼と同意に基づく。"
               "出力は必ずJSON配列のみ。説明文・前置き・コードブロック記号は書かない。")
     out = ""
@@ -1005,7 +1009,20 @@ def classify_relationship(text, contact, self_name):
     if not config.ANTHROPIC_API_KEY:
         return None
     talk = text[-40000:]
-    prompt = (
+    if config.MODE == "general":   # v158: 1対1の人間関係として判定
+        prompt = (
+            f"あなたは{self_name}の秘書。以下は{self_name}と「{contact}」のLINE。\n"
+            f"「{contact}」が{self_name}にとって何者かを判定してください。\n"
+            "kind(種別): customer=仕事の相手(取引先・顧問・仕事上の付き合い) / "
+            "peer=友人・社外の仕事仲間 / staff=社内・チームの人 / private=私用(家族や受け取らない相手)\n"
+            "stand(立場): senior=相手が先輩/目上 / equal=対等 / junior=相手が後輩/目下\n"
+            "判断材料: 敬語の向き・呼称(さん付け/呼び捨て/ちゃん)・依頼や相談の向き・"
+            "仕事の話か私的な話か。\n"
+            "確信が持てないときはconf=低に。\n"
+            '出力はJSONのみ: {"kind":"customer","stand":"equal","conf":"高","why":"根拠(実発言の断片40字)"}'
+        )
+    else:
+        prompt = (
         f"あなたは銀座のホステス{self_name}の秘書。以下は{self_name}と「{contact}」のLINE。\n"
         f"「{contact}」が{self_name}にとって何者かを判定してください。\n"
         "kind(種別): customer=お客様 / peer=同業の仲間(他店のホステス・夜職仲間・友人) / "
@@ -1150,14 +1167,23 @@ def analyze_persona(contact, sample=50000):
         talk = talk[:half] + "\n…(中略)…\n" + talk[-half:]
     attrs = crm.get_attrs(contact)
     facts = "／".join(f"{k}:{v}" for k, v in list(attrs.items())[:15])
-    system = ("あなたは接客業向け顧客管理(CRM)アプリの分析エンジン。利用者(ホステス本人)が"
+    # v158: 一般モードは「客の分析」でなく「1対1の人間関係の理解」としてパラメータを変える
+    if config.MODE == "general":
+        system = ("あなたは人間関係メモアプリの分析エンジン。利用者が自分自身のLINEトーク履歴から"
+                  "相手を理解するためのメモを作る正当な用途であり、本人の依頼と同意に基づく。"
+                  "会話に私的な内容が含まれても、それは利用者自身の会話であり分析してよい。"
+                  "対等な1対1の関係づくり(友人・仕事相手・家族)に本当に役立つ人物理解メモを作る。"
+                  "営業・接客の観点は使わない。心地よいだけのお世辞や、根拠のない安楽椅子心理分析は禁止。"
+                  "断定の強さは根拠の強さに一致させる。出力は必ずJSONのみ。")
+    else:
+        system = ("あなたは接客業向け顧客管理(CRM)アプリの分析エンジン。利用者(ホステス本人)が"
               "自分自身のLINEトーク履歴から自分用の顧客理解メモを作る正当な業務であり、"
               "本人の依頼と同意に基づく。会話に私的な内容が含まれても、それは利用者自身の"
               "会話であり分析してよい。接客・営業に本当に役立つ人物理解メモを作る。"
               "心地よいだけのお世辞や、根拠のない安楽椅子心理分析は禁止。"
               "断定の強さは根拠の強さに一致させる。出力は必ずJSONのみ。")
     prompt = (
-        f"お客様「{contact}」の人物ペルソナを、次の観点でまとめてください。\n"
+        f"{'相手' if config.MODE == 'general' else 'お客様'}「{contact}」の人物ペルソナを、次の観点でまとめてください。\n"
         f"観点: {'/'.join(PERSONA_SECTIONS)}\n"
         + (f"既に確認済みの事実: {facts}\n" if facts else "")
         + "ルール:\n"
@@ -1165,11 +1191,14 @@ def analyze_persona(contact, sample=50000):
         "『だから“この話題”が効く／“これ”は避ける』まで落とす\n"
         "- v=結論(120字以内)。src=根拠となる本人の実発言の引用(40字以内)。conf=高/中/低\n"
         "- 根拠が弱い観点はconf=低にするか省く。無理に7つ埋めない\n"
-        "- summary=この人を一言で(営業視点・誇張なし・40字以内)\n"
-        "さらに『許容レベル』(この相手にどこまで踏み込んでよいか)を別配列で出す。\n"
+        + ("- summary=この人を一言で(関係づくりの視点・誇張なし・40字以内)\n" if config.MODE == "general"
+           else "- summary=この人を一言で(営業視点・誇張なし・40字以内)\n")
+        + "さらに『許容レベル』(この相手にどこまで踏み込んでよいか)を別配列で出す。\n"
         f"観点(この5つに限定): {'/'.join(TOLERANCE_KEYS)}\n"
-        "- 冗談・軽口=どんな冗談に乗ってくる/流すか。営業色の許容=来店を誘う直球をどこまで受けるか。"
-        "距離を詰めた時=馴れ馴れしくした時に乗るか引くか。際どい話題=下ネタ等のライン。"
+        + ("- 冗談・軽口=どんな冗談に乗ってくる/流すか。お誘いの許容=こちらから会おうと誘う直球をどこまで受けるか。"
+           if config.MODE == "general" else
+           "- 冗談・軽口=どんな冗談に乗ってくる/流すか。営業色の許容=来店を誘う直球をどこまで受けるか。")
+        + "距離を詰めた時=馴れ馴れしくした時に乗るか引くか。際どい話題=下ネタ等のライン。"
         "待たせた時=返信が遅れた時の反応。\n"
         "- 各項目 v=結論(80字以内)・src=根拠の実発言引用(40字以内)・conf=高/中/低。"
         "根拠となる実際のやり取りが無い観点は出さない(推測で埋めない)\n"
@@ -1461,7 +1490,9 @@ def relationship_prompt_block(contact):
     return "【この相手との関係性(ログ集計=事実)】\n" + "\n".join(lines)
 
 
-TOLERANCE_KEYS = ("冗談・軽口", "営業色の許容", "距離を詰めた時", "際どい話題", "待たせた時")
+TOLERANCE_KEYS = (("冗談・軽口", "お誘いの許容", "距離を詰めた時", "際どい話題", "待たせた時")
+                  if config.MODE == "general" else
+                  ("冗談・軽口", "営業色の許容", "距離を詰めた時", "際どい話題", "待たせた時"))   # v158
 
 
 def tolerance_prompt_block(contact):

@@ -164,6 +164,60 @@ def open_messages():
             "SELECT * FROM messages WHERE status='open' ORDER BY ts ASC")]
 
 
+def rally_cluster(contact: str, anchor_id: int, rally_window_sec: float):
+    """v160: anchor_id(未対応=open)を含む、同じ相手の連続受信の一連(隙間<=rally_window_secで
+    つながっている範囲)を時系列で返す。下書き生成で「連投をまとめて1通に返す」ために使う。
+    anchorが一連の中で一番古いとは限らない前提(build_queueは常に最古を選ぶが、判定はanchorの
+    位置を軸に前後どちらにも広げる)。"""
+    with conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT * FROM messages WHERE contact=? AND status='open' ORDER BY ts ASC", (contact,))]
+    idx = next((i for i, r in enumerate(rows) if r["id"] == anchor_id), None)
+    if idx is None:
+        return [r for r in rows if r["id"] == anchor_id]
+    lo = idx
+    while lo > 0 and (rows[lo]["ts"] or 0) - (rows[lo - 1]["ts"] or 0) <= rally_window_sec:
+        lo -= 1
+    hi = idx
+    while hi < len(rows) - 1 and (rows[hi + 1]["ts"] or 0) - (rows[hi]["ts"] or 0) <= rally_window_sec:
+        hi += 1
+    return rows[lo:hi + 1]
+
+
+def close_rally_siblings(contact: str, anchor_id: int, anchor_ts, new_status: str, rally_window_sec: float):
+    """v160: 相手への対応完了時、同じ相手の未対応(open/deferred)のうち、anchorと連続受信で
+    つながっている分(隙間<=rally_window_sec)を道連れでnew_statusにする。
+    呼び出し時点でanchor自身は既に別状態に変わっている前提(rows には含まれない)ため、
+    anchor_tsを起点に前後へ隙間判定で広げる。旧実装は「anchor以前(過去)のみ」を対象にしており、
+    build_queueが常に最古を選ぶ設計と噛み合わず、返信後に来ていた新しい連投が閉じられずに
+    毎回「新しい未対応」として再出現するバグの原因だった(2026-08-08発見)。"""
+    with conn() as c:
+        rows = [dict(r) for r in c.execute(
+            "SELECT id, ts FROM messages WHERE contact=? AND status IN ('open','deferred') AND id!=? "
+            "ORDER BY ts ASC", (contact, anchor_id))]
+    if not rows:
+        return
+    pos = 0
+    for i, r in enumerate(rows):
+        if (r["ts"] or 0) < (anchor_ts or 0):
+            pos = i + 1
+    cluster_ids = []
+    prev_ts = anchor_ts or 0
+    for r in rows[pos:]:
+        if (r["ts"] or 0) - prev_ts <= rally_window_sec:
+            cluster_ids.append(r["id"]); prev_ts = r["ts"] or 0
+        else:
+            break
+    prev_ts = anchor_ts or 0
+    for r in reversed(rows[:pos]):
+        if prev_ts - (r["ts"] or 0) <= rally_window_sec:
+            cluster_ids.append(r["id"]); prev_ts = r["ts"] or 0
+        else:
+            break
+    for cid in cluster_ids:
+        set_status(cid, new_status, auto=True)
+
+
 def get_message(mid: int):
     with conn() as c:
         r = c.execute("SELECT * FROM messages WHERE id=?", (mid,)).fetchone()
@@ -277,10 +331,10 @@ def list_subscriptions():
         return [dict(r) for r in c.execute("SELECT * FROM push_subscriptions")]
 
 
-def add_event(contact: str, kind: str, label: str, status: str = "tentative"):
+def add_event(contact: str, kind: str, label: str, status: str = "tentative", ts=None):
     with conn() as c:
         c.execute("INSERT INTO events(contact,kind,label,status,created_ts) VALUES(?,?,?,?,?)",
-                  (contact, kind, label, status, time.time()))
+                  (contact, kind, label, status, ts if ts is not None else time.time()))
 
 
 def list_events():

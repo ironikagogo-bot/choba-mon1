@@ -211,7 +211,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v157"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v161"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -880,16 +880,13 @@ def act(mid: int, body: Action):
         db.set_status(mid, body.action)
     # ラリー連投対策: 返信/スタンプは「その相手との未対応スレッド全体」への対応とみなして閉じる。
     # これをしないと連投の残り(古い通)が open のまま残り、コピペ後も同じ会話がカードに再表示され続ける。
+    # v160: 「anchor以前(過去)のみ」だった条件をdb.close_rally_siblingsへ統一(前後どちらの連投も
+    # 対象になる)。linebot.py _finish_message()に同型のバグが重複実装されていたため両方揃えた。
     if body.action in ("replied", "stamped", "done"):
         try:
-            with db.conn() as c:
-                _thread = [dict(r) for r in c.execute(
-                    "SELECT id, contact, ts FROM messages WHERE status IN ('open','deferred')")]
-            for _m in _thread:
-                if (_m["contact"] == msg["contact"] and _m["id"] != mid
-                        and (_m["ts"] or 0) <= (msg["ts"] or 0)):
-                    _sw = "replied" if body.action == "done" else body.action
-                    db.set_status(_m["id"], _sw, auto=True)  # v72(9-7): 成績集計から除外
+            _sw = "replied" if body.action == "done" else body.action
+            db.close_rally_siblings(msg["contact"], mid, msg["ts"], _sw,
+                                     config.RALLY_WINDOW_MIN * 60)
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる

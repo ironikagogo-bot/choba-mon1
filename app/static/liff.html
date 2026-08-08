@@ -316,13 +316,18 @@ async function boot() {
       <p class="note" style="margin-top:10px">あなた宛てでない場合は、そのまま閉じてください。</p>
     </div>`;
     await new Promise(done => { $("#bindGo").onclick = done; });
+    // v160: 通信失敗をcatch{}で無言に握りつぶし、直前に「パスワードや入力はありません」と
+    // 見せた直後に矛盾する旧・合言葉案内(showBindGuide)へ落ちる事故を修正。店内の弱い電波で
+    // 起きやすい(再現条件: タップ直後にfetchが失敗する)。ここでは必ずbindTok専用の画面で
+    // 結果を返し、失敗時はその場で再試行できるようにする(showBindGuideへは絶対に落とさない)。
     try {
       const r = await fetch("/api/liff/bind", { method: "POST",
         headers: { "Authorization": "Bearer " + ID_TOKEN, "Content-Type": "application/json" },
         body: JSON.stringify({ bind: bindTok }) }).then(x => x.json());
-      if (r.bound) { toast("🔑 ひも付けが完了しました！このままお使いいただけます"); }
-      else if (r.error) { showBindExpired(); return; }
-    } catch (e) {}
+      if (r && r.bound) { toast("🔑 ひも付けが完了しました！このままお使いいただけます"); }
+      else if (r && r.error) { showBindExpired(); return; }
+      else { showBindRetry(); return; }
+    } catch (e) { showBindRetry(); return; }
     route();
   }
   // 未ひも付けチェック(リセット後の詰まり対策・v115)
@@ -333,6 +338,16 @@ async function boot() {
   } catch (e) {}
   route();   // 認証完了後にもう一度描く(キャッシュ表示→実データへ)
   warmBoot();
+}
+function showBindRetry() {
+  // v160: 通信断でbindが失敗した時の専用画面(旧・合言葉案内へは落とさない)
+  setHead("🔑 はじめの設定", "", false);
+  $("#view").innerHTML = `<div class="card" style="text-align:center;padding:24px 16px">
+    <div style="font-size:44px">📶</div>
+    <h3 class="sec" style="justify-content:center;margin-top:10px">つながりませんでした</h3>
+    <p style="font-size:15px;margin:10px 0 4px">電波の良い所でもう一度お試しください。<br>パスワードの入力は不要です。</p>
+    <button class="btn primary" style="margin-top:16px" onclick="location.reload()">🔁 もう一度試す</button>
+  </div>`;
 }
 function showBindExpired() {
   setHead("🔑 はじめの設定", "", false);
@@ -481,7 +496,8 @@ function drawSeibi() {
       seibi.rk = v.startsWith("同業") ? "同業" : v.startsWith("店内") ? "店内" : v.startsWith("私用") ? "私用" : "顧客";
       seibi.rs = (/先輩|目上/.test(v)) ? "目上" : (/後輩|目下/.test(v)) ? "目下" : "対等";
     }
-    const kc = k => `<button class="chip ${seibi.rk === k ? "on" : ""}" onclick="seibiRel('rk','${k}')">${k === "顧客" ? "💐お客様" : k === "店内" ? "🏠店内(同僚/黒服)" : k === "同業" ? "🏮同業" : "🔒私用"}</button>`;
+    // v159: 一般モードで「お客様/店内(同僚/黒服)/同業」のまま出ていたバグ修正(W()未適用箇所)
+    const kc = k => `<button class="chip ${seibi.rk === k ? "on" : ""}" onclick="seibiRel('rk','${k}')">${k === "顧客" ? W("💐お客様", "💐仕事の相手") : k === "店内" ? W("🏠店内(同僚/黒服)", "🏠社内・チーム") : k === "同業" ? W("🏮同業", "🏮社外の仲間") : "🔒私用"}</button>`;
     const sc = s => `<button class="chip ${seibi.rs === s ? "on" : ""}" onclick="seibiRel('rs','${s}')">${s === "目上" ? "🙇目上(先輩・年上)" : s === "対等" ? "🤝対等" : "👇目下(後輩)"}</button>`;
     $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
       <div class="card">
@@ -522,26 +538,39 @@ window.seibiEdit = async () => {
   if (!v) return;
   seibi.val = v; drawSeibi();
 };
+// v160: v153でclsSave化された登録系から整備(確認)だけ取り残されていたfire()楽観更新を修正。
+// 圏外/失敗時に「反映しました」と表示しながら実は未保存、という事故を防ぐ(clsSaveと同じ思想)。
+async function factAct(body) {
+  try {
+    const r = await api("/api/liff/facts/act", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r && r.error) throw new Error(r.error);
+    return true;
+  } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); return false; }
+}
 // ✓確定(全項目共通)。種別・立場はピッカーの組合せ、他は選択中の値を反映
-window.seibiOk = () => {
+window.seibiOk = async () => {
   const f = seibi.items[seibi.i];
+  let ok, doneText;
   if (f.k.includes("種別・立場")) {
     const v = `${seibi.rk}（${seibi.rs}）`;
-    fire("/api/liff/facts/act", { id: f.id, action: "fix", value: v });
-    toast(`「${v}」を反映しました`);
+    ok = await factAct({ id: f.id, action: "fix", value: v });
+    doneText = `「${v}」を反映しました`;
   } else if (seibi.val === f.v) {
-    fire("/api/liff/facts/act", { id: f.id, action: "ok" });
-    toast(`「${f.k}」を反映しました`);
+    ok = await factAct({ id: f.id, action: "ok" });
+    doneText = `「${f.k}」を反映しました`;
   } else {
-    fire("/api/liff/facts/act", { id: f.id, action: "fix", value: seibi.val });
-    toast(`「${f.k}」を反映しました`);
+    ok = await factAct({ id: f.id, action: "fix", value: seibi.val });
+    doneText = `「${f.k}」を反映しました`;
   }
+  if (!ok) return;
+  toast(doneText);
   store.del("card_" + f.contact); bust("home");   // v150: 途中離脱でも件数表示を古くしない
   seibi.i += 1; drawSeibi();
 };
-window.seibiAct = action => {
+window.seibiAct = async action => {
   const f = seibi.items[seibi.i];
-  fire("/api/liff/facts/act", { id: f.id, action });
+  if (!await factAct({ id: f.id, action })) return;
   store.del("card_" + f.contact); bust("home");   // v150: 途中離脱でも件数表示を古くしない
   toast(action === "del" ? `「${f.k}」を消しました` : "あとで確認に回しました");
   seibi.i += 1; drawSeibi();
@@ -723,7 +752,7 @@ let _listRows = null;   // v132: 一覧表示中の行(フィルタ別)
 let _listKind = "";   // v132: 一覧の種別フィルタ("":顧客 / staff / peer / all)
 async function vList() {
   setHead("🗂 カード", W("S/A/B順", "つながりの濃さ順"), true);
-  const KTABS = [["", "💐お客様"], ["staff", "🏠店内"], ["peer", "🏮同業"], ["private", "🔒私用"], ["all", "全部"]];
+  const KTABS = [["", W("💐お客様", "💐仕事の相手")], ["staff", W("🏠店内", "🏠社内")], ["peer", W("🏮同業", "🏮社外")], ["private", "🔒私用"], ["all", "全部"]];
   $("#view").innerHTML = `
     <div class="chips" style="margin-bottom:8px">${KTABS.map(([k, lab]) =>
       `<button class="chip ${_listKind === k ? "on" : ""}" onclick="listKind('${k}')">${lab}</button>`).join("")}</div>
@@ -800,8 +829,8 @@ function drawCard(code, d) {
   const fmtMin = m => m < 60 ? `約${m}分` : m < 1440 ? `約${Math.round(m / 60)}時間` : `約${Math.round(m / 1440)}日`;
   setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true);
   const sg = d.attrs && d.attrs["店内区分"] || "";
-  const staffLab = sg === "女" ? "👯同僚ホステス" : sg === "男" ? "🤵黒服さん" : "店内";
-  const kindLab = ({ customer: "💐お客様", staff: staffLab, peer: "🏮よその店の子(同業)", private: "私用" })[d.kind] || "💐お客様";
+  const staffLab = sg === "女" ? W("👯同僚ホステス", "👯同僚・チーム") : sg === "男" ? W("🤵黒服さん", "🤵上司・先輩") : W("店内", "社内");
+  const kindLab = ({ customer: W("💐お客様", "💐仕事の相手"), staff: staffLab, peer: W("🏮よその店の子(同業)", "🏮社外の仲間"), private: "私用" })[d.kind] || W("💐お客様", "💐仕事の相手");
   const standLab = { up: "目上", even: "対等", down: "目下" }[d.stand] || d.stand || "";
   const now = d.now_keys || {};
   const nowHtml = (now.ongoing ? `<div class="pill green">🟢 ${esc(now.ongoing)}</div>` : "") +
@@ -925,6 +954,10 @@ function drawCard(code, d) {
     <button class="chip" onclick="cardPrint('${cq}','full')">📄 印刷/PDF(自分用・全部)</button>
   </div>
   <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>
+  <button class="btn ghost" style="margin-top:8px" onclick="nav('#list')">🗂 一覧へ</button>
+  <!-- v160: ‹は常にホーム固定(v144・迷子防止)なので、一覧から来た時にここで一覧へ戻る手段が
+       無かった(編集後も含め毎回ホーム経由になる摩擦。実運用者から複数回報告)。‹の仕様は変えず
+       画面内ボタンで補う(編集画面の「やめる」と同じ思想)。 -->
   ${d.pending_facts ? `<div style="height:70px"></div>
   <div class="stickyfix" onclick="nav('#seibip/${cq}')">✅ <b>${esc(disp(d.name))}の確認 ${d.pending_facts}件</b>
     <span style="font-weight:400">○✕するだけ・30秒</span><span class="chev" style="margin-left:auto">›</span></div>` : ""}`;
@@ -1441,12 +1474,14 @@ window.repRegen = async mid => {
   await draftCache["m" + mid];
   drawRep();
 };
+// v160: バッジ文言がW()を通っておらず一般モードでも「来店・日程」「太客さん」のまま
+// 出ていた漏れを修正(判定に使うreason文字列自体は変更しない。表示ラベルのみW())
 function repTag(reason) {
-  if (/来店|日程|同伴|予約|アフター|お誘い/.test(reason)) return { c: "rt-visit", t: "🍾 来店・日程" };
+  if (/来店|日程|同伴|予約|アフター|お誘い/.test(reason)) return { c: "rt-visit", t: W("🍾 来店・日程", "📅 会う話・日程") };
   if (/金|支払|料金|ツケ|請求/.test(reason)) return { c: "rt-money", t: "💴 お金の話" };
   if (/不満|不機嫌|怒|催促|クレーム|皮肉/.test(reason)) return { c: "rt-angry", t: "😠 ご機嫌ナナメ" };
   if (/質問|問いかけ|回答待ち|確認/.test(reason)) return { c: "rt-chat", t: "❓ 質問・確認" };
-  if (/S客/.test(reason)) return { c: "rt-visit", t: "💎 太客さん" };
+  if (/S客/.test(reason)) return { c: "rt-visit", t: W("💎 太客さん", "💎 大切な人") };
   return { c: "rt-chat", t: "💬 近況・雑談" };
 }
 function cardRefChip(keys) {
@@ -1458,7 +1493,12 @@ function cardRefChip(keys) {
 }
 function draftHtml(j, text) {
   // v120: ✎直すボタン廃止→本文タップで編集(送信は緑ボタンのみ=誤送信なし)
+  // v160(D2対策): shareTargetPickerでLINE側の相手選択を誤る事故は帳場側では防げないため、
+  // 送るボタンの直前(スクロールしても離れない位置)に宛先名を出し、最後の確認点を強化する。
+  const it = rep.items && rep.items[rep.i];
+  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}さんへ送ります</div>` : "";
   return `<div class="draft" id="dr${j}"><div class="t" onclick="repEdit(${j})">${esc(text)}</div>
+    ${who}
     <div class="row"><button class="btn green" onclick="repSend(${j})">📤 LINEで送る</button></div>
     <textarea style="display:none">${esc(text)}</textarea></div>`;
 }
@@ -1539,8 +1579,11 @@ window.repCls2 = async (kind, gender) => {
 window.repWrite = () => {
   const dr = $("#drafts");
   if (!dr || $("#mywrite")) { const t = $("#mywrite textarea"); if (t) t.focus(); return; }
+  const it = rep.items && rep.items[rep.i];
+  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}さんへ送ります</div>` : "";
   dr.insertAdjacentHTML("afterbegin", `<div class="draft sel" id="mywrite">
     <textarea placeholder="自分の言葉で書く(送るとこの文体も学習されます)"></textarea>
+    ${who}
     <div class="row"><button class="btn green" onclick="repSendMine()">📤 LINEで送る</button></div></div>`);
   const ta = $("#mywrite textarea"); ta.focus(); autogrow(ta);
 };
@@ -1567,7 +1610,7 @@ window.repClsRank = async rank => {
   if (!await clsSave({ contact: it.contact, kind: "work", rank })) return;
   bust("contacts");
   it.unlinked = false; it.rank = rank || "B"; drawRep();   // その場で下書きへ進む
-  toast(`✓ お客様${rank ? "(ランク" + rank + ")" : ""}で登録`);
+  toast(`✓ ${W("お客様", "仕事の相手")}${rank ? `(${W("ランク", "つながり")}${rank})` : ""}で登録`);
 };
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
@@ -1735,7 +1778,10 @@ window.annSkip = () => { const p = ann.q[ann.i]; delete draftCache["a" + p.code]
   ann.i += 1; annSave(); toast(`↷ ${disp(p.name)}をスキップ`); drawAnnRun(); };
 
 // ============ 🙏 お礼・お席記録 ============
-const orei = { step: "main", main: null, stype: "", dohan: "", after: "", helpers: [], guests: [], intros: [], day: "today", sid: null, drafts: [] };
+const orei = { step: "main", main: null, stype: "", dohan: "", after: "", helpers: [], guests: [], intros: [], day: "today", customDate: "", sid: null, drafts: [] };
+function _todayIso() {   // v161: 端末のタイムゾーンに関わらずJSTの「今日」を出す
+  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+}
 async function vOrei() {
   setHead(W("🙏 お席の記録とお礼", "🍽 会った記録とお礼"), "", true);
   Object.assign(orei, { step: "main", main: null, stype: "", dohan: "", after: "", helpers: [], guests: [], intros: [], day: "today", sid: null, drafts: [] });
@@ -1783,13 +1829,16 @@ function drawOrei() {
   if (orei.step === "detail") {
     setHead(`🙏 ${disp(orei.main.name)}のお席`, "2/3 どんな夜？", true);
     const chip = (on, lab, fn) => `<button class="chip ${on ? "on" : ""}" onclick="${fn}">${lab}</button>`;
-    const keep = () => { const d1 = $("#odohan"), d2 = $("#oafter");
-      if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim(); };
+    const keep = () => { const d1 = $("#odohan"), d2 = $("#oafter"), d3 = $("#odate");
+      if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim();
+      if (d3) orei.customDate = d3.value; };
     window._okeep = keep;
     v.innerHTML = `<div class="card">
       <label class="f">いつの夜？</label><div class="chips">
         ${chip(orei.day === "today", "今日", "_okeep();orei.day='today';drawOrei()")}
-        ${chip(orei.day === "yesterday", "昨日", "_okeep();orei.day='yesterday';drawOrei()")}</div>
+        ${chip(orei.day === "yesterday", "昨日", "_okeep();orei.day='yesterday';drawOrei()")}
+        ${chip(orei.day === "custom", "日付を選ぶ", "_okeep();orei.day='custom';if(!orei.customDate)orei.customDate=_todayIso();drawOrei()")}</div>
+      ${orei.day === "custom" ? `<input class="f" type="date" id="odate" value="${esc(orei.customDate || _todayIso())}" max="${_todayIso()}" style="margin-top:6px">` : ""}
       <label class="f">お席</label><div class="chips">
         ${chip(orei.stype === "", "店内にお席", "_okeep();orei.stype='';drawOrei()")}
         ${chip(orei.stype === "gaiso", "店外のみ(食事など)", "_okeep();orei.stype='gaiso';drawOrei()")}</div>
@@ -1805,6 +1854,7 @@ function drawOrei() {
       ${tapGroup("同席していた他のお客様", (_oreiPre && _oreiPre.guests) || [], orei.guests, "oguest")}
       ${tapGroup("紹介してくれた方", (_oreiPre && _oreiPre.guests) || [], orei.intros, "ointro")}
       <button class="btn primary" onclick="oreiRecord(this)">記録してお礼を作る</button>
+      <button class="btn ghost" style="margin-top:8px" onclick="_okeep();orei.step='main';drawOrei()">← 相手を選び直す</button>
       <div class="note">記録すると来店・同伴・紹介の実績も自動で付きます</div></div>`;
     ["ohelp", "oguest", "ointro"].forEach((gid, k) => {
       const arr = [orei.helpers, orei.guests, orei.intros][k];
@@ -1861,13 +1911,16 @@ window.oreiResume = async sid => {
 window.oreiEdit = j => { const d = $("#or" + j); d.querySelector(".t").style.display = "none";
   const ta = d.querySelector("textarea"); ta.style.display = "block"; ta.focus(); autogrow(ta); };
 window.oreiRecord = async (btn) => {
-  const d1 = $("#odohan"), d2 = $("#oafter");
+  const d1 = $("#odohan"), d2 = $("#oafter"), d3 = $("#odate");
   if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim();
+  if (d3) orei.customDate = d3.value;
+  if (orei.day === "custom" && !orei.customDate) { toast("日付を選んでください"); return; }
+  const dayOut = orei.day === "custom" ? orei.customDate : orei.day;
   if (btn) btn.textContent = "記録中…";
   try {
     const r = await api("/api/liff/orei/record", { method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ main: orei.main.code, stype: orei.stype, day: orei.day,
+      body: JSON.stringify({ main: orei.main.code, stype: orei.stype, day: dayOut,
         dohan_venue: orei.dohan, after_venue: orei.after,
         helpers: orei.helpers.map(h => ({ contact: h, role: "help", stand: "equal" }))
           .concat(orei.guests.map(h => ({ contact: h, role: "guest" })))
@@ -1958,7 +2011,7 @@ window.annWord = w => {
 };
 window.fxBulk = async () => {
   const ok = await askDanger(`${(fx.items || []).length}人をまとめて確定`,
-    "呼び名は表示名から、種別・立場はAIの見立て(無ければお客様・対等)で入れます。間違いはあとでカードから直せます。");
+    `呼び名は表示名から、種別・立場はAIの見立て(無ければ${W("お客様", "仕事の相手")}・対等)で入れます。間違いはあとでカードから直せます。`);
   if (!ok) return;
   toast("まとめて確定しています…");
   try {

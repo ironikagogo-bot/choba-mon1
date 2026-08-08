@@ -54,8 +54,20 @@ def _template_drafts(contact: dict, text: str, reason: str) -> list[dict]:
     """オフライン用の素朴なテンプレート(APIキー無し=デモの動線検証用)。
     対応モード(ガチ恋/いなし)と敬語設定を必ず反映する。定型文がモードを無視すると
     デモで「ガチ恋客に'また会お！'」のような信頼を壊す返答が出るため(2026-07-29実バグ)。"""
-    # ガチ恋・線引き: 燃料を足さない・突き放さない・話題転換 or 店へ
+    # v160: オフライン(APIキー無し/AI呼び出し失敗)フォールバックがv158のAI版と違い
+    # config.MODE分岐を持っておらず、一般モードでも「お店で」「席とっとく」等の水商売語彙が
+    # 固定で出ていた漏れを修正。ガチ恋・来店・日程/同伴の3ブロックのみ夜職固有表現を含むため対応。
+    _general = config.MODE == "general"
+    # ガチ恋・線引き: 燃料を足さない・突き放さない・話題転換 or (夜職)店へ／(一般)保留
     if int(contact.get("flag_koi") or 0) == 1:
+        if _general:
+            return [
+                {"tone": "線引き・流す", "text": "ふふ、ありがと😊 それより最近ちゃんと寝てる？無理しないでね"},
+                {"tone": "線引き・保留", "text": "考えすぎ🤣 また予定みて連絡するね！"},
+                {"tone": "長文・ていねい", "text": "いつも丁寧に送ってくれてありがと😊 お仕事のほう、前に話してた件は落ち着いた？"
+                         "季節の変わり目だから体調だけは気をつけてね。私は相変わらずばたばたしてるけど元気にやってます。"
+                         "ちゃんとご飯食べて、あったかくして寝ること！また落ち着いたらゆっくり聞かせてね"},
+            ]
         return [
             {"tone": "線引き・流す", "text": "ふふ、ありがと😊 それより最近ちゃんと寝てる？無理しないでね"},
             {"tone": "線引き・店へ", "text": "考えすぎ🤣 お店でゆっくり話そ、待ってるね！"},
@@ -76,6 +88,11 @@ def _template_drafts(contact: dict, text: str, reason: str) -> list[dict]:
             {"tone": "丁寧・最小", "text": "ありがとうございます。またお会いできるのを楽しみにしています！"},
         ]
     if "来店" in reason or "席" in reason:
+        if _general:
+            return [
+                {"tone": "軽く", "text": "ほんと！？会えるの嬉しい〜、時間あけとくね。何人くらい？"},
+                {"tone": "最小", "text": "おっけー、あけとく！何時ごろ会えそう？"},
+            ]
         return [
             {"tone": "軽く", "text": "ほんと！？来てくれるの嬉しい〜、席とっとくね。何人くらい？"},
             {"tone": "最小", "text": "おっけー、空けとく！何時ごろ来れそう？"},
@@ -204,17 +221,17 @@ def _generate_inner(message_id: int) -> list[dict]:
         return []
     contact = db.get_contact(msg["contact"]) or {"code": msg["contact"], "rank": "B"}
 
-    # ラリー(連投)は相手からの一連の受信をまとめて1つの返信にする(最新1通だけに返さない)
+    # ラリー(連投)は相手からの一連の受信をまとめて1つの返信にする(最新1通だけに返さない)。
+    # v160: 判定条件を「自分自身のcategoryがrally」から「未対応(open)の中に連続受信でつながる
+    # 相手がいるか」に変更。build_queueは常にその相手の一番古い未対応(=直前受信が無いためcategory
+    # はurgent/batchになりrallyにはならない)を選ぶため、旧条件では合体がほぼ発動しなかった。
     thread_text = msg["text"]
-    if msg.get("category") == "rally":
-        try:
-            sibs = [x for x in db.open_messages()
-                    if x["contact"] == msg["contact"] and x["category"] == "rally"]
-            if len(sibs) > 1:
-                sibs.sort(key=lambda x: x["ts"])
-                thread_text = "\n".join(x["text"] for x in sibs)
-        except Exception:
-            pass
+    try:
+        cluster = db.rally_cluster(msg["contact"], message_id, config.RALLY_WINDOW_MIN * 60)
+        if len(cluster) > 1:
+            thread_text = "\n".join(x["text"] for x in cluster)
+    except Exception:
+        pass
 
     if not config.ANTHROPIC_API_KEY:
         drafts = _template_drafts(contact, msg["text"], msg["reason"])
@@ -294,7 +311,10 @@ def _generate_inner(message_id: int) -> list[dict]:
                         "「ありがと😊 そういえば今日お店でおもしろいことあってさ」"
                         "「もう、口うまいんだから🤣 ちゃんとご飯食べてる？」"
                         "「ふふ、ありがと。それより週末なにするの？」"
-                        "\n- 会う話が出たら店に寄せる(「お店で待ってるね」)。"
+                        + ("\n- 会う話が出たら即答せず保留する(「予定みて連絡するね」)。二人きりの約束はしない。"
+           if config.MODE == "general" else
+           "\n- 会う話が出たら店に寄せる(「お店で待ってるね」)。")
+        + 
                         "\n- 短い2案は従来どおり軽く短く。突き放し・説教・急な敬語化はしない。"
                         "\n- 【長文案を必ず追加】上の2案(短め)に加えて、3案目として『長文・線引き維持』を出す。"
                         "tone=\"長文・ていねい\"。長さは感情表現の増量ではなく**話題の回収と個別化**で出す:"
@@ -305,9 +325,13 @@ def _generate_inner(message_id: int) -> list[dict]:
                         "禁止事項(燃料・復唱・二人きりの約束・将来の匂わせ)は長文でも同じ。絵文字は実例準拠でノルマなし。")
     if (contact.get("kind") or "") == "staff":
         _st = (contact.get("stand") or "").strip()
-        _tone = {"senior": "相手は店の先輩(ママ/黒服など)。丁寧め・敬語寄りで短く。",
+        if config.MODE == "general":   # v158: staff=社内・チーム
+            _tone = {"senior": "相手は職場の目上(上司・先輩)。丁寧め・敬語寄りで短く。",
+                     "junior": "相手は後輩。タメ口で軽く、ねぎらいを一言。"}.get(_st, "相手は同僚。フラットに短く。")
+        else:
+            _tone = {"senior": "相手は店の先輩(ママ/黒服など)。丁寧め・敬語寄りで短く。",
                  "junior": "相手は後輩(ヘルプ)。タメ口で軽く、ねぎらいを一言。"}.get(_st, "相手は店の同僚。フラットに短く。")
-        mode_prompt += ("\n【店内・同僚モード】これは客ではなく店の同僚への連絡。営業トーン・接客の定型句は禁止。"
+        mode_prompt += ("\n【同僚・チームモード】これは仕事仲間への連絡。営業トーン・接客の定型句は禁止。"
                         "用件に即した短い実務返信にする。" + _tone +
                         " 時間・席・人数などの調整は断定せず『〜で大丈夫？』と確認で返す。")
     # 直近のやり取り(対応済みの受信＋自分が実際に送った返信)を文脈として渡す

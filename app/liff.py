@@ -1659,7 +1659,7 @@ async def liff_orei_record(request: Request):
         if not isinstance(helpers, list):         # v150: 型不正で500にしない
             helpers = []
         helpers = [h for h in helpers if isinstance(h, dict)]
-        day = body.get("day") or "today"          # today / yesterday
+        day = body.get("day") or "today"          # today / yesterday / YYYY-MM-DD(v161)
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if not main or not db.get_contact(main):
@@ -1691,9 +1691,20 @@ async def liff_orei_record(request: Request):
     d0 = datetime.datetime.now(jst)
     if day == "yesterday":
         d0 -= datetime.timedelta(days=1)
+    elif re.match(r"^\d{4}-\d{2}-\d{2}$", day or ""):
+        # v161: 「日付を選ぶ」で過去日を選んだ来店記録。時刻は分からないので現在時刻のまま日付だけ差し替え、
+        # 未来日は今日に丸める(まだ起きていない来店として記録させない)
+        try:
+            chosen = datetime.datetime.strptime(day, "%Y-%m-%d").date()
+            today_jst = datetime.datetime.now(jst).date()
+            if chosen > today_jst:
+                chosen = today_jst
+            d0 = datetime.datetime.combine(chosen, d0.timetz())
+        except Exception:
+            pass
     label = d0.strftime("%m/%d")
     sid = sittings.create_sitting(label, main, members, stype=stype, venue=venue,
-                                  dohan_venue=dohan, after_venue=after)
+                                  dohan_venue=dohan, after_venue=after, visit_ts=d0.timestamp())
     drafts_ = sittings.generate_orei(sid)
     from . import crm as _crm
     for g in drafts_:   # v150: LINE検索名を添える(g.snameが常にundefinedだった)
