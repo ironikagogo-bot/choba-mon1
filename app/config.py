@@ -42,6 +42,9 @@ BATCH_TIME = os.environ.get("CHOUBA_BATCH_TIME", "21:30")
 #   "android"= Androidサブ端末の通知を受信(本命)。/api/android/notify で受け取る
 # クラウドの「見せる用」インスタンスでダミー顧客を自動投入する(実データは載せない)
 DEMO = os.environ.get("CHOUBA_DEMO", "") == "1"
+# v157: 表示プロファイル。mizu=夜職(既定・本線) / general=Aki用(表示トグルの解禁スイッチ)。
+# generalを設定したサーバー(aki-test)だけLIFFホームに🏮⇄👔トグルが現れる。文言のみ・ロジック分岐禁止
+MODE = os.environ.get("CHOUBA_MODE", "mizu")
 WATCHER = os.environ.get("CHOUBA_WATCHER", "sim")
 # 実読み取りのポーリング間隔(秒)
 WATCH_POLL_SEC = float(os.environ.get("CHOUBA_WATCH_POLL_SEC", "2.0"))

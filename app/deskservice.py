@@ -262,6 +262,14 @@ class DeskService:
                     self.log(f"→ グループ「{_g}」内の{_p}さんとして取り込み")
 
             contact, message = parsed["contact"], parsed["message"]
+            # v154: 帳場くん同士の共鳴を遮断。別インスタンス(「Michiの帳場」等)のOA通知や
+            # 帳場くん自身の押し通知文がリーダー経由で再取り込みされ、「未登録の相手:
+            # Michiの帳場・急ぎの気配(急ぎの気配)」という意味不明カードが生まれていた(2026-08-08実例)
+            _BOT_SIGS = ("メニューの📨返信から", "から急ぎの気配", "今月の緊急通知が上限",
+                         "ひも付けが完了しました", "わたしの帳場くんにする")
+            if ("帳場" in contact) or any(sig in (message or "") for sig in _BOT_SIGS):
+                self.log(f"→ 帳場くん系の通知なので取り込まない({contact[:24]})")
+                return {"status": "ignored-bot"}
             msg_id = f"{key}|{ts}" if (key or "").strip() else None
             if not self.dedup.should_process(contact, message, msg_id=msg_id):
                 self.log(f"→ 重複のためスキップ: {contact}(同一通知の再掲)")

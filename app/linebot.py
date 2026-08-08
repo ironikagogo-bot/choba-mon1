@@ -189,9 +189,33 @@ def push_urgent(contact, reason):
                          "text": f"🔔 今月の緊急通知が上限({URGENT_PUSH_CAP}通)に達したため、"
                                  "月末まで通知を止めます。受信箱は通常どおり動いています。"}])
         return False
-    ok = push_owner([{"type": "text",
-                      "text": f"🔥 {_hon_disp(contact)}から急ぎの気配({reason})。"
-                              "メニューの📨返信から下書きを確認できます。"}])
+    _r = f"({reason})" if reason and reason != "急ぎの気配" else ""   # v154: (急ぎの気配)の二重表示を防ぐ
+    # ⚠️ altText先頭の「から急ぎの気配」はdeskservice._BOT_SIGS(bot共鳴フィルタ)の照合句。
+    # 文言を変えるときは必ず両方同時に変えること(v154の共鳴バグ再発防止)
+    alt = f"🔥 {_hon_disp(contact)}から急ぎの気配{_r}。"
+    liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
+    if liff_id:
+        # v155: ボタン1タップでその人の下書きへ直行(メニュー→一覧探索の3画面を省略)。
+        # 下書きはタップ時点で裏の生成が終わっているのが通常(未完なら画面側の生成待ちが受ける)
+        url = f"https://liff.line.me/{liff_id}#inbox/{_q(contact, safe='')}"
+        msg = {"type": "flex", "altText": alt,
+               "contents": {"type": "bubble",
+                            "header": {"type": "box", "layout": "vertical", "paddingAll": "12px",
+                                       "backgroundColor": "#8C2F27", "contents": [
+                                           {"type": "text", "text": "🔥 急ぎの気配", "weight": "bold",
+                                            "size": "sm", "color": "#FFFFFF"}]},
+                            "body": {"type": "box", "layout": "vertical", "paddingAll": "16px",
+                                     "contents": [
+                                         {"type": "text", "text": f"{_hon_disp(contact)}", "weight": "bold",
+                                          "size": "md", "color": "#1B2A4A", "wrap": True},
+                                         {"type": "text", "text": (reason or "急ぎの気配"),
+                                          "size": "sm", "color": "#C0402C", "margin": "sm", "wrap": True}]},
+                            "footer": {"type": "box", "layout": "vertical", "contents": [
+                                {"type": "button", "style": "primary", "color": "#1B2A4A",
+                                 "action": {"type": "uri", "label": "📨 この人の返信をひらく", "uri": url}}]}}}
+    else:
+        msg = {"type": "text", "text": alt + "メニューの📨返信から下書きを確認できます。"}
+    ok = push_owner([msg])
     if ok:
         _meta_set(_lp_month_key(), str(n + 1))
     return ok
@@ -3196,9 +3220,23 @@ def _handle(ev, etype, token, uid):
             pw = _re.sub(r"\s+", "", (config.PASSWORD or ""))
             if pw and hmac.compare_digest(t.encode("utf-8"), pw.encode("utf-8")):
                 _meta_set("owner", uid)
+                _meta_set("pw_fails", "0")
                 reply(token, [flexmsg("🔑 ひも付けが完了しました", "この帳場くんはあなた専用になりました。",
                                       accent=GREEN)] + home_msgs())
                 return
+            # v153: 3回つまずいたら合言葉をあきらめさせ、ひも付けリンクへ誘導する(改善#3残り)
+            if pw and t:
+                try:
+                    _fails = int(_meta_get("pw_fails") or 0) + 1
+                except Exception:
+                    _fails = 1
+                _meta_set("pw_fails", str(_fails))
+                if _fails >= 3:
+                    reply(token, [flexmsg("🙇 うまくいかないようです",
+                                          "合言葉はもう打たなくて大丈夫です。\n"
+                                          "ママ(管理者)に「ひも付けリンクを送って」と伝えてください。"
+                                          "届いたリンクをタップするだけでひも付けが完了します。")])
+                    return
             # v151: 惜しい失敗(半分以上一致)には「違っていた」ことを明示する。
             # 無言で「合言葉をどうぞ」に戻ると、本人には送れていないように見える
             if pw and t and _difflib.SequenceMatcher(None, t, pw).ratio() > 0.5:

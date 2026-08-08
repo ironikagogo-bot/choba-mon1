@@ -173,7 +173,8 @@ def liff_hello():
         bound = bool(linebot.owner_id())
     except Exception:
         bound = False
-    return {"ok": True, "bound": bound, "has_liff": bool(LIFF_ID)}
+    return {"ok": True, "bound": bound, "has_liff": bool(LIFF_ID),
+            "mode": config.MODE}   # v157: 表示プロファイル(generalの時だけLIFFにトグル表示)
 
 
 # ============ ホーム(今日の状況ハブ) ============

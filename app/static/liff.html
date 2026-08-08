@@ -215,6 +215,17 @@ function askEdit(title, value) {
     d.showModal(); setTimeout(() => { ta.focus(); try { autogrow(ta); } catch (e) {} }, 60);
   });
 }
+// v156/v157: 表示プロファイル(🏮夜職⇄👔一般)。文言と見た目だけの切替でロジック・データは一切変えない。
+// v157: トグルはサーバーが CHOUBA_MODE=general の時(=aki-test)だけ表示。モニターには存在自体見えない
+let GENMODE = false, MODESW = false;
+try { GENMODE = localStorage.getItem("cb_mode") === "general"; } catch (e) {}
+const W = (mizu, gen) => (GENMODE && MODESW) ? gen : mizu;
+window.modeToggle = () => {
+  GENMODE = !GENMODE;
+  try { localStorage.setItem("cb_mode", GENMODE ? "general" : "mizu"); } catch (e) {}
+  toast(GENMODE ? "👔 一般モード(見た目だけ)に切替" : "🏮 夜職モードに切替");
+  bust("home"); route();
+};
 // v151: タイプ「OK」確認の全廃。半角英字入力は合言葉と同じ脱落スキルなので、
 // 危険操作の確認は「赤いダイアログでもう1回タップ」に統一(2段階タップ)
 function askDanger(title, desc) {
@@ -317,6 +328,7 @@ async function boot() {
   // 未ひも付けチェック(リセット後の詰まり対策・v115)
   try {
     const h = await fetch("/api/liff/hello").then(r => r.json());
+    MODESW = h.mode === "general";   // v157: aki-testだけ表示トグルを解禁
     if (ID_TOKEN && h.has_liff && !h.bound) { showBindGuide(); return; }
   } catch (e) {}
   route();   // 認証完了後にもう一度描く(キャッシュ表示→実データへ)
@@ -401,7 +413,7 @@ function route() {
   if (name === "card" && arg) return vCard(decodeURIComponent(arg));
   if (name === "edit" && arg) return vEdit(decodeURIComponent(arg));
   if (name === "import") return vImport();
-  if (name === "inbox") return vInbox();
+  if (name === "inbox") return vInbox(arg ? decodeURIComponent(arg) : "");
   if (name === "ann") return vAnn();
   if (name === "orei") return vOrei();
   if (name === "news") return vNews();
@@ -664,27 +676,27 @@ function drawHome(d) {
     <div class="tile" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
   </div>
-  ${d.fixup ? `<div class="banner" style="border-color:var(--red);background:#F9ECEA;cursor:pointer"
-     onclick="nav('#fixup')">🚨<div class="txt"><b style="color:var(--red)">仕上げ待ちのカード ${d.fixup}件</b>
-     — 名前と仕分けを確定してください(放置するとデータが使えません)</div><span class="chev">›</span></div>` : ""}
+  ${d.fixup ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
+     onclick="nav('#fixup')">🪄<div class="txt"><b>あと${d.fixup}人、お名前の確認だけ</b>
+     — 1人10秒。⚡ぜんぶおまかせなら1タップで終わります</div><span class="chev">›</span></div>` : ""}
   ${d.pending_facts ? `<div class="banner" style="cursor:pointer" onclick="nav('#seibi')">✅<div class="txt">
      確認待ち <b>${d.pending_facts}件</b> — AIが拾った内容を○✕するだけ</div><span class="chev">›</span></div>` : ""}
   ${est.length ? `<div class="banner" style="cursor:pointer" onclick="nav('#ann')">🕰<div class="txt">
-     ご無沙汰の太客 <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
+     ご無沙汰の${W("太客", "大切な人")} <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
      <span class="chev">›</span></div>` : ""}
-  <button class="navcard" onclick="nav('#list')">🗂<div><b>顧客</b>
+  <button class="navcard" onclick="nav('#list')">🗂<div><b>${W("顧客", "人脈カード")}</b>
     <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
-  <button class="navcard" onclick="nav('#import')">📥<div><b>お客様を追加</b>
-    <div class="desc">その人との会話ごとお迎え — やり方は3ステップ</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#import')">📥<div><b>${W("お客様を追加", "相手を追加")}</b>
+    <div class="desc">${W("その人との会話ごとお迎え — やり方は3ステップ", "トーク履歴ごと取り込み — やり方は3ステップ")}</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#inbox')">📨<div><b>いまの返信</b>
     <div class="desc">急ぎ${d.urgent}件・未登録${d.unlinked}件</div></div>
     ${d.queue ? `<span class="n">${d.queue}</span>` : `<span class="chev">›</span>`}</button>
-  <button class="navcard" onclick="nav('#ann')">📣<div><b>配信をつくる</b>
-    <div class="desc">出勤・イベント・ご無沙汰の挨拶を一斉に</div></div><span class="chev">›</span></button>
-  <button class="navcard" onclick="nav('#orei')">🙏<div><b>お席の記録とお礼</b>
-    <div class="desc">今夜のお席を残して、お礼を一巡</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#ann')">📣<div><b>${W("配信をつくる", "まとめて連絡")}</b>
+    <div class="desc">${W("出勤・イベント・ご無沙汰の挨拶を一斉に", "近況・お誘い・ご無沙汰の挨拶を一斉に")}</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#orei')">${W("🙏", "🍽")}<div><b>${W("お席の記録とお礼", "会った記録とお礼")}</b>
+    <div class="desc">${W("今夜のお席を残して、お礼を一巡", "会食・打合せを残して、お礼を一巡")}</div></div><span class="chev">›</span></button>
   <button class="navcard gold" onclick="nav('#news')">📰<div><b>今日のネタ</b>
-    <div class="desc">${d.neta}件 — お客様の会社の話題</div></div><span class="chev">›</span></button>
+    <div class="desc">${d.neta}件 — ${W("お客様", "相手")}の会社の話題</div></div><span class="chev">›</span></button>
   <div class="card" style="cursor:pointer" onclick="nav('#reader')"><h3 class="sec">📡 受信係 <span class="chev" style="margin-left:auto">›</span></h3>${moto}
     <div class="note">今週: 送信${d.sent_week}件・そのまま率${rate}</div></div>
   ${d.urgent_push ? `<div class="card"><h3 class="sec">🔔 緊急通知(LINE)</h3>
@@ -692,7 +704,9 @@ function drawHome(d) {
       <button class="chip ${d.urgent_push.on ? "on" : ""}" onclick="notifyTgl(${d.urgent_push.on ? 0 : 1})">
         ${d.urgent_push.on ? "ON — 急ぎだけ帳場くんが1通くれる" : "OFF — 通知しない"}</button>
       <span class="note" style="margin:0">今月 ${d.urgent_push.used}/${d.urgent_push.cap}通</span></div>
-    <div class="note" style="margin-top:6px">急ぎ判定(太客・来店・日程・お金・不機嫌)の受信だけ。雑談では鳴りません</div></div>` : ""}`;
+    <div class="note" style="margin-top:6px">急ぎ判定(${W("太客・来店", "大切な人・約束")}・日程・お金・不機嫌)の受信だけ。雑談では鳴りません</div></div>` : ""}
+  ${MODESW ? `<div class="note" style="text-align:center;margin-top:16px;cursor:pointer" onclick="modeToggle()">
+    表示モード: ${GENMODE ? "👔 一般" : "🏮 夜職"} — タップで切替(見た目の言葉だけ変わります)</div>` : ""}`;
 }
 window.notifyTgl = async on => {
   try {
@@ -708,7 +722,7 @@ let _contacts = null;
 let _listRows = null;   // v132: 一覧表示中の行(フィルタ別)
 let _listKind = "";   // v132: 一覧の種別フィルタ("":顧客 / staff / peer / all)
 async function vList() {
-  setHead("🗂 カード", "S/A/B順", true);
+  setHead("🗂 カード", W("S/A/B順", "つながりの濃さ順"), true);
   const KTABS = [["", "💐お客様"], ["staff", "🏠店内"], ["peer", "🏮同業"], ["private", "🔒私用"], ["all", "全部"]];
   $("#view").innerHTML = `
     <div class="chips" style="margin-bottom:8px">${KTABS.map(([k, lab]) =>
@@ -1192,7 +1206,7 @@ const impCls = {};   // v127: この画面でランク仕分け済みのcontact
 async function vImport() {
   // v151: ヒエラルキー逆転(審査TOP10-10)。推奨手順を主役の大テキストに、
   // ファイルピッカー(iOSの迷路)は下の控えボタンに格下げ
-  setHead("📥 お客様を追加", "その人との会話ごとお迎え", true);
+  setHead(W("📥 お客様を追加", "📥 相手を追加"), W("その人との会話ごとお迎え", "トーク履歴ごと取り込み"), true);
   $("#view").innerHTML = `
   <input type="file" id="files" accept=".txt,text/plain" multiple style="display:none">
   <div class="card" style="border-color:var(--gold)">
@@ -1307,12 +1321,20 @@ async function vImport() {
 
 // ============ 📨 返信(配達ループ・プリフェッチで待ちゼロ) ============
 const rep = { items: null, i: 0 };
-async function vInbox() {
+async function vInbox(pri) {
   setHead("📨 いまの返信", "", true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/inbox"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   rep.items = d.items; rep.i = 0;
+  // v155: 🔥通知の「この人の返信をひらく」から来た場合、その相手を先頭に繰り上げる。
+  // rep.iジャンプ方式は手前の急ぎを飛ばして「対応済み」と誤認させるので不可(検証済みの設計判断)
+  if (pri) {
+    const k = rep.items.findIndex(x => x.contact === pri);
+    if (k > 0) rep.items.unshift(rep.items.splice(k, 1)[0]);
+    if (k >= 0) toast(`🔥 ${disp(pri)}を先頭にしました`);
+    else toast(`${disp(pri)}は対応済みです`);
+  }
   rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
   drawRep();
 }
@@ -1372,9 +1394,9 @@ async function drawRep() {
     $("#view").innerHTML = mid + `
       <div class="card"><h3 class="sec">🆕 はじめての相手です</h3>
         ${candHtml}
-        <div class="note" style="margin:4px 0 8px">💐 お客様なら、ランクを押すだけで登録完了</div>
+        <div class="note" style="margin:4px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
         <div class="chips">
-          <button class="chip on" onclick="repClsRank('S')">S（太客）</button>
+          <button class="chip on" onclick="repClsRank('S')">S（${W("太客", "大切な人")}）</button>
           <button class="chip" onclick="repClsRank('A')">A</button>
           <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
           <button class="chip" style="border-style:dashed"
@@ -1382,7 +1404,7 @@ async function drawRep() {
         </div>
         <div style="height:1px;background:var(--border);margin:12px 0"></div>
         <div class="chips">
-          <button class="chip" onclick="repInd()">👥 業界の人</button>
+          <button class="chip" onclick="repInd()">👥 ${W("業界の人", "仕事の人")}</button>
           <button class="chip" onclick="repCls('priv')">🔒 私用(取り込まない)</button>
         </div></div>
       <div class="actbar"><button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
@@ -1469,17 +1491,27 @@ window.repMark = j => { const it = rep.items[rep.i];
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
 window.repAct = (action, stampText) => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action, text: "" }); repAdvance(stampText); };
-window.repCls = kind => {
+// v153: 登録系は楽観更新禁止(改善#1後半)。保存を待ち、失敗したら画面を進めない。
+// 圏外でタップ→成功トースト→実は未保存、という「昨日やったのに」の残存経路を塞ぐ
+async function clsSave(body) {
+  try {
+    const r = await api("/api/liff/classify", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r && r.error) throw new Error(r.error);
+    return true;
+  } catch (e) { toast("登録できませんでした。電波の良い所でもう一度押してください"); return false; }
+}
+window.repCls = async kind => {
   const it = rep.items[rep.i];
-  fire("/api/liff/classify", { contact: it.contact, kind });
+  if (!await clsSave({ contact: it.contact, kind })) return;
   bust("contacts");
   if (kind === "priv") repAdvance(`✓ ${it.name}を私用に(受信ごと削除)`);
   else repAdvance(`✓ ${it.name}を仕分けました`);
 };
 // v145: 既存カードへの紐付け(以後この表示名は自動でそのカードに届く)
-window.repLink = target => {
+window.repLink = async target => {
   const it = rep.items[rep.i];
-  fire("/api/liff/classify", { contact: it.contact, kind: "link", target });
+  if (!await clsSave({ contact: it.contact, kind: "link", target })) return;
   bust("contacts"); bust("inbox");
   repAdvance(`🔗 ${disp(target)}のカードに紐付けました(次からは自動)`);
 };
@@ -1487,20 +1519,20 @@ window.repLink = target => {
 window.repInd = () => {
   const card = $("#view").querySelector(".card");
   if (!card) return;
-  card.innerHTML = `<h3 class="sec">👥 業界の人ですね。どの立場？</h3>
+  card.innerHTML = `<h3 class="sec">👥 ${W("業界の人ですね。どの立場？", "仕事の人ですね。どの間柄？")}</h3>
     <div class="chips" style="margin-top:8px">
-      <button class="chip" onclick="repCls2('staff','女')">👯 同僚ホステス</button>
-      <button class="chip" onclick="repCls2('staff','男')">🤵 黒服さん</button>
-      <button class="chip" onclick="repCls2('peer','')">🏮 よその店の子</button></div>
+      <button class="chip" onclick="repCls2('staff','女')">${W("👯 同僚ホステス", "👥 同僚・チーム")}</button>
+      <button class="chip" onclick="repCls2('staff','男')">${W("🤵 黒服さん", "👔 上司・先輩")}</button>
+      <button class="chip" onclick="repCls2('peer','')">${W("🏮 よその店の子", "🤝 社外の仲間")}</button></div>
     <div style="height:1px;background:var(--border);margin:12px 0"></div>
     <div class="chips"><button class="chip" style="border-style:dashed;color:var(--sub)" onclick="drawRep()">← 戻る</button></div>
-    <div class="note" style="margin-top:8px">💡 同僚・黒服=身内の連絡口調／よその店の子=同業の距離感</div>`;
+    <div class="note" style="margin-top:8px">💡 ${W("同僚・黒服=身内の連絡口調／よその店の子=同業の距離感", "社内=身内の口調／社外=ほどよい距離感の口調")}</div>`;
 };
-window.repCls2 = (kind, gender) => {
+window.repCls2 = async (kind, gender) => {
   const it = rep.items[rep.i];
-  fire("/api/liff/classify", { contact: it.contact, kind, gender });
+  if (!await clsSave({ contact: it.contact, kind, gender })) return;
   bust("contacts");
-  const lab = kind === "peer" ? "よその店の子" : (gender === "男" ? "黒服さん" : "同僚ホステス");
+  const lab = kind === "peer" ? W("よその店の子", "社外の仲間") : (gender === "男" ? W("黒服さん", "上司・先輩") : W("同僚ホステス", "同僚・チーム"));
   repAdvance(`✓ ${it.name}を「${lab}」に仕分け`);
 };
 // v120: ✎自分で書く(書いた文はそのまま送れて文体学習にも入る)
@@ -1530,9 +1562,9 @@ window.repSendMine = async () => {
 window.repMarkMine = () => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "" });
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
-window.repClsRank = rank => {
+window.repClsRank = async rank => {
   const it = rep.items[rep.i];
-  fire("/api/liff/classify", { contact: it.contact, kind: "work", rank });
+  if (!await clsSave({ contact: it.contact, kind: "work", rank })) return;
   bust("contacts");
   it.unlinked = false; it.rank = rank || "B"; drawRep();   // その場で下書きへ進む
   toast(`✓ お客様${rank ? "(ランク" + rank + ")" : ""}で登録`);
@@ -1540,10 +1572,10 @@ window.repClsRank = rank => {
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
 const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0 };
-const ANN_PURPOSES = [["shukkin", "🏮 出勤のお知らせ"], ["event", "🎉 イベント"],
-  ["season", "🍂 季節のご挨拶"], ["gobusata", "🕰 ご無沙汰の掘り起こし"], ["free", "✍️ 自由"]];
+const ANN_PURPOSES = () => [["shukkin", W("🏮 出勤のお知らせ", "🗓 近況のお知らせ")], ["event", W("🎉 イベント", "🍽 お誘い")],
+  ["season", "🍂 季節のご挨拶"], ["gobusata", W("🕰 ご無沙汰の掘り起こし", "🕰 ご無沙汰の声かけ")], ["free", "✍️ 自由"]];
 async function vAnn() {
-  setHead("📣 配信をつくる", "", true);
+  setHead(W("📣 配信をつくる", "📣 まとめて連絡"), "", true);
   // v150: 配達おわり後に‹で抜けた古いrun状態が残り、次回「配達おわり!」から始まる問題
   if (ann.step === "run" && ann.q && ann.i >= ann.q.length)
     Object.assign(ann, { step: "purpose", q: [], i: 0, sent: 0 });
@@ -1563,26 +1595,27 @@ async function drawAnn() {
     return;
   }
   if (ann.step === "purpose" || ann.step === "seg") {
-    setHead("📣 配信をつくる", "目的と相手を選んで開始", true);
+    setHead(W("📣 配信をつくる", "📣 まとめて連絡"), "目的と相手を選んで開始", true);
     v.innerHTML = `<div class="card"><h3 class="sec">なんの配信？</h3>
-      <div class="chips" style="margin:8px 0 6px">${ANN_PURPOSES.map(([k, lab]) =>
+      <div class="chips" style="margin:8px 0 6px">${ANN_PURPOSES().map(([k, lab]) =>
         `<button class="chip ${ann.purpose === k ? "on" : ""}"
           onclick="ann.detail=(document.getElementById('annDetail')||{value:ann.detail}).value.trim();ann.purpose='${k}';drawAnn()">${lab}</button>`).join("")}</div>
       <label class="f">伝えたい内容(タップで組み立てもOK。<b>書いた内容は全員の文面に必ず入ります</b>)</label>
       <div class="chips" style="margin-bottom:6px">${(store.get("annhist") ? store.get("annhist").d : []).map(x =>
         `<button class="chip" onclick="document.getElementById('annDetail').value='${esc(x)}'">${esc(x.slice(0, 18))}${x.length > 18 ? "…" : ""}</button>`).join("")}</div>
-      <div class="chips" style="margin-bottom:6px">${["今週", "来週", "月", "火", "水", "木", "金", "土", "お店に出ます", "イベントがあります", "同伴できます"].map(w =>
+      <div class="chips" style="margin-bottom:6px">${["今週", "来週", "月", "火", "水", "木", "金", "土",
+        W("お店に出ます", "ごはん行きませんか"), W("イベントがあります", "近況のご報告です"), W("同伴できます", "久しぶりに会いたいです")].map(w =>
         `<button class="chip" style="padding:7px 12px;font-size:13px" onclick="annWord(${jarg(w)})">${esc(w)}</button>`).join("")}</div>
       <input class="f" id="annDetail" value="${esc(ann.detail)}" placeholder="例: 今週は金曜と土曜おります">
       <h3 class="sec" style="margin-top:16px">誰に配る？(複数選べます・重複は自動でまとめます)</h3>
       <div class="chips" id="annSegs" style="margin-top:8px"><span class="spin"></span></div>
-      <div class="note">同業・店内は文面のトーンが自動で変わります。配達中も1人ずつスキップ可</div></div>`;
+      <div class="note">${W("同業・店内", "仕事仲間・社内")}は文面のトーンが自動で変わります。配達中も1人ずつスキップ可</div></div>`;
     cached("annseg", "/api/liff/ann/segments", d => {
       if (!d || !$("#annSegs")) return;
       const c = d.counts;
-      const segs = [["S", `S客だけ(${c.S})`], ["SA", `S+A客(${c.S + c.A})`], ["ALL", `全顧客(${c.ALL})`],
-        ["GB", `久しぶりの客(${c.GB})`], ["RV", `最近来た客(${c.RV})`], ["BD", `誕生日近い(${c.BD})`],
-        ["PEER", `同業の仲間(${c.PEER})`], ["STAFF", `店内の子(${c.STAFF})`]]
+      const segs = [["S", `${W("S客だけ", "大切な人だけ")}(${c.S})`], ["SA", `${W("S+A客", "大切+近しい人")}(${c.S + c.A})`], ["ALL", `${W("全顧客", "全員")}(${c.ALL})`],
+        ["GB", `${W("久しぶりの客", "久しぶりの人")}(${c.GB})`], ["RV", `${W("最近来た客", "最近会った人")}(${c.RV})`], ["BD", `誕生日近い(${c.BD})`],
+        ["PEER", `${W("同業の仲間", "仕事仲間")}(${c.PEER})`], ["STAFF", `${W("店内の子", "社内・チーム")}(${c.STAFF})`]]
         .filter(([k, lab]) => !lab.includes("(0)"));
       $("#annSegs").innerHTML = (segs.map(([k, lab]) =>
         `<button class="chip" data-seg="${k}">${lab}</button>`).join("")
@@ -1704,7 +1737,7 @@ window.annSkip = () => { const p = ann.q[ann.i]; delete draftCache["a" + p.code]
 // ============ 🙏 お礼・お席記録 ============
 const orei = { step: "main", main: null, stype: "", dohan: "", after: "", helpers: [], guests: [], intros: [], day: "today", sid: null, drafts: [] };
 async function vOrei() {
-  setHead("🙏 お席の記録とお礼", "", true);
+  setHead(W("🙏 お席の記録とお礼", "🍽 会った記録とお礼"), "", true);
   Object.assign(orei, { step: "main", main: null, stype: "", dohan: "", after: "", helpers: [], guests: [], intros: [], day: "today", sid: null, drafts: [] });
   if (!_contacts) { try { _contacts = (await api("/api/liff/contacts")).contacts; } catch (e) {} }
   drawOrei();
@@ -1723,7 +1756,7 @@ let _oreiPre = null;   // prefill(タップ素材)
 function drawOrei() {
   const v = $("#view");
   if (orei.step === "main") {
-    setHead("🙏 お礼", "1/3 今夜の主賓は？(タップ)", true);
+    setHead("🙏 お礼", W("1/3 今夜の主賓は？(タップ)", "1/3 誰と会った？(タップ)"), true);
     if (!_oreiPre) api("/api/liff/orei/prefill").then(r => { _oreiPre = r; drawOrei(); }).catch(() => {});
     const top = _oreiPre ? _oreiPre.mains : (_contacts || []).slice(0, 8).map(c => ({ code: c.code, name: c.name, rank: c.rank }));
     v.innerHTML = `<input class="search" id="oq" placeholder="上に無い人だけ検索" autocomplete="off">
@@ -1858,7 +1891,7 @@ window.oreiSend = async j => {
 
 // ============ 📰 ネタ ============
 async function vNews() {
-  setHead("📰 今日のネタ", "お客様の会社の話題", true);
+  setHead("📰 今日のネタ", W("お客様の会社の話題", "相手の会社の話題"), true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/news"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
@@ -1971,8 +2004,8 @@ function drawFixup() {
       <label class="f">誕生日(分かれば)</label>
       <input class="f" id="fxBd" value="${esc(sg["誕生日"] || "")}" placeholder="8月19日">
       <label class="f">種別 <span style="color:var(--red)">*</span></label>
-      <div class="chips" id="fxKind">${kindChip("customer", "顧客")}${kindChip("staff", "店内(自店)")}
-        ${kindChip("peer", "同業・他店")}${kindChip("priv", "私用(データごと削除)")}</div>
+      <div class="chips" id="fxKind">${kindChip("customer", W("顧客", "仕事の相手"))}${kindChip("staff", W("店内(自店)", "社内・チーム"))}
+        ${kindChip("peer", W("同業・他店", "仕事仲間・社外"))}${kindChip("priv", "私用(データごと削除)")}</div>
       <div id="fxBelongBox" style="display:${sg.kind === "peer" ? "block" : "none"}">
         <label class="f">所属(店名・会社など)</label><input class="f" id="fxBelong" placeholder="例: 〇〇(六本木のクラブ)"></div>
       <label class="f">立場 <span style="color:var(--red)">*</span></label>

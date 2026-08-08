@@ -211,7 +211,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v152"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v157"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -451,6 +451,14 @@ def usage_stats(token: str = ""):
         used = {r[0]: r[1] for r in c.execute(
             "SELECT name, COUNT(*) FROM feature_events WHERE ts>=? GROUP BY name", (t14,))}
         features = {k: {"label": v, "count": used.get(k, 0)} for k, v in FEATURE_LABELS.items()}
+        # v153: ダッシュボード用に「過去1週間」「過去24時間」の2窓を追加(14日窓は旧互換で残置)
+        _t7, _t1 = time.time() - 7 * 86400, time.time() - 86400
+        _used7 = {r[0]: r[1] for r in c.execute(
+            "SELECT name, COUNT(*) FROM feature_events WHERE ts>=? GROUP BY name", (_t7,))}
+        _used1 = {r[0]: r[1] for r in c.execute(
+            "SELECT name, COUNT(*) FROM feature_events WHERE ts>=? GROUP BY name", (_t1,))}
+        features_win = {k: {"label": v, "c7": _used7.get(k, 0), "c1": _used1.get(k, 0)}
+                        for k, v in FEATURE_LABELS.items()}
     return JSONResponse({
         "ok": True, "now": time.time(), "last_ingest_ts": last_ts,
         "contacts_total": n_contacts, "contacts_by_kind": kinds,
@@ -458,7 +466,8 @@ def usage_stats(token: str = ""):
         "hourly": hourly, "actions": actions, "neglected_over_24h": neglected,
         "latency": latency, "by_rank": by_rank, "by_category": by_cat,
         "modes": modes, "avg_edit_ratio": round(avg_edit, 1) if avg_edit is not None else None,
-        "features": features, "today_halfhours": today_halfhours,
+        "features": features, "features_win": features_win,
+        "today_halfhours": today_halfhours,
         "halfhours_12h": halfhours_12h,
         "reader": _reader_status_safe(),
     }, headers={"Access-Control-Allow-Origin": "*"})
