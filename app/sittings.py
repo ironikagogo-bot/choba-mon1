@@ -127,9 +127,20 @@ def mark_sent(sid: int, contact: str):
 
 def _name(code: str) -> str:
     """v150: 呼び名が無い時、生のLINE表示名(グループ印・絵文字・記号入り)をそのまま
-    お礼文に使わない。グループ接頭辞と装飾を落とした最初の語だけを使う。"""
+    お礼文に使わない。グループ接頭辞と装飾を落とした最初の語だけを使う。
+    v162: 本人指摘「お礼の時LINE名が使われている」の原因を修正。カード編集画面で入力する
+    呼び名はattrs(contact_attrsテーブル)の「呼び名」キーに保存されるが、ここは別の
+    ほぼ未使用のcontacts.nickname列しか見ていなかったため、実際に登録した呼び名が
+    ここに届いていなかった(=常にフォールバックのLINE名整形処理に落ちていた)。"""
     c = db.get_contact(code) or {}
-    nm = (c.get("nickname") or "").strip()
+    nm = ""
+    try:
+        from . import crm
+        nm = (crm.get_attrs(code).get("呼び名") or "").strip()
+    except Exception:
+        pass
+    if not nm:
+        nm = (c.get("nickname") or "").strip()
     if nm:
         return nm
     try:

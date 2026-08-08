@@ -42,9 +42,12 @@ body{font-family:'Hiragino Sans','Noto Sans JP',sans-serif;background:var(--crea
   min-height:100vh;font-size:16px;line-height:1.6}
 header{position:sticky;top:0;z-index:10;background:var(--navy);color:#F0ECE2;
   padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;display:flex;align-items:center;gap:10px}
-header .back{font-size:22px;line-height:1;color:#F0ECE2;background:none;border:none;
-  padding:12px 18px 12px 16px;margin:-12px -10px -12px -16px;min-width:44px;min-height:44px;
-  visibility:hidden}   /* v150: 当たり判定44px(実測15×30→44×46) */
+header .back{font-size:20px;line-height:1;color:#F0ECE2;background:none;border:none;
+  padding:8px 14px 6px;margin:-8px -6px -6px -16px;min-width:44px;min-height:44px;
+  visibility:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+  /* v150: 当たり判定44px(実測15×30→44×46)。v161: 本人指摘で「常にホームへ戻る」を
+     常時ラベル表示にして迷子防止をより明確に(v144のルール自体は不変)。 */
+header .back .lbl{font-size:9px;font-weight:700;line-height:1;color:#CBD3E3}
 header.has-back .back{visibility:visible}
 header h1{font-size:17px;font-weight:700;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 header .sub{font-size:12.5px;color:#CBD3E3}
@@ -95,7 +98,7 @@ h3.sec{font-size:14px;margin:0 0 9px;display:flex;align-items:center;gap:6px}
 .hist:last-child{border-bottom:none}
 .hist .d{color:var(--sub);font-size:11px}
 .btn{display:block;width:100%;border:none;border-radius:12px;padding:15px;font-size:16px;font-weight:700;
-  cursor:pointer;margin-top:10px;min-height:50px}
+  cursor:pointer;margin-top:10px;min-height:50px;transition:transform .08s,opacity .08s}
 .btn.primary{background:var(--gold);color:#fff}
 .btn.ghost{background:var(--panel);color:var(--navy);border:1px solid var(--border)}
 .btn.green{background:var(--line);color:#fff}
@@ -105,8 +108,13 @@ input.f,textarea.f{width:100%;border:1px solid var(--border);border-radius:10px;
 textarea.f{min-height:90px;resize:vertical;overflow:hidden}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{border:1px solid var(--border);background:var(--panel);border-radius:99px;padding:11px 16px;font-size:15px;
-  cursor:pointer;color:var(--chiptx);min-height:44px;display:inline-flex;align-items:center}
+  cursor:pointer;color:var(--chiptx);min-height:44px;display:inline-flex;align-items:center;
+  transition:transform .08s,opacity .08s}
 .chip.on{background:var(--navy);color:#fff;border-color:var(--navy)}
+/* v162: 本人指摘「タップできない」対策。*{-webkit-tap-highlight-color:transparent}で
+   iOS標準のタップ光彩を消しているぶん、押した瞬間の視覚フィードバックが無く「反応してない」と
+   誤解されやすかった。押下時にわずかに縮む/薄くなる形で確実に返す(全chip・btn共通)。 */
+.chip:active,.btn:active{transform:scale(.96);opacity:.8}
 .jobrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:14px;flex-wrap:wrap}
 .jobrow:last-child{border-bottom:none}
 .jobrow .st{margin-left:auto;font-size:12px;font-weight:700;flex:1 1 auto;min-width:0;text-align:right;white-space:normal;word-break:break-word;max-width:100%}   /* v151: 長文エラーで画面幅が壊れない */
@@ -115,6 +123,11 @@ textarea.f{min-height:90px;resize:vertical;overflow:hidden}
 .spin{display:inline-block;width:14px;height:14px;border:2px solid #E8D9AE;border-top-color:var(--gold);
   border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
+/* v162: 呼び名未登録の注意喚起(本人指摘)。カード上部の名前の右に付ける小さな赤バッジ */
+.hd-alert{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;
+  border-radius:50%;background:var(--red);color:#fff;font-size:11px;font-weight:800;
+  vertical-align:2px;margin-left:2px;animation:hdblink 1.3s ease-in-out infinite}
+@keyframes hdblink{0%,100%{opacity:1}50%{opacity:.3}}
 .empty{color:var(--sub);font-size:13px;text-align:center;padding:26px 0}
 #toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:var(--navy);color:#fff;
   border-radius:99px;padding:10px 20px;font-size:13px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
@@ -164,7 +177,7 @@ dialog .btn{margin-top:8px;padding:12px}
 </style>
 </head>
 <body>
-<header id="hd"><button class="back" id="btnBack">‹</button>
+<header id="hd"><button class="back" id="btnBack"><span>‹</span><span class="lbl">ホーム</span></button>
   <div style="flex:1"><h1 id="hdTitle">🏮 帳場くん</h1><div class="sub" id="hdSub">今日の状況</div></div>
   <button id="themeBtn" onclick="toggleTheme()" style="background:transparent;border:1px solid rgba(255,255,255,.3);
     border-radius:10px;color:#F0ECE2;font-size:16px;padding:6px 10px">🌙</button>
@@ -414,8 +427,14 @@ let _navDepth = 0;   // (v144から未使用。互換のため残置)
 // 書きかけ保護は従来どおりhashchangeの確認ダイアログが効く。
 $("#btnBack").onclick = () => nav("#home");
 
-function setHead(title, sub, back) {
-  $("#hdTitle").textContent = title; $("#hdSub").textContent = sub || "";
+function setHead(title, sub, back, alert, alertFn) {
+  // v162: alert=true で見出しの右に赤い点滅バッジ(本人指摘=呼び名未登録の注意喚起用)。
+  // 通常はesc不要のtextContentのまま(house rule)。alert時だけ組み立てるのでesc()を通す。
+  // alertFnを渡すとバッジタップで直接そこへ(例: 編集画面)。
+  if (alert) $("#hdTitle").innerHTML = `${esc(title)} <span class="hd-alert" title="呼び名が未登録です"
+    ${alertFn ? `onclick="${alertFn}"` : ""}>!</span>`;
+  else $("#hdTitle").textContent = title;
+  $("#hdSub").textContent = sub || "";
   $("#hd").classList.toggle("has-back", !!back);
 }
 
@@ -827,7 +846,8 @@ function drawCard(code, d) {
   if (d.error) { $("#view").innerHTML = `<div class="empty">カードが見つかりません</div>`; return; }
   const fmtGap = g => g === 0 ? "今日" : g === 1 ? "昨日" : g + "日前";   // v150: 生数字をやめる
   const fmtMin = m => m < 60 ? `約${m}分` : m < 1440 ? `約${Math.round(m / 60)}時間` : `約${Math.round(m / 1440)}日`;
-  setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true);
+  setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true,
+    d.kind !== "private" && !(d.attrs && d.attrs["呼び名"]), `nav('#edit/${encodeURIComponent(code)}')`);
   const sg = d.attrs && d.attrs["店内区分"] || "";
   const staffLab = sg === "女" ? W("👯同僚ホステス", "👯同僚・チーム") : sg === "男" ? W("🤵黒服さん", "🤵上司・先輩") : W("店内", "社内");
   const kindLab = ({ customer: W("💐お客様", "💐仕事の相手"), staff: staffLab, peer: W("🏮よその店の子(同業)", "🏮社外の仲間"), private: "私用" })[d.kind] || W("💐お客様", "💐仕事の相手");
@@ -873,7 +893,8 @@ function drawCard(code, d) {
     .map(x => `<div class="hist"><div class="d">${new Date(x.ts * 1000).toLocaleDateString("ja-JP")}</div>${x.t}</div>`)
     .join("");
   $("#view").innerHTML = `
-  <div style="display:flex;justify-content:flex-end;margin:-4px 0 8px">
+  <div style="display:flex;justify-content:flex-end;gap:8px;margin:-4px 0 8px">
+    <button class="chip" onclick="nav('#list')">🗂 一覧へ</button>
     <button class="chip on" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button></div>
   ${d.pending_facts ? `<div class="banner" onclick="nav('#seibip/${cq}')">✅<div class="txt">
     この人の確認<b>${d.pending_facts}件</b> — タップで○✕するだけ(30秒)</div><span class="chev">›</span></div>` : ""}
@@ -954,10 +975,13 @@ function drawCard(code, d) {
     <button class="chip" onclick="cardPrint('${cq}','full')">📄 印刷/PDF(自分用・全部)</button>
   </div>
   <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>
-  <button class="btn ghost" style="margin-top:8px" onclick="nav('#list')">🗂 一覧へ</button>
   <!-- v160: ‹は常にホーム固定(v144・迷子防止)なので、一覧から来た時にここで一覧へ戻る手段が
        無かった(編集後も含め毎回ホーム経由になる摩擦。実運用者から複数回報告)。‹の仕様は変えず
-       画面内ボタンで補う(編集画面の「やめる」と同じ思想)。 -->
+       画面内ボタンで補う(編集画面の「やめる」と同じ思想)。v161: 本人指摘で上にも同じボタンを追加し、
+       サイズもbtn(大)からchip(小)へ — 主役はあくまで✎カードを直す、一覧へは控えめな導線でいい。 -->
+  <div style="text-align:center;margin-top:10px">
+    <button class="chip" onclick="nav('#list')">🗂 一覧へ</button>
+  </div>
   ${d.pending_facts ? `<div style="height:70px"></div>
   <div class="stickyfix" onclick="nav('#seibip/${cq}')">✅ <b>${esc(disp(d.name))}の確認 ${d.pending_facts}件</b>
     <span style="font-weight:400">○✕するだけ・30秒</span><span class="chev" style="margin-left:auto">›</span></div>` : ""}`;
@@ -2004,6 +2028,10 @@ window.annWord = w => {
   if (!el) return;
   let cur = el.value.trim();
   if (["月", "火", "水", "木", "金", "土"].includes(w)) w = w + "曜";
+  // v162: 本人指摘「タップできない、機能性悪し」の実体は反応が無いように見えて連打してしまい、
+  // 同じ語が「今週は今週は来週はイベントがあります」のように壊れて二重に入ることだった。
+  // 直前に同じ語が既に入っていたら何もせず知らせるだけにする(取り消し線的な誤操作防止)。
+  if (cur && cur.endsWith(w)) { toast(`「${w}」はすでに入っています`); return; }
   if (cur && !/[、。 ]$/.test(cur) && !cur.endsWith("週")) cur += (w.endsWith("曜") && /曜$/.test(cur) ? "と" : "、");
   if (/週$/.test(cur.trim()) ) cur = cur.replace(/週$/, "週は");
   el.value = (cur + w).replace(/曜と曜/, "曜");
@@ -2054,6 +2082,9 @@ function drawFixup() {
         onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code).replace(/"/g, '&quot;')}">表示名をそのまま使う</button>`}
       <label class="f">本名（分かれば）</label>
       <input class="f" id="fxHn" value="${esc(sg["本名"] || "")}">
+      ${(!sg["本名"] && sg["本名候補"]) ? `<button class="chip" style="margin-top:6px"
+        onclick="document.getElementById('fxHn').value=${JSON.stringify(sg["本名候補"]).replace(/"/g, '&quot;')}">
+        「${esc(sg["本名候補"])}」を本名として使う</button>` : ""}
       <label class="f">誕生日(分かれば)</label>
       <input class="f" id="fxBd" value="${esc(sg["誕生日"] || "")}" placeholder="8月19日">
       <label class="f">種別 <span style="color:var(--red)">*</span></label>

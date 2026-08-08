@@ -295,10 +295,15 @@ def _fixup_items():
         for s_, lab in (("up", "目上"), ("even", "対等"), ("down", "目下")):
             if lab in rel:
                 sug_stand = s_
+        _hn = fx.get("本名") or a.get("本名") or ""
+        # v164: 本人要望「LINE名が本名ぽければ本名に最初から入力できないか」。
+        # 会話から本名が抽出できていない時だけ、LINE表示名(=code)自体が本名らしい形かを
+        # 見て候補を出す(あくまで候補=仕分け画面で人が確認・タップ確定する。自動確定はしない)。
+        _hn_guess = "" if _hn else (code if crm.looks_like_real_name(code) else "")
         out.append({"code": code, "name": linebot._yobina(code, a),
                     "rank": ct.get("rank") or "B", "missing": missing,
                     "suggest": {"呼び名": fx.get("呼び名") or a.get("呼び名") or "",
-                                "本名": fx.get("本名") or a.get("本名") or "",
+                                "本名": _hn, "本名候補": _hn_guess,
                                 "誕生日": fx.get("誕生日") or ct.get("birthday") or "",
                                 "kind": ct.get("kind") or sug_kind or "customer",
                                 "stand": ct.get("stand") or sug_stand or "even"}})
@@ -336,6 +341,12 @@ async def liff_fixup_bulk_ep(request: Request):
                 crm.add_alias(yb, code)
             except Exception:
                 pass
+            # v164: ⚡おまかせ確定でも本名候補があれば入れる(呼び名と同じ「あとで直せる」前提)
+            hn = (a.get("本名") or "").strip() or (sg.get("本名") or "").strip()
+            if not hn and crm.looks_like_real_name(code):
+                hn = code
+            if hn:
+                crm.add_def("本名"); crm.set_attr(code, "本名", hn)
             kind = (sg.get("kind") or "customer").strip() or "customer"
             stand = (sg.get("stand") or "even").strip() or "even"
             with db.conn() as c:

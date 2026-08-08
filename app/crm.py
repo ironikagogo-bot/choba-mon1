@@ -7,6 +7,7 @@
 - attr_defs:       ユーザー定義属性の定義(型: choice/text/number/date)
 - contact_attrs:   顧客ごとの属性値
 """
+import re
 import time
 
 from . import db
@@ -93,6 +94,31 @@ def _norm_name(s: str) -> str:
     s = _ud.normalize("NFKC", (s or "")).strip().lower()
     s = "".join(ch for ch in s if ch.isalnum())
     return _HON_TAIL.sub("", s)
+
+
+# v164: 本人要望「LINE名が本名ぽければ本名に最初から入力できないか」。
+# 絵文字・記号・数字が一切無く、漢字の姓名らしい並び or 欧文Title Caseの2〜3語に
+# 一致する場合だけ「本名候補」とする(過検出より見逃しを優先=本名欄を誤った値で汚さない)。
+# あくまで初期値の"候補"提示用で、確定情報として扱わない(仕分け画面で必ず人が確認する)。
+_NAME_KANJI_RE = re.compile(r"^[一-龯々〆ヶ]{2,6}(?:[ 　][一-龯々〆ヶ]{1,4})?$")
+_NAME_LATIN_RE = re.compile(r"^[A-Z][a-zA-Z'\-]{1,}(?:[ 　][A-Z][a-zA-Z'\-]{1,}){1,2}$")
+
+
+def looks_like_real_name(name: str) -> bool:
+    """LINE表示名が本名らしい形かのおおまかな判定。絵文字・記号・数字・スペース以外の
+    非文字が1つでも混じっていたら対象外。グループ由来コードも対象外。"""
+    s = (name or "").strip()
+    if not s or len(s) > 20:
+        return False
+    g, _p = group_split(s)
+    if g:
+        return False
+    for ch in s:
+        if ch in " 　・":
+            continue
+        if not _ud.category(ch).startswith("L"):
+            return False
+    return bool(_NAME_KANJI_RE.match(s) or _NAME_LATIN_RE.match(s))
 
 
 def find_candidates(display_name: str, limit: int = 3, auto: bool = False) -> list:
@@ -948,7 +974,9 @@ def upcoming_anniversaries(within_days: int = 14, today=None) -> list:
         if (r.get("kind") or "customer") not in ("customer", "peer"):
             continue
         code = r.get("code")
-        nm = (r.get("nickname") or "").strip() or code
+        # v162: 誕生日等の祝い文の宛名も、お礼と同じ根本原因(attrsの呼び名を見ずcontacts.nickname
+        # という別の未使用列だけ見ていた)でLINE表示名になっていた。attrsを優先して修正。
+        nm = (get_attrs(code).get("呼び名") or "").strip() or (r.get("nickname") or "").strip() or code
         emit(code, nm, "self", f"{nm} 様のお誕生日", r.get("birthday"))
         emit(code, nm, "founding", f"{nm} 様の創立記念日", r.get("founding"))
         for part in (r.get("kids_bday") or "").split(","):
