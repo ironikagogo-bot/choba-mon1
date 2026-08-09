@@ -56,6 +56,11 @@ main{padding:14px 14px calc(env(safe-area-inset-bottom) + 28px);max-width:560px;
 .tile{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:12px 6px;text-align:center}
 .tile b{display:block;font-size:22px;color:var(--navy)}
 .tile span{font-size:11px;color:var(--sub)}
+/* v183: ネタの金パルス(点滅対象=行事・紙面の当日新着のみ。赤=本流エラー専用のため金) */
+.tile-new{animation:netapulse 2.4s ease-in-out infinite}
+@keyframes netapulse{0%,100%{box-shadow:0 0 0 0 rgba(201,164,76,0)}
+  50%{box-shadow:0 0 0 6px rgba(201,164,76,.25)}}
+@media (prefers-reduced-motion: reduce){.tile-new{animation:none;outline:2px solid var(--gold)}}
 .banner{background:#FBF6E9;border:1px solid #E8D9AE;border-radius:14px;padding:12px 14px;
   display:flex;align-items:center;gap:10px;margin-bottom:12px}
 .banner .txt{flex:1;font-size:13px}
@@ -1006,7 +1011,7 @@ function drawHome(d) {
     <span class="chev" style="margin-left:auto">›</span></div>
   <div class="tiles">
     <div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち${(d.queue_msgs || 0) > d.queue ? `(全${d.queue_msgs}通)` : ""} ›</span></div>
-    <div class="tile" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ ›</span></div>
+    <div class="tile ${(d.neta_blink || 0) > 0 && ((store.get("neta_seen") || {}).d || 0) < (d.neta_latest_ts || 0) ? "tile-new" : ""}" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ${(d.neta_hot || 0) > 0 ? " 🔥" : ""} ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
   </div>
   ${d.fixup ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
@@ -2564,39 +2569,84 @@ window.oreiMark = j => {   // 本人の確定タップで送信記録(fire)+完�
 };
 
 // ============ 📰 ネタ ============
+// v183: 話題(興味kw)と会社の2セクション構成。who=v183からdict{code:元の記載語}(旧list形式も読む)
+function newsWho(x) {
+  let w; try { w = JSON.parse(x.who || "null"); } catch (e) { w = null; }
+  if (Array.isArray(w)) return w.map(c => [String(c), ""]);
+  if (w && typeof w === "object") return Object.entries(w);
+  return [];
+}
+let _newsItems = [];
+function newsCard(x, j) {
+  const whos = newsWho(x);
+  const isKw = !!x.kw;
+  const orig = whos.map(([, o]) => o).filter(o => o && o !== x.kw);
+  const head = isKw
+    ? `${x.tier === "group" ? "🔥" : "🏷"} ${esc(x.kw)} — ${W(`${whos.length}人のお客様に効きます`, `${whos.length}人に効きます`)}`
+    : `<span class="plink" data-plink="${encodeURIComponent(x.contact || "")}">${esc(disp(x.name || x.contact))}</span>（${esc(x.company)}）`;
+  const chips = isKw && whos.length
+    ? `<div style="font-size:11px;margin-top:3px">${whos.map(([c]) => `<span class="plink" data-plink="${encodeURIComponent(c)}">${esc(disp(c))}</span>`).join("・")}${orig.length ? ` <span style="color:var(--sub)">(カード記載: ${esc([...new Set(orig)].join("・"))})</span>` : ""}</div>` : "";
+  const usedMark = x.used_ts ? `<span style="color:var(--green);font-weight:700"> ✓使用済み</span>` : "";
+  return `
+      <div class="card" id="nw${j}" ${x.used_ts ? 'style="opacity:.55"' : ""}>
+        <div style="font-size:11px;color:var(--gold);font-weight:700">${head}${usedMark}</div>
+        ${chips}
+        <div style="font-weight:700;font-size:14px;margin:4px 0">${esc(x.title)}</div>
+        ${x.caution ? `<div class="note" style="color:var(--gold);font-weight:700">⚠️ この話題は触れ方に注意（記事を確認してください）</div>` : ""}
+        ${x.opener && !x.caution ? `<div class="pill gold" style="margin-top:4px">💬 ${esc(x.opener)}</div>` : ""}
+        ${x.link ? `<div style="font-size:11px;margin-top:4px"><a href="${esc(x.link)}" target="_blank" style="color:#3866b0">▸ 記事を開く</a></div>` : ""}
+        ${isKw && whos.length >= 2 && x.opener && !x.caution ? `<div class="note" style="margin-top:4px">※同じ文をそのまま複数人に送らないでね</div>` : ""}
+        <div class="row" style="display:flex;gap:8px;margin-top:10px">
+          ${x.opener && !x.caution ? `<button class="btn green" style="margin:0;flex:1;padding:11px" onclick="newsSend(${j})">📤 これで話しかける</button>` : ""}
+          ${x.contact ? `<button class="btn ghost" style="margin:0;flex:0 0 96px;padding:11px" onclick="nav('#card/${encodeURIComponent(x.contact)}')">🗂 カード</button>` : ""}
+          <button class="btn ghost" style="margin:0;flex:0 0 44px;padding:11px" onclick="newsDismiss(${x.id ?? x.nid ?? j},'nw${j}')">✕</button>
+        </div></div>`;
+}
 async function vNews() {
-  setHead("📰 今日のネタ", W("お客様の会社の話題", "相手の会社の話題"), true);
+  setHead("📰 今日のネタ", W("お客様の会社と興味の話題", "相手の会社と興味の話題"), true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/news"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   const items = d.items || [];
-  $("#view").innerHTML = `<button class="btn ghost" style="margin:0 0 12px" onclick="newsRefresh(this)">↻ ネタを集め直す</button>` +
-    (items.length ? items.map((x, j) => {
-      // v125: キーワード紐づけ(趣味・お酒)は該当者一覧を表示
-      let whos = [];
-      try { whos = x.kw ? JSON.parse(x.who || "[]") : []; } catch (e) {}
-      const head = x.kw
-        ? `🏷 「${esc(x.kw)}」好きのお客様${whos.length ? `（${whos.map(w => `<span class="plink" data-plink="${encodeURIComponent(w)}">${esc(disp(w))}</span>`).join("・")}）` : ""}`
-        : `<span class="plink" data-plink="${encodeURIComponent(x.contact || "")}">${esc(disp(x.name || x.contact))}</span>（${esc(x.company)}）`;
-      return `
-      <div class="card" id="nw${j}">
-        <div style="font-size:11px;color:var(--gold);font-weight:700">${head}</div>
-        <div style="font-weight:700;font-size:14px;margin:4px 0">${esc(x.title)}</div>
-        ${x.opener ? `<div class="pill gold" style="margin-top:4px">💬 ${esc(x.opener)}</div>` : ""}
-        ${x.link ? `<div style="font-size:11px;margin-top:4px"><a href="${esc(x.link)}" target="_blank" style="color:#3866b0">▸ 記事を開く</a></div>` : ""}
-        <div class="row" style="display:flex;gap:8px;margin-top:10px">
-          ${x.opener ? `<button class="btn green" style="margin:0;flex:1;padding:11px" onclick='newsSend(${jarg(x.opener)})'>📤 これで話しかける</button>` : ""}
-          ${x.contact ? `<button class="btn ghost" style="margin:0;flex:0 0 96px;padding:11px" onclick="nav('#card/${encodeURIComponent(x.contact)}')">🗂 カード</button>` : ""}
-          <button class="btn ghost" style="margin:0;flex:0 0 44px;padding:11px" onclick="newsDismiss(${x.id ?? x.nid ?? j},'nw${j}')">✕</button>
-        </div></div>`; }).join("")
-      : `<div class="empty">まだありません。顧客カードに会社名・趣味・好きなお酒を入れると毎朝ここに集まります。</div>`);
+  _newsItems = items;
+  store.set("neta_seen", d.latest_ts || 0);   // v183: 閲覧で🔥点滅を止める(端末内だけで完結)
+  const kw = items.filter(x => x.kw), co = items.filter(x => !x.kw);
+  kw.sort((a, b) => (b.tier === "group") - (a.tier === "group"));
+  let html = `<button class="btn ghost" style="margin:0 0 12px" onclick="newsRefresh(this)">↻ ネタを集め直す</button>`;
+  if (kw.length)
+    html += `<h3 class="sec" style="font-size:12px;color:var(--sub);margin:0 2px 6px">🏷 きょうの話題</h3>`
+      + kw.map(x => newsCard(x, items.indexOf(x))).join("");
+  else if (co.length)
+    html += `<div class="note" style="margin:0 2px 10px">きょうは興味の話題なし。カードに趣味・好きなお酒・好きな食べ物を足すと拾える幅が広がります</div>`;
+  if (co.length)
+    html += `<h3 class="sec" style="font-size:12px;color:var(--sub);margin:12px 2px 6px">🏢 ${W("お客様の会社", "会社・仕事")}</h3>`
+      + co.map(x => newsCard(x, items.indexOf(x))).join("");
+  if (!items.length)
+    html += `<div class="empty">まだありません。顧客カードに会社名・趣味・好きなお酒・好きな食べ物を入れると毎朝ここに集まります。</div>`;
+  $("#view").innerHTML = html;
 }
-window.newsSend = async opener => { await sendViaLine(opener); };
+window.newsSend = async j => {
+  const x = _newsItems[j]; if (!x) return;
+  // v183: 単発(会社ネタ)はv176検索語ユニットに接続。興味ネタはコピーのみ(宛先は本人が選ぶ)
+  const r = await sendViaLine(x.opener, x.contact || "", x.sname || "", x.sword || "");
+  if (r === "sent" || r === "copied") {
+    fire("/api/liff/news/used", { nid: x.id });
+    x.used_ts = Date.now() / 1000;
+    const el = $("#nw" + j);
+    if (el) { el.style.opacity = ".55";
+      const h = el.querySelector("div"); if (h && !h.innerHTML.includes("✓使用済み"))
+        h.innerHTML += `<span style="color:var(--green);font-weight:700"> ✓使用済み</span>`; }
+  }
+};
 window.newsDismiss = (nid, elid) => { fire("/api/liff/news/dismiss", { nid });
   const el = $("#" + elid); if (el) el.remove(); };
-window.newsRefresh = async btn => { btn.textContent = "集めています…";
-  try { await api("/api/liff/news/refresh", { method: "POST" }); } catch (e) {}
-  vNews(); };
+window.newsRefresh = btn => {
+  // v183: サーバー側は裏で実行(数分かかる)。UIは待たせず、少し後に自動で開き直す
+  fire("/api/liff/news/refresh", {});
+  btn.textContent = "裏で集めています…(2〜3分。あとで開き直すと反映されます)";
+  btn.disabled = true;
+  setTimeout(() => { if ((location.hash || "") === "#news") vNews(); }, 45000);
+};
 
 // ============ 🎂 記念日(v104) ============
 async function vAnni() {
@@ -2694,9 +2744,11 @@ function drawFixup() {
         <label class="f">所属(店名・会社など)</label><input class="f" id="fxBelong" placeholder="例: 〇〇(六本木のクラブ)"></div>
       <label class="f">立場 <span style="color:var(--red)">*</span></label>
       <div class="chips" id="fxStand">${standChip("up", "先輩・目上")}${standChip("even", "対等")}${standChip("down", "後輩・目下")}</div>
+      <label class="f">ランク <span style="color:var(--red)">*</span></label>
+      <div class="chips" id="fxRank">${["S", "A", "B"].map(v => `<button class="chip ${(it.rank || "B") === v ? "on" : ""}" data-rank="${v}">${v === "S" ? W("S(太客)", "S(最重要)") : v === "A" ? "A" : W("B(ふつう)", "B(ふつう)")}</button>`).join("")}</div>
       <button class="btn primary" id="fxSave">確定して次へ</button>
       <button class="btn ghost" onclick="fx.i+=1;drawFixup()">あとで(スキップ)</button></div>`;
-  const sel = { kind: sg.kind || "", stand: sg.stand || "" };
+  const sel = { kind: sg.kind || "", stand: sg.stand || "", rank: it.rank || "B" };   // v182: ランクも3連の一角
   $("#fxKind").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
     $("#fxKind").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); sel.kind = b.dataset.kind;
@@ -2704,12 +2756,15 @@ function drawFixup() {
   $("#fxStand").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
     $("#fxStand").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); sel.stand = b.dataset.stand; });
+  $("#fxRank").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
+    $("#fxRank").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); sel.rank = b.dataset.rank; });
   $("#fxSave").onclick = async () => {
     const body = { code: it.code, "呼び名": $("#fxYb").value.trim(), "本名": $("#fxHn").value.trim(),
-      "誕生日": $("#fxBd").value.trim(), kind: sel.kind, stand: sel.stand,
+      "誕生日": $("#fxBd").value.trim(), kind: sel.kind, stand: sel.stand, rank: sel.rank,
       "所属": ($("#fxBelong") || { value: "" }).value.trim() };
-    if (body.kind !== "priv" && (!body["呼び名"] || !body.kind || !body.stand))
-      return toast("呼び名・種別・立場は必須です(候補ボタンで1タップ入力できます)");
+    if (body.kind !== "priv" && (!body["呼び名"] || !body.kind || !body.stand || !body.rank))
+      return toast("呼び名・種別・立場・ランクは必須です(候補ボタンで1タップ入力できます)");
     if (body.kind === "priv") {   // v150: ネイティブconfirm廃止(iOSのドメイン名入りダイアログ問題)
       const ok = await askDanger(`${disp(it.name)}を私用にする`,
         "この人からの受信は今後取り込まれず、いままでの受信も消えます。");

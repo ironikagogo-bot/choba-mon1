@@ -189,9 +189,21 @@ def liff_home(request: Request):
     urgent_n = sum(1 for x in q if x.get("urgent"))
     unlinked_n = sum(1 for x in q if x.get("unlinked"))
     try:
-        neta = len(news.list_items())
+        _nitems = news.list_items()
+        # v183: タイルの数字=話題数(同じ興味/同じ会社の複数記事は1と数える)。3日で自動失効
+        neta = len({(x.get("kw") or "") or ((x.get("contact") or "") + "|" + (x.get("company") or ""))
+                    for x in _nitems})
+        _jst0 = (int((time.time() + 9 * 3600) // 86400)) * 86400 - 9 * 3600   # 当日JST 0:00
+        # 🔥=当日新着の格上げネタ(群3人以上・行事・紙面) / blink=点滅対象(行事・紙面のみ=v184から発火)
+        neta_hot = sum(1 for x in _nitems
+                       if (x.get("tier") or "") in ("group", "event", "paper")
+                       and (x.get("created_ts") or 0) >= _jst0)
+        neta_blink = sum(1 for x in _nitems
+                         if (x.get("tier") or "") in ("event", "paper")
+                         and (x.get("created_ts") or 0) >= _jst0)
+        neta_latest = max((x.get("created_ts") or 0 for x in _nitems), default=0)
     except Exception:
-        neta = 0
+        neta, neta_hot, neta_blink, neta_latest = 0, 0, 0, 0
     try:
         anni = len(crm.upcoming_anniversaries(14))
     except Exception:
@@ -239,7 +251,9 @@ def liff_home(request: Request):
         "queue_msgs": sum(int(x.get("count") or 1) for x in q),
         "deferred": deferred_n,   # v177: ↷あとで分(まとめ箱)の通数
 
-        "neta": neta, "anni": anni, "contacts": n_contacts,
+        "neta": neta, "neta_hot": neta_hot, "neta_blink": neta_blink,
+        "neta_latest_ts": neta_latest,
+        "anni": anni, "contacts": n_contacts,
         "estranged": est_sa[:5],
         "sent_week": sent_n, "verbatim_week": verb,
         "pending_facts": pending_n,
@@ -282,6 +296,11 @@ def _fixup_items():
     facts = {}
     for f in fact_rows:
         facts.setdefault(f["contact"], {})[f["k"]] = f["v"]
+    # v182: AIの種別・立場の予想を暫定適用して動いている相手(=🔖がpendingのまま)は、
+    # kindが埋まっていても本人の3連タップ(種別・立場・ランク)が済むまでキューに残す
+    with db.conn() as c:
+        _pend_rel = set(r["contact"] for r in c.execute(
+            "SELECT DISTINCT contact FROM linebot_facts WHERE k='🔖種別・立場' AND status='pending'"))
     for ct in db.list_contacts():
         if ct.get("linked") == 0:
             continue   # 未紐付けは受信箱の仕分けが担当
@@ -294,6 +313,8 @@ def _fixup_items():
             missing.append("種別")
         if not (ct.get("stand") or "").strip():
             missing.append("立場")
+        if code in _pend_rel and "種別" not in missing:
+            missing.append("種別・立場(AI予想)")
         if not missing:
             continue
         fx = facts.get(code, {})
@@ -383,6 +404,7 @@ async def liff_fixup_save(request: Request):
         hn = (b.get("本名") or "").strip()
         kind = (b.get("kind") or "").strip()
         stand = (b.get("stand") or "").strip()
+        rank = (b.get("rank") or "").strip()   # v182: 3連の一角(必須)
         bd = (b.get("誕生日") or "").strip()
         belong = (b.get("所属") or "").strip()
     except Exception:
@@ -394,8 +416,9 @@ async def liff_fixup_save(request: Request):
         crm.discard_unlinked(code)
         db.track("liff_fixup_priv")
         return {"ok": True, "discarded": True}
-    if not (yb and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")):
-        return JSONResponse({"error": "呼び名・種別・立場は必須です"}, status_code=400)
+    if not (yb and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")
+            and rank in ("S", "A", "B")):
+        return JSONResponse({"error": "呼び名・種別・立場・ランクは必須です"}, status_code=400)
     crm.add_def("呼び名"); crm.set_attr(code, "呼び名", yb)
     if hn:
         crm.add_def("本名"); crm.set_attr(code, "本名", hn)
@@ -406,7 +429,7 @@ async def liff_fixup_save(request: Request):
     except Exception:
         pass
     with db.conn() as c:
-        c.execute("UPDATE contacts SET kind=?, stand=? WHERE code=?", (kind, stand, code))
+        c.execute("UPDATE contacts SET kind=?, stand=?, rank=? WHERE code=?", (kind, stand, rank, code))
         if bd:
             c.execute("UPDATE contacts SET birthday=? WHERE code=?", (bd, code))
         # 抽出候補は確認済み扱いに(チャット🔎整備で二度聞きしない)
@@ -553,7 +576,9 @@ def liff_contact(code: str, request: Request):
     except Exception:
         persona = None
     try:
-        items = [x for x in news.list_items() if x.get("contact") == code][:3]
+        # v183: 興味ネタ(who該当)もこの相手のカードに出す=「顧客情報の見落とし防止」
+        items = [x for x in news.list_items()
+                 if x.get("contact") == code or code in news.who_codes(x)][:3]
     except Exception:
         items = []
     pstat = linebot._meta_get(f"pstat_{code}") or ""
@@ -1393,7 +1418,8 @@ def _run_import_job(jid: int, contact: str, text: str):
             db.save_profile(contact, cp)
         except Exception:
             pass
-        if not db.get_contact(contact):
+        was_new = not db.get_contact(contact)   # v182: 新規カードのみ裏予想を適用する判定
+        if was_new:
             db.upsert_contact(contact, "B")
             crm.link_contact(contact)
             crm.add_alias(contact, contact)
@@ -1435,6 +1461,22 @@ def _run_import_job(jid: int, contact: str, text: str):
         facts = linebot.curate_facts(facts or [])
         facts = linebot._ensure_name_questions(contact, facts)
         ncrit, nauto = linebot.save_split(contact, facts)
+        # v182: 本人裁定「手入力までは裏予想で動く」。AIの種別・立場推定を暫定適用する。
+        # 🔖種別・立場のpending(確認待ち)は残る=仕分け画面の3連タップを必ず求め続け、
+        # 本人の入力があれば上書きされる(家訓5の管理された例外・既存のkindがある相手は触らない)
+        try:
+            if rel and was_new:   # 既存カード(紐づけ取り込み)はどんな状態でも触らない
+                _v = str(rel.get("v") or "")
+                _k = ("peer" if _v.startswith("同業") else "staff" if _v.startswith("店内")
+                      else "" if _v.startswith("私用") else "customer")
+                _s = ("up" if ("目上" in _v or "先輩" in _v)
+                      else "down" if ("目下" in _v or "後輩" in _v) else "even")
+                if _k:
+                    with db.conn() as c:
+                        c.execute("UPDATE contacts SET kind=?, stand=? WHERE code=?", (_k, _s, contact))
+                    print(f"[import rel-provisional] {contact} <- {_k}/{_s}", flush=True)
+        except Exception as e:
+            print(f"[import rel-provisional] {e}", flush=True)
         # v167: 本人実例庫(状況×相手の発言×本人の返し)の収穫。失敗しても取り込みは止めない
         try:
             from . import situations
@@ -2042,24 +2084,43 @@ def liff_anni(request: Request):
 def liff_news(request: Request):
     if not _authed(request):
         return _deny()
-    from . import news, linebot
+    from . import news, linebot, crm as _crm
     items = news.list_items(20)
+    latest = 0.0
     for x in items:
+        latest = max(latest, x.get("created_ts") or 0)
         try:
             x["name"] = linebot._yobina(x.get("contact") or "")
         except Exception:
             x["name"] = x.get("contact") or ""
-    return {"ok": True, "items": items}
+        # v183: 単発送信にv176検索語ユニットを接続(会社ネタ=contactあり)
+        if x.get("contact"):
+            try:
+                _a = _crm.get_attrs(x["contact"]) or {}
+                x["sname"] = _a.get("LINE検索名") or ""
+                x["sword"] = _a.get("LINE検索確定語") or ""
+            except Exception:
+                x["sname"], x["sword"] = "", ""
+    return {"ok": True, "items": items, "latest_ts": latest}
 
 
 @router.post("/api/liff/news/refresh")
 def liff_news_refresh(request: Request):
+    """v183: 同期実行を廃止(全パス実行は数分かかりプロキシの約100秒を超える)。
+    裏スレッドで起動して即返す。失敗しても本流には影響しない。"""
     if not _authed(request):
         return _deny()
     from . import news
-    r = news.refresh(force=True)
+    import threading as _th
+
+    def _run():
+        try:
+            news.refresh(force=True)
+        except Exception as e:
+            print(f"[news refresh bg] {e}", flush=True)
+    _th.Thread(target=_run, daemon=True).start()
     db.track("liff_news_refresh")
-    return {"ok": True, "result": r}
+    return {"ok": True, "started": True}
 
 
 @router.post("/api/liff/news/dismiss")
@@ -2072,6 +2133,21 @@ async def liff_news_dismiss(request: Request):
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     news.dismiss(nid)
+    return {"ok": True}
+
+
+@router.post("/api/liff/news/used")
+async def liff_news_used(request: Request):
+    """v183: 「📤これで話しかける」成立の記録。同じ興味は3日休む(同文使い回し抑制)。"""
+    if not _authed(request):
+        return _deny()
+    from . import news
+    try:
+        nid = int((await request.json()).get("nid"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    news.mark_used(nid)
+    db.track("liff_news_used")
     return {"ok": True}
 
 
