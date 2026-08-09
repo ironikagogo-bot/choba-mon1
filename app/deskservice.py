@@ -268,6 +268,22 @@ class DeskService:
             _BOT_SIGS = ("メニューの📨返信から", "から急ぎの気配", "今月の緊急通知が上限",
                          "ひも付けが完了しました", "わたしの帳場くんにする")
             if ("帳場" in contact) or any(sig in (message or "") for sig in _BOT_SIGS):
+                # v168: 接続テスト(ループチェック)の折り返し検出。ダッシュボードのテストは
+                # 本人のLINEへ「🔧接続テスト {id}」をpushし、それがリーダー経由でここへ
+                # 戻ってくるかを見る(戻ってきた=通知表示→APK捕捉→送信の経路全部が今生きている証拠)。
+                # 検出して記録した後は従来通り取り込まない=カードは汚れない。
+                if "🔧接続テスト" in (message or ""):
+                    try:
+                        import json as _json
+                        from . import linebot as _lb
+                        cur = _json.loads(_lb._meta_get("loopcheck") or "{}")
+                        if cur.get("status") == "waiting" and cur.get("id") and cur["id"] in message:
+                            cur["status"] = "ok"
+                            cur["echo_ts"] = time.time()
+                            _lb._meta_set("loopcheck", _json.dumps(cur))
+                            self.log("→ 🔧接続テストの折り返しを確認(経路は正常)")
+                    except Exception as _e:
+                        self.log(f"[loopcheck] {_e}")
                 self.log(f"→ 帳場くん系の通知なので取り込まない({contact[:24]})")
                 return {"status": "ignored-bot"}
             msg_id = f"{key}|{ts}" if (key or "").strip() else None

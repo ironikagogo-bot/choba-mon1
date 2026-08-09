@@ -218,7 +218,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v167"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v168"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -336,6 +336,48 @@ def _reader_status_safe():
         return watchdog.status()
     except Exception:
         return None
+
+
+@app.post("/api/loopcheck/start")
+def loopcheck_start(token: str = ""):
+    """v168: ダッシュボードの「いま生きてるか確認」。本人のLINEへテスト通知を1通pushし、
+    それがスマホの通知→リーダー(APK)→サーバーと折り返って来るかを見る=経路全体の実時間テスト。
+    折り返しの検出はdeskserviceのbot共鳴フィルタ内(検出後は従来通り取り込まない=カードは汚れない)。
+    ⚠️ LINE pushの無料枠(200通/月・緊急通知と共有)を1通消費するため手動ボタン専用。"""
+    _require_ingest_token(token)
+    import json as _json
+    import secrets as _secrets
+    from . import linebot as _lb
+    _lb.ensure()
+    if not _lb.owner_id():
+        return JSONResponse({"ok": False, "error": "ひも付け未完了(送り先がいません)"},
+                            headers={"Access-Control-Allow-Origin": "*"})
+    tid = _secrets.token_hex(3)
+    ok = _lb.push_owner([{"type": "text",
+                          "text": f"🔧接続テスト {tid}\n(受信係の動作確認です。返信不要・このまま放置でOK)"}])
+    if not ok:
+        return JSONResponse({"ok": False, "error": "LINE pushに失敗(上限超過 or 設定)"},
+                            headers={"Access-Control-Allow-Origin": "*"})
+    _lb._meta_set("loopcheck", _json.dumps(
+        {"id": tid, "started_ts": time.time(), "status": "waiting"}))
+    return JSONResponse({"ok": True, "id": tid},
+                        headers={"Access-Control-Allow-Origin": "*"})
+
+
+@app.get("/api/loopcheck/status")
+def loopcheck_status(token: str = ""):
+    _require_ingest_token(token)
+    import json as _json
+    from . import linebot as _lb
+    _lb.ensure()
+    try:
+        cur = _json.loads(_lb._meta_get("loopcheck") or "{}")
+    except Exception:
+        cur = {}
+    out = {"ok": True, "status": cur.get("status") or "none"}
+    if cur.get("status") == "ok" and cur.get("echo_ts") and cur.get("started_ts"):
+        out["elapsed_s"] = round(cur["echo_ts"] - cur["started_ts"], 1)
+    return JSONResponse(out, headers={"Access-Control-Allow-Origin": "*"})
 
 
 @app.get("/api/stats")
