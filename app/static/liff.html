@@ -780,7 +780,12 @@ function swCandidates(sname, yobina, tanto, common) {
     else kana.push(r);
   }
   const out = kanji.concat(latin, kana, demoted);
-  if (!out.length && yobina) return [String(yobina)];   // 検索名なし=呼び名フォールバック(外れやすい)
+  if (!out.length && yobina) {
+    // v178: 呼び名フォールバックも末尾敬称を剥がす(「Yuji Tsuboiさん」で検索すると本名にヒットしない
+    // 実運用報告)。検索は部分一致なので、敬称が本当にLINE名に含まれる相手にも剥がした語で当たる
+    const y = String(yobina).trim().replace(/(さん|様|さま|くん|君|ちゃん)$/, "").trim();
+    return [y || String(yobina)];
+  }
   return out;
 }
 function swCommon(snames) {   // 2枚以上のカードのLINE検索名に現れる語 = 店名・担当名の印
@@ -793,7 +798,8 @@ function swCommon(snames) {   // 2枚以上のカードのLINE検索名に現れ
 }
 function swBest(sname, searchName, sword) {   // sendViaLine既定語: 確定語 > 最良候補 > 従来
   if ((sword || "").trim()) return sword.trim();
-  const c = swCandidates(sname, "", "", []);
+  let c = swCandidates(sname, "", "", []);
+  if (!c.length) c = swCandidates(searchName, "", "", []);   // v179: 登録名(=LINE表示名)から断片
   return c.length ? c[0] : lineSearchWord(searchName);
 }
 // v177: 成否を返す(iOS WKWebViewはジェスチャ外のwriteTextを拒否→無音失敗していた)。
@@ -809,8 +815,19 @@ function swSetup(id, o) {   // o={code,sname,yobina,tanto,sword,common}
   // v177(client-3): 同一相手の再描画では状態(sel/tried/学習/copied)を温存する。
   // 他の1通を送った後のdrawOrei再描画などで、本人が外した旧語に巻き戻るのを防ぐ
   if (SW[id] && o.code && SW[id].code === o.code) return;
-  const fb = !(o.sname || "").trim() && !!o.yobina;   // 呼び名フォールバック
-  let list = swCandidates(o.sname, o.yobina, o.tanto || "", o.common || []);
+  // v179: 検索語ソースの優先順位を「LINE検索名(属性)→登録名(=取り込み時のLINE表示名)→呼び名」に。
+  // 従来は属性が空だと呼び名に直行しており、属性は編集保存した相手にしか入っていないため
+  // ほぼ全員が呼び名(LINE名に含まれない語)をコピーして検索全滅していた(実運用報告)。
+  let list = swCandidates(o.sname, "", o.tanto || "", o.common || []);
+  let fb = 0;   // 0=LINE検索名 1=登録名 2=呼び名(最後の手段)
+  if (!list.length) {
+    list = swCandidates(o.code, "", o.tanto || "", o.common || []);
+    if (list.length) fb = 1;
+  }
+  if (!list.length && o.yobina) {
+    list = swCandidates("", o.yobina, o.tanto || "", o.common || []);
+    fb = 2;
+  }
   const sword = (o.sword || "").trim();
   if (sword) list = [sword].concat(list.filter(w => w !== sword));   // 学習済み=確定語が先頭
   SW[id] = { list, sel: 0, tried: [], snap: null, code: o.code, tanto: o.tanto || "",
@@ -830,12 +847,12 @@ function swInner(id, sendHtml) {
   let exit = "";
   if (s.fb) exit = `<div class="swexit">出ない時は<b>手で探してOK</b>・出た名前は🗂カードの「LINE検索名」にメモすると次から一発</div>`;
   else if (!rest.length) exit = `<div class="swexit">この1語で出ない時は<b>手で探してOK</b></div>`;
-  return `<button type="button" class="swpaste${s.fb ? " warn" : ""}" onclick="swRecopy('${esc(id)}')">
+  return `<button type="button" class="swpaste${s.fb === 2 ? " warn" : ""}" onclick="swRecopy('${esc(id)}')">
       <span class="mag">🔍</span><span class="w">${esc(w)}</span>
       ${(s.sword && w === s.sword) ? `<span class="fx">✓確定語</span>` : ""}
       ${s.copied ? `<span class="ok">✓ コピー済</span>`
         : `<span class="ok" style="background:transparent;border-color:var(--border);color:var(--sub)">タップでコピー</span>`}</button>
-    ${s.fb ? `<div class="swwline">⚠ LINE名が未登録・呼び名は出ないことがあります</div>` : ""}
+    ${s.fb === 2 ? `<div class="swwline">⚠ 呼び名で検索します・出ないことがあります(カードにLINE検索名を登録すると一発)</div>` : ""}
     <div class="swstep">送ったら、相手検索に<b>長押し→ペースト</b></div>
     ${sendHtml || ""}
     ${(rest.length || s.learnedNow || exit) ? `<div class="swalts">
@@ -2253,7 +2270,7 @@ async function drawAnnRun() {
   const r = await prefetchAnn(cur, p.tone || ann.tone, tpl);
   if (ann.q[ann.i] && ann.q[ann.i].code === cur && $("#drafts")) {
     // v176: 送信ユニット(検索語フィールド+回収レーン)。従来の全文コピー+文章案内を置換
-    swSetup("ann", { code: p.code, sname: p.sname, yobina: disp(p.name), tanto: p.tanto,
+    swSetup("ann", { code: p.code, sname: p.sname, yobina: p.name, tanto: p.tanto,   // v178: disp()は敬称を付けるため検索語ソースに使わない
                      sword: p.sword, common: swCommon(ann.q.map(x => x.sname)) });
     // v160裁定の温存: 宛先名は送るボタンの直前(最後の確認点)
     _swSend["ann"] = annBtns(p);
@@ -2427,7 +2444,7 @@ function drawOrei() {
     // v176: 各下書きに送信ユニット(検索語フィールド+回収レーン)
     const _oc = swCommon(orei.drafts.map(g => g.sname));
     orei.drafts.forEach((g, j) => { if (!g.done) {
-      swSetup("or" + j, { code: g.contact || g.code, sname: g.sname, yobina: disp(g.name),
+      swSetup("or" + j, { code: g.contact || g.code, sname: g.sname, yobina: g.name,   // v178: 同上
                           tanto: g.tanto, sword: g.sword, common: _oc });
       _swSend["or" + j] = oreiBtns(j);
     } });

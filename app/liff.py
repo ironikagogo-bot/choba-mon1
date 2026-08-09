@@ -1398,6 +1398,27 @@ def _run_import_job(jid: int, contact: str, text: str):
             crm.link_contact(contact)
             crm.add_alias(contact, contact)
         linebot.save_talk(contact, text)
+        # v180: LINE検索名の自動確定。txtのファイル名/本文ヘッダの相手名は「自分のLINE上の
+        # 表示名(編集後)」そのもの=検索名として機械的事実(AI推定ではない→○✕関門不要。
+        # v166の紐付け時登録名更新と同じ思想)。空の時だけ埋める(手入力値は上書きしない)。
+        try:
+            if not (crm.get_attrs(contact) or {}).get("LINE検索名"):
+                _nm = None
+                with db.conn() as c:
+                    _r = c.execute("SELECT fname FROM liff_import_jobs WHERE id=?", (jid,)).fetchone()
+                _m = _NAME_RE.search(((_r["fname"] if _r else "") or ""))
+                if _m:
+                    _nm = _m.group(1).strip()
+                if not _nm:
+                    _m2 = re.search(r"\[LINE\]\s*(.+?)\s*とのトーク", text[:300])
+                    if _m2:
+                        _nm = _m2.group(1).strip()
+                if _nm:
+                    crm.add_def("LINE検索名")
+                    crm.set_attr(contact, "LINE検索名", _nm)
+                    print(f"[import sname] {contact} <- {_nm}", flush=True)
+        except Exception as e:
+            print(f"[import sname] {e}", flush=True)
         lt = linebot.parse_last_talk_ts(text)
         if lt:
             linebot._meta_set(f"lasttalk_{contact}", str(lt))

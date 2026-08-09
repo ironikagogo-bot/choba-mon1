@@ -983,6 +983,40 @@ def web_async(contact):
     threading.Thread(target=work, daemon=True).start()
 
 
+def sname_backfill():
+    """v180: linebot_talksの本文ヘッダ「[LINE] ◯◯とのトーク履歴」からLINE検索名を遡って確定。
+    空の相手だけ・機械的事実のみ・初回起動1回(マーカー)・API呼び出しゼロ。"""
+    ensure()
+    if _meta_get("sname_backfill_done") == "1":
+        return
+    from . import crm
+    import re as _re
+    done = 0
+    try:
+        with db.conn() as c:
+            rows = c.execute("SELECT contact, text FROM linebot_talks").fetchall()
+        for r in rows:
+            try:
+                contact = r["contact"]
+                if (crm.get_attrs(contact) or {}).get("LINE検索名"):
+                    continue
+                m = _re.search(r"\[LINE\]\s*(.+?)\s*とのトーク", (r["text"] or "")[:300])
+                if not m:
+                    continue
+                nm = m.group(1).strip()
+                if not nm:
+                    continue
+                crm.add_def("LINE検索名")
+                crm.set_attr(contact, "LINE検索名", nm)
+                done += 1
+            except Exception as e:
+                print(f"[sname backfill row] {r['contact']}: {e}", flush=True)
+        _meta_set("sname_backfill_done", "1")
+        print(f"[sname backfill] 完了: {len(rows)}人分を走査・{done}人分を確定", flush=True)
+    except Exception as e:
+        print(f"[sname backfill] {e}", flush=True)
+
+
 def save_talk(contact, text):
     ensure()
     with db.conn() as c:

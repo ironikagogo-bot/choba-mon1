@@ -86,6 +86,13 @@ try:
 except Exception as _e:
     print(f"[situations backfill disabled] {_e}", flush=True)
 
+# v180: LINE検索名のバックフィル(過去取り込み済みtxtの本文ヘッダから・初回のみ・軽量)
+try:
+    from . import linebot as _lb180
+    _lb180.sname_backfill()
+except Exception as _e:
+    print(f"[sname backfill disabled] {_e}", flush=True)
+
 # v172: 関係ダイナミクスのバックフィル(同上)
 try:
     from . import dynamics as _dynamics
@@ -225,7 +232,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v177"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v180"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
