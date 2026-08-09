@@ -373,6 +373,15 @@ def _generate_inner(message_id: int) -> list[dict]:
             user_prompt += "\n\n" + _sp
     except Exception:
         pass
+    # v172: 関係ダイナミクス。決定論ブロック=常時(鮮度90日内)。温度アーク=本人が✓確定した相手のみ(家訓)。
+    # データ無し・未確定・鮮度切れなら空=注入ゼロで従来とバイト一致
+    try:
+        from . import dynamics as _dyn
+        _db_ = _dyn.blocks_for_draft(contact["code"])
+        if _db_:
+            user_prompt += "\n\n" + _db_
+    except Exception:
+        pass
 
     # いなしモード: 下ネタ癖のある相手、または性的な冗談・要求を含む受信は「乗らず・拒まず」で受け流す
     # v30: 注入は「いなしON(flag_ero==1)」の相手のみ。検知→確認は受信箱の下ネタアラームが担う。

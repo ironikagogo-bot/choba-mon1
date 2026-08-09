@@ -239,6 +239,23 @@ window.modeToggle = () => {
   toast(GENMODE ? "👔 一般モード(見た目だけ)に切替" : "🏮 夜職モードに切替");
   bust("home"); route();
 };
+// v171: 見出しの表示名モード(全体設定・顧客ごとではない)。code=登録名 / yobina=呼び名 / honmyo=本名。
+// 選んだ項目が未登録のカードは登録名に自動フォールバック。メッセージ文面(お礼・返信)は常に呼び名(別概念)。
+let NAMEMODE = "code";
+try { NAMEMODE = localStorage.getItem("cb_namemode") || "code"; } catch (e) {}
+const NAMEMODE_LAB = { code: "登録名", yobina: "呼び名", honmyo: "本名" };
+function idxName(code, yobina, honmyo) {
+  if (NAMEMODE === "yobina" && (yobina || "").trim()) return yobina;
+  if (NAMEMODE === "honmyo" && (honmyo || "").trim()) return honmyo;
+  return code;
+}
+window.nameModeCycle = () => {
+  NAMEMODE = NAMEMODE === "code" ? "yobina" : NAMEMODE === "yobina" ? "honmyo" : "code";
+  try { localStorage.setItem("cb_namemode", NAMEMODE); } catch (e) {}
+  toast(`見出しの表示: ${NAMEMODE_LAB[NAMEMODE]}(未登録の人は登録名)`);
+  route();
+};
+
 // v151: タイプ「OK」確認の全廃。半角英字入力は合言葉と同じ脱落スキルなので、
 // 危険操作の確認は「赤いダイアログでもう1回タップ」に統一(2段階タップ)
 function askDanger(title, desc) {
@@ -823,7 +840,8 @@ async function vList() {
   const KTABS = [["", W("💐お客様", "💐仕事の相手")], ["staff", W("🏠店内", "🏠社内")], ["peer", W("🏮同業", "🏮社外")], ["private", "🔒私用"], ["all", "全部"]];
   $("#view").innerHTML = `
     <div class="chips" style="margin-bottom:8px">${KTABS.map(([k, lab]) =>
-      `<button class="chip ${_listKind === k ? "on" : ""}" onclick="listKind('${k}')">${lab}</button>`).join("")}</div>
+      `<button class="chip ${_listKind === k ? "on" : ""}" onclick="listKind('${k}')">${lab}</button>`).join("")}
+      <button class="chip" style="margin-left:auto;border-style:dashed" onclick="nameModeCycle()">👁 ${NAMEMODE_LAB[NAMEMODE]}</button></div>
     <input class="search" id="q" placeholder="名前・会社で検索" autocomplete="off">
     <div id="rows">${store.get("contacts" + _listKind) ? "" : `<div class="empty"><span class="spin"></span></div>`}</div>`;
   const _kindAt = _listKind;   // v150: タブ切替レース対策(遅れて来た別タブの結果を描かない)
@@ -848,7 +866,7 @@ async function vList() {
         <button class="chip unmutebtn" data-unmute="${encodeURIComponent(c.code)}">↩ 戻す</button></div>` : `
       <div class="row" data-card="${encodeURIComponent(c.code)}">
         <span class="badge ${c.rank}">${c.rank}</span>
-        <div class="body"><div class="nm">${(c.kind && c.kind !== "customer") ? (KMARK[c.kind] || "") + (c.kind === "staff" ? (c.sg === "男" ? "🤵" : "👯") : "") + " " : ""}${esc(disp(c.name))}</div>
+        <div class="body"><div class="nm">${(c.kind && c.kind !== "customer") ? (KMARK[c.kind] || "") + (c.kind === "staff" ? (c.sg === "男" ? "🤵" : "👯") : "") + " " : ""}${esc(c.iname ? idxName(c.iname, c.yobina, c.honmyo) : disp(c.name))}</div>
         <div class="meta">${c.gname ? "👥グループ「" + esc(c.gname) + "」 " : ""}${esc(c.company || "")}${c.ongoing ? " ・📌" + esc(c.ongoing).slice(0, 20) : ""}</div></div>
         <button class="chip editbtn" data-edit="${encodeURIComponent(c.code)}">✎</button>
         <span class="chev">›</span></div>`).join("")
@@ -895,7 +913,8 @@ function drawCard(code, d) {
   if (d.error) { $("#view").innerHTML = `<div class="empty">カードが見つかりません</div>`; return; }
   const fmtGap = g => g === 0 ? "今日" : g === 1 ? "昨日" : g + "日前";   // v150: 生数字をやめる
   const fmtMin = m => m < 60 ? `約${m}分` : m < 1440 ? `約${Math.round(m / 60)}時間` : `約${Math.round(m / 1440)}日`;
-  setHead(`${disp(d.name)}`, `ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true,
+  // v170→v171: 見出しの表示名は全体設定(登録名/呼び名/本名)に従う。未登録は登録名にフォールバック
+  setHead(`${idxName(d.gname ? d.pname : d.code, d.attrs && d.attrs["呼び名"], d.attrs && d.attrs["本名"])}`, `${(NAMEMODE !== "yobina" && d.attrs && d.attrs["呼び名"]) ? "呼び名:" + d.attrs["呼び名"] + "・" : ""}ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true,
     d.kind !== "private" && !(d.attrs && d.attrs["呼び名"]), `nav('#edit/${encodeURIComponent(code)}')`);
   const sg = d.attrs && d.attrs["店内区分"] || "";
   const staffLab = sg === "女" ? W("👯同僚ホステス", "👯同僚・チーム") : sg === "男" ? W("🤵黒服さん", "🤵上司・先輩") : W("店内", "社内");
@@ -970,6 +989,18 @@ function drawCard(code, d) {
     ${d.rel && d.rel.initiator ? `<div class="kv"><div class="k">会話の起点</div><div class="v">${esc(d.rel.initiator)}</div></div>` : ""}
     ${d.rel && d.rel.visits ? `<div class="kv"><div class="k">お席の実績</div><div class="v">🍾 ${d.rel.visits}回${d.rel.dohan ? `・同伴${d.rel.dohan}` : ""}${d.rel.after ? `・アフター${d.rel.after}` : ""}</div></div>` : ""}
   </div>
+  ${(d.arc && d.arc.current) ? `<details class="card" ${d.arc.ok == null ? "open" : ""}>
+    <summary>🌡 温度メモ（AI分析${d.arc.ok == null ? "・要確認" : d.arc.ok === 1 ? "・下書きに反映中" : "・未使用"}）</summary>
+    <div class="note" style="margin-bottom:8px">トーク履歴からAIが読んだこの相手との温度・間合い。<b>✓にした相手だけ</b>下書き生成に効きます(AIの推測をそのまま使わない安全装置)</div>
+    <div class="kv"><div class="k">いまの温度</div><div class="v">${esc(d.arc.current.temp)}・${esc(d.arc.current.trend)} <span class="conf">${CONF_DOT[d.arc.current.conf] || ""}</span></div></div>
+    ${d.arc.dist_change ? `<div class="kv"><div class="k">距離の変化</div><div class="v">${esc(d.arc.dist_change.from)} → ${esc(d.arc.dist_change.to)}</div></div>` : ""}
+    ${(d.arc.self_modes || []).length ? `<div class="kv"><div class="k">じぶんの型</div><div class="v">${d.arc.self_modes.map(x => esc(x.v)).join("・")}</div></div>` : ""}
+    ${(d.arc.partner_patterns || []).length ? `<div class="kv"><div class="k">相手の癖</div><div class="v">${d.arc.partner_patterns.map(x => esc(x.v)).join("・")}</div></div>` : ""}
+    ${(d.arc.open_loops || []).length ? `<div class="kv"><div class="k">未回収の話</div><div class="v">${d.arc.open_loops.map(x => esc(x.v)).join(" / ")}</div></div>` : ""}
+    <div class="chips" style="margin-top:8px">
+      <button class="chip ${d.arc.ok === 1 ? "on" : ""}" onclick="arcOk('${encodeURIComponent(code)}',1)">✓ 下書きに使う</button>
+      <button class="chip ${d.arc.ok === 0 ? "on" : ""}" onclick="arcOk('${encodeURIComponent(code)}',0)">✕ 使わない</button></div>
+  </details>` : ""}
   ${d.pstats ? `<details class="card"><summary>📊 相手のクセ（やりとりから）</summary>
     <div class="kv"><div class="k">文の長さ</div><div class="v">平均 約${d.pstats.avg_len}文字</div></div>
     <div class="kv"><div class="k">絵文字</div><div class="v">${d.pstats.emoji_per_msg < 0.05 ? "ほぼ使わない" : `1通あたり約${d.pstats.emoji_per_msg}個`}</div></div>
@@ -1214,7 +1245,7 @@ async function vEdit(code) {
   let d; try { d = await api("/api/liff/contact/" + encodeURIComponent(code)); }
   catch (e) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   if (d.error) { $("#view").innerHTML = `<div class="empty">カードが見つかりません</div>`; return; }
-  setHead(`✎ ${disp(d.name)}`, "直したい所だけ触ればOK", true);
+  setHead(`✎ ${idxName(d.gname ? d.pname : d.code, d.attrs && d.attrs["呼び名"], d.attrs && d.attrs["本名"])}`, "直したい所だけ触ればOK", true);   // v171: 見出し=表示名設定に従う
   const chip = (name, opts, cur) => `<div class="chips" data-chip="${name}">` + opts.map(([v, lab]) =>
     `<button type="button" class="chip ${String(cur) === String(v) ? "on" : ""}" data-v="${v}">${lab}</button>`)
     .join("") + `</div>`;
@@ -1330,6 +1361,18 @@ window.cardRename = async (codeEnc) => {
   } catch (e) {
     toast(e.message === "その名前は既に使われています" ? "その名前はすでに他のカードで使われています" : "変更できませんでした");
   }
+};
+
+// v172: 温度メモ(AI分析)の✓✕確定。保存を待ってから反映(楽観更新禁止の規約)
+window.arcOk = async (codeEnc, ok) => {
+  const code = decodeURIComponent(codeEnc);
+  try {
+    const r = await api("/api/liff/dynamics/ok", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, ok: !!ok }) });
+    if (!r.ok) throw new Error();
+    toast(ok ? "✓ この相手の下書きに温度メモが効くようになりました" : "この相手には使いません");
+    store.del("card_" + code); vCard(code);
+  } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); }
 };
 
 // ============ 📥 一括取り込み ============
@@ -1857,7 +1900,7 @@ window.annSend = async j => {
   if (!text) return;
   const p = ann.q[ann.i], edited = text !== orig;
   const res = await sendViaLine(text, p.code, p.sname);
-  if (res === "sent") { fire("/api/liff/ann/sent", { code: p.code, text, edited });
+  if (res === "sent") { fire("/api/liff/ann/sent", { code: p.code, text, edited, orig });
     delete draftCache["a" + p.code]; ann.sent += 1; ann.i += 1; annSave();
     toast(`✓ ${disp(p.name)}に送信`); drawAnnRun(); }
   else if (res === "copied") {
@@ -2036,7 +2079,7 @@ window.oreiSend = async j => {
   const res = await sendViaLine(text, g.name || g.contact, g.sname);   // v150: 検索語は人名寄り
   if (res === "sent" || res === "copied") {
     if (res === "copied") toast("貼り付けて送ったら完了です");
-    fire("/api/liff/orei/sent", { sid: orei.sid, contact: g.contact, text, edited: text !== orig });
+    fire("/api/liff/orei/sent", { sid: orei.sid, contact: g.contact, text, edited: text !== orig, orig });
     g.done = true; drawOrei();
   }
 };

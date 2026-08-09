@@ -1745,6 +1745,11 @@ def dig_async(contact):
                     situations.harvest_and_save(contact, r["text"], self_name)
                 except Exception as e:
                     print(f"[situations dig] {e}", flush=True)
+                try:
+                    from . import dynamics
+                    dynamics.analyze_and_save(contact, r["text"], self_name)
+                except Exception as e:
+                    print(f"[dynamics dig] {e}", flush=True)
                 _meta_set(f"dig_{contact}", f"done:{ncrit}:{nauto}")
                 _notify_card_ready(contact, ncrit, nauto)   # v96: LIFF編集への通知1通
                 maybe_auto_persona(contact)                 # v109: ペルソナも同時に

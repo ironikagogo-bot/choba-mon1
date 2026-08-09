@@ -84,10 +84,49 @@ def parse_rss(xml_bytes: bytes) -> list[dict]:
     return out
 
 
+# v169: 本人指摘「文章が硬くbot感がすごい」への対処。原因は3つあった。
+# ①プロンプトが夜職文面のまま(v158の既知の残り)で一般モードでも「お客様」が出る
+# ②「振り方にする」の指示だけで文体の手がかりが無く、AIが毎回「要約→持ち上げ→丁寧な質問」の
+#   インタビュー型に落ちていた ③名前を知らないAIが「◯◯さん」プレースホルダを勝手に書く。
+# 対処: MODE分岐+口語指定+型の禁止+宛名禁止+本人の文体実例(あれば)を注入して声を写す。
+_OPENER_RULES = (
+    "条件:\n"
+    "- 1〜2文・LINEでそのまま送れる軽い口語。書き言葉・ニュースキャスター調・インタビュー調にしない\n"
+    "- 「記事の要約→相手を持ち上げる→丁寧な質問」の型を使わない。質問で締めなくてよい"
+    "(「〜だって！」「〜らしいよ」のような感想・共有だけで終えてよい)\n"
+    "- 相手の名前・宛名・「◯◯さん」等の穴埋めを書かない(本文だけ。呼びかけ無しで自然に読める文)\n"
+    "- 「お客様」「〜でらっしゃいます」等の接客敬語にしない\n"
+    "- 見出し以上の事実を断定しない(「〜みたいですね」「〜らしい」程度)・営業くさくしない\n"
+    "出力は本文のみ。"
+)
+
+
+def _style_hint() -> str:
+    """本人の文体実例(あれば)。ネタの一言も本人の声で出す(v169・bot感対策の本丸)。"""
+    try:
+        prof = db.get_profile("_global") or {}
+        samples = prof.get("samples") or []
+        if not samples:
+            return ""
+        import random as _rnd
+        picks = samples[:30]
+        picks = _rnd.sample(picks, min(5, len(picks)))
+        return ("本人が実際に書いたLINE文の実例(この人の声・砕け方・句読点の癖を真似る):\n"
+                + "\n".join(f"「{x}」" for x in picks) + "\n")
+    except Exception:
+        return ""
+
+
 def _make_opener(contact_code: str, company: str, note: str, title: str) -> str:
     """見出し→今夜使える一言。営業くさくせず、事実を断定しない。"""
     if not config.ANTHROPIC_API_KEY:
         return ""
+    if config.MODE == "general":   # v169: 一般モードは夜職語彙を使わない
+        head = ("知り合いにLINEで送る、ニュースきっかけの軽い一言を1つ作る。\n"
+                f"相手の会社・仕事: {company}" + (f"（{note}）" if note else "") + "\n")
+    else:
+        head = ("銀座のクラブのホステスが、顧客とのLINEや会話で使う「一言ネタ」を1つ作る。\n"
+                f"顧客の会社: {company}" + (f"（{note}）" if note else "") + "\n")
     try:
         r = requests.post(
             "https://api.anthropic.com/v1/messages",
@@ -96,11 +135,8 @@ def _make_opener(contact_code: str, company: str, note: str, title: str) -> str:
                      "content-type": "application/json"},
             json={"model": config.ANTHROPIC_MODEL, "max_tokens": 200,
                   "messages": [{"role": "user", "content":
-                      "銀座のクラブのホステスが、顧客との会話やLINEで使う「一言ネタ」を1つ作る。\n"
-                      f"顧客の会社: {company}" + (f"（{note}）" if note else "") + "\n"
-                      f"今日のニュース見出し: {title}\n"
-                      "条件: 1〜2文・営業くさくしない・見出し以上の事実を断定しない(「〜みたいですね」程度)・"
-                      "相手が気持ちよく話し始められる振り方にする。出力は一言ネタの本文のみ。"}]},
+                      head + _style_hint()
+                      + f"今日のニュース見出し: {title}\n" + _OPENER_RULES}]},
             timeout=30)
         r.raise_for_status()
         return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()[:200]
@@ -220,10 +256,11 @@ def _kw_opener(kw: str, title: str) -> str:
                      "content-type": "application/json"},
             json={"model": config.ANTHROPIC_MODEL, "max_tokens": 200,
                   "messages": [{"role": "user", "content":
-                      f"銀座のホステスが「{kw}」好きのお客様との会話で使う一言ネタを1つ。\n"
-                      f"今日のニュース見出し: {title}\n"
-                      "条件: 1〜2文・見出し以上の事実を断定しない(「〜みたいですね」程度)・"
-                      "相手が気持ちよく話し始められる振り方。出力は本文のみ。"}]},
+                      ((f"「{kw}」が好きな知り合いにLINEで送る、ニュースきっかけの軽い一言を1つ作る。\n"
+                        if config.MODE == "general" else
+                        f"銀座のホステスが「{kw}」好きのお客様とのLINEや会話で使う一言ネタを1つ作る。\n")
+                       + _style_hint()
+                       + f"今日のニュース見出し: {title}\n" + _OPENER_RULES)}]},
             timeout=30)
         r.raise_for_status()
         return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()[:200]

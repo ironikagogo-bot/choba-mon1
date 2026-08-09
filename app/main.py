@@ -86,6 +86,13 @@ try:
 except Exception as _e:
     print(f"[situations backfill disabled] {_e}", flush=True)
 
+# v172: 関係ダイナミクスのバックフィル(同上)
+try:
+    from . import dynamics as _dynamics
+    _dynamics.backfill_async()
+except Exception as _e:
+    print(f"[dynamics backfill disabled] {_e}", flush=True)
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -218,7 +225,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v168"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v172"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")

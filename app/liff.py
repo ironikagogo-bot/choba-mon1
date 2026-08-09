@@ -449,6 +449,12 @@ def liff_contacts(request: Request, q: str = "", kind: str = ""):
         out.append({
             "code": r["code"],
             "name": nm,
+            # v170: ゆみさん要望「見出しは登録名にしてほしい」→v171で全体設定に拡張。
+            # 見出しの表示名は「登録名/呼び名/本名」の3パターンから本人が選ぶ(全カード一貫)。
+            # iname=登録名(グループ由来はグループ印を落とした人名部分)。
+            "iname": (p if g else r["code"]),
+            "yobina": attrs.get("呼び名") or "",
+            "honmyo": attrs.get("本名") or "",
             "gname": g or "",
             "rank": r.get("rank") or "B",
             "kind": r.get("kind") or "customer",
@@ -571,6 +577,9 @@ def liff_contact(code: str, request: Request):
                      "ng": attrs.get("NG話題") or "",
                      "relmemo": attrs.get("関係性メモ") or ""},
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
+        # v172: 温度アーク(AI分析)。ok=None:未判断 / 1:下書きに使う / 0:使わない(本人の✓✕・家訓)
+        "arc": (lambda: (db.get_profile(code) or {}).get("arc"))(),
+        "dyn_block": (lambda: ((db.get_profile(code) or {}).get("dynamics") or {}).get("block") or "")(),
         "pstats": (lambda: linebot.partner_stats(code))(),
         "rel": (lambda: linebot.relationship_stats(code))(),   # v118: 第2層(関係性)
         "enrich": _enrich_data(code),                          # v125: ネット補強
@@ -643,6 +652,27 @@ async def liff_selfpolicy_set(request: Request):
     linebot._meta_set("self_policy", _json.dumps(clean, ensure_ascii=False))
     db.track("liff_selfpolicy")
     return {"ok": True, "policy": clean}
+
+
+@router.post("/api/liff/dynamics/ok")
+async def liff_dynamics_ok(request: Request):
+    """v172: 温度アーク(AI分析)を下書きに使うかの本人判断(✓=1/✕=0)。
+    家訓(v118/v164): AI推定は本人確定を経てからしか下書きに効かせない。toleranceと同じ思想。"""
+    if not _authed(request):
+        return _deny()
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        ok = 1 if body.get("ok") else 0
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    cp = db.get_profile(code) or {}
+    if not cp.get("arc"):
+        return JSONResponse({"error": "no arc"}, status_code=404)
+    cp["arc"]["ok"] = ok
+    db.save_profile(code, cp)
+    db.track("liff_dynamics_ok")
+    return {"ok": True, "arc_ok": ok}
 
 
 @router.post("/api/liff/contact/{code:path}/rename")
@@ -1367,6 +1397,12 @@ def _run_import_job(jid: int, contact: str, text: str):
             situations.harvest_and_save(contact, text, self_name)
         except Exception as e:
             print(f"[situations liff] {e}", flush=True)
+        # v172: 関係ダイナミクス分析(決定論指標+温度アーク)。失敗しても取り込みは止めない
+        try:
+            from . import dynamics
+            dynamics.analyze_and_save(contact, text, self_name)
+        except Exception as e:
+            print(f"[dynamics liff] {e}", flush=True)
         upd("done", f"{ncrit + nauto}")
         # v150: 原文メタの掃除(無限蓄積の防止。救済再実行はqueued/runningのみ対象なので不要になる)
         try:
@@ -1722,13 +1758,18 @@ async def liff_ann_sent(request: Request):
         body = await request.json()
         code = (body.get("code") or "").strip()
         text = (body.get("text") or "").strip()
+        orig = (body.get("orig") or "").strip()
         edited = 1 if body.get("edited") else 0
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if text:
         try:
             from .style_profile import learn_from_sent
-            learn_from_sent(code, text, edited=edited, edit_ratio=100 if not edited else 80)
+            # v172: edit_ratioを実類似度に(赤チーム指摘=固定80/100では効果測定が原理的に不可能)
+            import difflib as _dl
+            ratio = (int(round(_dl.SequenceMatcher(None, orig, text).ratio() * 100))
+                     if orig else (100 if not edited else 80))
+            learn_from_sent(code, text, edited=edited, edit_ratio=ratio)
         except Exception as e:
             print(f"[liff ann learn] {e}", flush=True)
     db.track("liff_ann_sent")
@@ -1825,7 +1866,11 @@ async def liff_orei_sent(request: Request):
     if text:
         try:
             from .style_profile import learn_from_sent
-            learn_from_sent(code, text, edited=edited, edit_ratio=100 if not edited else 80)
+            import difflib as _dl
+            orig = (body.get("orig") or "").strip()
+            ratio = (int(round(_dl.SequenceMatcher(None, orig, text).ratio() * 100))
+                     if orig else (100 if not edited else 80))
+            learn_from_sent(code, text, edited=edited, edit_ratio=ratio)
         except Exception:
             pass
     db.track("liff_orei_sent")
