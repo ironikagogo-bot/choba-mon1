@@ -217,7 +217,73 @@ async function viewCard(code){
     +'<div class="sec">来店・同伴（返信操作から自動記録）</div>'+visitRows
     +'<div class="sec" style="color:#5E8A5D">＋ ポジティブ（喜ぶ・強み→活かす）</div><div class="memo" style="background:#EEF4EC;border-top:1px solid #C4D8C0;border-bottom:1px solid #C4D8C0;color:#3f6b3d">'+esc(d.note_pos||"—")+'</div>'
     +'<div class="sec" style="color:#C0402C">－ ネガティブ（地雷・注意→避ける／本文には出しません）</div><div class="memo" style="background:#FBEDEA;border-top:1px solid #E7C4BC;border-bottom:1px solid #E7C4BC;color:#8a2f22">'+esc(d.note_neg||"—")+'</div>'
-    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'+'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact('+jarg(encodeURIComponent(d.code))+',this)">この顧客を削除</button></div>';
+    +'<div class="sec">自由メモ（中立）</div><div class="memo">'+esc(d.note||"—")+'</div>'
+    +'<div id="liffx"><div class="memo" style="color:#9aa1aa">🧠 分析情報(ペルソナ・温度・ネタ)を読み込み中…</div></div>'
+    +'<div style="padding:14px 16px 28px"><button class="delbtn" onclick="delContact('+jarg(encodeURIComponent(d.code))+',this)">この顧客を削除</button></div>';
+  liffExtras(code);
+}
+
+/* ---------- v185: LIFFカードと同内容の分析セクション(閲覧のみ) ----------
+   本人指摘「webの方にもペルソナなどLIFF顧客カードと同じ記載あってほしい」。
+   データはLIFFと同じ組み立て(/api/web/contact=contact_payload共用)なので記載はズレない。
+   編集はここではさせない(直すのはLINEの帳場くん)。 */
+var CONF_DOT={ "高":"●●●", "中":"●●○", "低":"●○○" };
+function xr(k,v){ return v?'<div class="frow"><span class="fl">'+esc(k)+'</span><span class="fv" style="text-align:right">'+v+'</span></div>':''; }
+function xq(s){ return s?'<div style="font-size:11px;color:#8a8f98;border-left:3px solid #ddd;padding-left:8px;margin-top:2px">「'+esc(s)+'」</div>':''; }
+async function liffExtras(code){
+  var box=document.getElementById("liffx"); if(!box) return;
+  var d; try{ d=await api("/api/web/contact/"+encodeURIComponent(code)); }
+  catch(e){ box.innerHTML='<div class="memo" style="color:#9aa1aa">分析情報を読み込めませんでした</div>'; return; }
+  var h='';
+  var now=d.now_keys||{};
+  if(now.ongoing||now.ng||now.relmemo){
+    h+='<div class="sec">📌 いま効くこと</div>';
+    if(now.ongoing)h+='<div class="memo" style="color:#3f6b3d">🟢 '+esc(now.ongoing)+'</div>';
+    if(now.ng)h+='<div class="memo" style="color:#8a2f22">🚫 '+esc(now.ng)+'</div>';
+    if(now.relmemo)h+='<div class="memo" style="color:#6b5b2a">🤝 '+esc(now.relmemo)+'</div>';
+  }
+  if(d.arc&&d.arc.current){
+    h+='<div class="sec">🌡 温度メモ（AI分析・'+(d.arc.ok===1?"下書きに反映中":d.arc.ok===0?"未使用":"未確認")+'）</div>'
+      +xr("いまの温度",esc(d.arc.current.temp)+"・"+esc(d.arc.current.trend)+' <span style="color:#A8842F;font-size:10px">'+(CONF_DOT[d.arc.current.conf]||"")+'</span>')
+      +(d.arc.dist_change?xr("距離の変化",esc(d.arc.dist_change.from)+" → "+esc(d.arc.dist_change.to)):"")
+      +((d.arc.self_modes||[]).length?xr("じぶんの型",esc(d.arc.self_modes.map(function(x){return x.v}).join("・"))):"")
+      +((d.arc.partner_patterns||[]).length?xr("相手の癖",esc(d.arc.partner_patterns.map(function(x){return x.v}).join("・"))):"")
+      +((d.arc.open_loops||[]).length?xr("未回収の話",esc(d.arc.open_loops.map(function(x){return x.v}).join(" / "))):"");
+  }
+  if(d.pstats){
+    h+='<div class="sec">📊 相手のクセ（やりとりから）</div>'
+      +xr("文の長さ","平均 約"+d.pstats.avg_len+"文字")
+      +xr("絵文字",d.pstats.emoji_per_msg<0.05?"ほぼ使わない":"1通あたり約"+d.pstats.emoji_per_msg+"個")
+      +(d.pstats.reply_median_min!=null?xr("返信の速さ","だいたい "+(d.pstats.reply_median_min<60?"約"+d.pstats.reply_median_min+"分":d.pstats.reply_median_min<1440?"約"+Math.round(d.pstats.reply_median_min/60)+"時間":"約"+Math.round(d.pstats.reply_median_min/1440)+"日")):"")
+      +(d.pstats.top_hours&&d.pstats.top_hours.length?xr("よく来る時間",d.pstats.top_hours.map(function(x){return x+"時台"}).join("・")):"");
+  }
+  h+='<div class="sec">🧠 ペルソナ</div>';
+  if(d.persona&&d.persona.sections){
+    if(d.persona.summary)h+='<div class="memo" style="font-weight:700">'+esc(d.persona.summary)+'</div>';
+    h+=d.persona.sections.map(function(s){
+      return '<div class="frow"><span class="fl">'+esc(s.k)+' <span style="color:#A8842F;font-size:10px">'+(CONF_DOT[s.conf]||"")+'</span></span><span class="fv" style="text-align:right">'+esc(s.v)+xq(s.src)+'</span></div>';}).join("");
+  } else {
+    h+='<div class="memo" style="color:#9aa1aa">まだ分析していません。LINEの帳場くんのカードから「▶ ペルソナを分析する」を押すとここにも出ます</div>';
+  }
+  if(d.persona&&d.persona.tolerance&&d.persona.tolerance.length){
+    h+='<div class="sec">🚦 どこまでOKか（✅=下書きに反映中）</div>'
+      +d.persona.tolerance.map(function(t){
+        var mark=t.ok===1?"✅ ":t.ok===0?"✕ ":"❔ ";
+        return '<div class="frow"'+(t.ok===0?' style="opacity:.5"':'')+'><span class="fl">'+esc(t.k)+' <span style="color:#A8842F;font-size:10px">'+(CONF_DOT[t.conf]||"")+'</span></span><span class="fv" style="text-align:right'+(t.ok===0?';text-decoration:line-through':'')+'">'+mark+esc(t.v)+xq(t.src)+'</span></div>';}).join("");
+  }
+  var pf=(d.profile_keys||[]).map(function(k){return xr(k,esc((d.attrs||{})[k]))}).join("");
+  if(pf)h+='<div class="sec">👤 プロフィール</div>'+pf;
+  var news=(d.news||[]).map(function(x){return '<div class="frow"><span class="fv" style="text-align:left;width:100%">📰 '+esc(x.title)+(x.opener?xq("→ "+x.opener):"")+'</span></div>'}).join("");
+  if(news)h+='<div class="sec">📰 ネタ</div>'+news;
+  var hist=[]
+    .concat(((d.history||{}).seki||[]).map(function(x){return {ts:x.ts,t:"🍾 お席("+esc(x.kind||"来店")+")"}}))
+    .concat(((d.history||{}).received||[]).map(function(x){return {ts:x.ts,t:"📩 "+esc((x.text||"").slice(0,34))}}))
+    .concat(((d.history||{}).sent||[]).map(function(x){return {ts:x.ts,t:"📤 "+esc((x.text||"").slice(0,34))}}))
+    .sort(function(a,b){return b.ts-a.ts}).slice(0,8)
+    .map(function(x){return '<div class="frow"><span class="fl" style="color:#9aa1aa">'+new Date(x.ts*1000).toLocaleDateString("ja-JP")+'</span><span class="fv" style="text-align:right">'+x.t+'</span></div>'}).join("");
+  if(hist)h+='<div class="sec">🕘 履歴</div>'+hist;
+  h+='<div class="memo" style="color:#9aa1aa">✎ 上の分析情報はLIFFカードと同じ内容(閲覧のみ)。直すときはLINEの帳場くんでこのカードを開いてください</div>';
+  box.innerHTML=h;
 }
 
 function delContact(code, btn){
