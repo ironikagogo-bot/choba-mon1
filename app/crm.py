@@ -1013,3 +1013,127 @@ def upcoming_anniversaries(within_days: int = 14, today=None) -> list:
                 emit(code, nm, "kid", f"{nm} 様のお子様のお誕生日", part)
     out.sort(key=lambda x: x["days"])
     return out
+
+
+# ============ 🔀 重複カードの自動検出 (v184) ============
+# 本人選択: 「似た名前・同じ呼び名・同じLINE検索名を裏で検出し、同じ人かも?を提示。
+# 1タップで統合画面へ」。検出は提示のみで、統合の実行は必ず本人の方向選択+確認を経る。
+
+_DUP_CACHE = {"ts": 0.0, "items": []}
+_DUP_TTL = 300   # ホームAPIから毎回呼ばれるため5分キャッシュ
+
+
+def _dup_key(a: str, b: str) -> str:
+    return "|".join(sorted([a, b]))
+
+
+def _dup_dismissed() -> set:
+    """「別人です」の記録(linebot_metaのJSON1キー。新テーブルは作らない)。"""
+    import json as _json
+    try:
+        with db.conn() as c:
+            c.execute("CREATE TABLE IF NOT EXISTS linebot_meta(k TEXT PRIMARY KEY, v TEXT)")
+            r = c.execute("SELECT v FROM linebot_meta WHERE k='dup_not_same'").fetchone()
+        return set(_json.loads(r["v"])) if r else set()
+    except Exception:
+        return set()
+
+
+def dup_dismiss(a: str, b: str):
+    """「別人です」= このペアを今後の検出から永久に外す。"""
+    import json as _json
+    s = _dup_dismissed()
+    s.add(_dup_key(a, b))
+    with db.conn() as c:
+        c.execute("CREATE TABLE IF NOT EXISTS linebot_meta(k TEXT PRIMARY KEY, v TEXT)")
+        c.execute("INSERT INTO linebot_meta(k,v) VALUES('dup_not_same',?) "
+                  "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                  (_json.dumps(sorted(s), ensure_ascii=False),))
+    _DUP_CACHE["ts"] = 0.0
+
+
+def find_duplicates(force: bool = False) -> list:
+    """同じ人かもしれないカードのペアを検出する。
+    根拠: ①呼び名が同じ ②LINE検索名が同じ ③本名が同じ ④正規化した名前が同じ/包含。
+    返り値: [{"a": {...}, "b": {...}, "reason": "..."}] 最大10組。"""
+    import time as _time
+    now = _time.time()
+    if not force and _DUP_CACHE["items"] is not None and now - _DUP_CACHE["ts"] < _DUP_TTL:
+        return _DUP_CACHE["items"]
+    dismissed = _dup_dismissed()
+    rows = [r for r in db.list_contacts() if (r.get("kind") or "customer") != "private"]
+    infos = {}
+    by_attr = {"呼び名": {}, "LINE検索名": {}, "本名": {}}
+    by_norm = {}
+    for r in rows:
+        code = r["code"]
+        try:
+            a = get_attrs(code) or {}
+        except Exception:
+            a = {}
+        infos[code] = {"code": code, "rank": r.get("rank") or "B",
+                       "kind": r.get("kind") or "customer",
+                       "yobina": a.get("呼び名") or "",
+                       "company": a.get("仕事・会社") or ""}
+        for k in by_attr:
+            v = _norm_name(a.get(k) or "")
+            if len(v) >= 2:
+                by_attr[k].setdefault(v, []).append(code)
+        n = _norm_name(code)
+        if len(n) >= 2:
+            by_norm.setdefault(n, []).append(code)
+        # 「大山さん🌵AMANE芳美」型(人名+敬称+店情報のLINE表示名)の先頭人名も照合対象に。
+        # 「大山」カードとの重複を拾う(本人が最初に報告した実フォーマット)
+        m = _re_g.match(r"^(.{1,8}?)(さん|様|さま|ちゃん|くん|君)", code)
+        if m:
+            h = _norm_name(m.group(1))
+            if len(h) >= 2 and h != n:
+                by_norm.setdefault(h, []).append(code)
+    pairs = {}
+
+    def _add(a, b, reason):
+        if a == b:
+            return
+        k = _dup_key(a, b)
+        if k in dismissed or k in pairs:
+            return
+        pairs[k] = {"a": infos[a], "b": infos[b], "reason": reason}
+    for label, mp in (("呼び名", by_attr["呼び名"]), ("LINE検索名", by_attr["LINE検索名"]),
+                      ("本名", by_attr["本名"])):
+        for v, codes in mp.items():
+            if len(codes) >= 2:
+                for i in range(len(codes) - 1):
+                    for j in range(i + 1, len(codes)):
+                        _add(codes[i], codes[j], f"{label}が同じ")
+    # 正規化名の一致(「田中さん」と「田中🍸」等)
+    for v, codes in by_norm.items():
+        if len(codes) >= 2:
+            for i in range(len(codes) - 1):
+                for j in range(i + 1, len(codes)):
+                    _add(codes[i], codes[j], "名前がほぼ同じ")
+    # 包含(「キム」⊂「キムラ」は誤爆が多いので4文字以上が含まれる時だけ)
+    norms = sorted(by_norm.items())
+    for i in range(len(norms)):
+        for j in range(i + 1, len(norms)):
+            va, ca = norms[i]
+            vb, cb = norms[j]
+            short, longer = (va, vb) if len(va) <= len(vb) else (vb, va)
+            if len(short) >= 4 and short in longer:
+                for x in ca:
+                    for y in cb:
+                        _add(x, y, "名前の一部が一致")
+    # 直近の接触情報を添える(どちらを残すかの判断材料)
+    out = list(pairs.values())[:10]
+    with db.conn() as c:
+        for p in out:
+            for side in ("a", "b"):
+                code = p[side]["code"]
+                try:
+                    r1 = c.execute("SELECT MAX(ts) m, COUNT(*) n FROM messages WHERE contact=?",
+                                   (code,)).fetchone()
+                    p[side]["last_ts"] = r1["m"] or 0
+                    p[side]["msgs"] = r1["n"] or 0
+                except Exception:
+                    p[side]["last_ts"], p[side]["msgs"] = 0, 0
+    _DUP_CACHE.update(ts=now, items=out)
+    return out

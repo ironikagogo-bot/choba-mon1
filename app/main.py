@@ -232,7 +232,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v183"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v184"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -1229,6 +1229,45 @@ def campaign_page():
 @app.get("/customers")
 def customers_page():
     return FileResponse(os.path.join(STATIC_DIR, "customers.html"))
+
+
+# ============ v184: web顧客カード閲覧(LIFFカードと同内容・閲覧のみ) ============
+# 認証は玄関Cookie(ミドルウェア)。編集はLIFF側に誘導する。
+
+@app.get("/api/web/contacts")
+def api_web_contacts():
+    from . import crm, linebot
+    linebot.ensure()
+    out = []
+    for r in db.list_contacts():
+        kind = r.get("kind") or "customer"
+        if kind == "private":
+            continue
+        code = r["code"]
+        try:
+            a = crm.get_attrs(code) or {}
+        except Exception:
+            a = {}
+        try:
+            nm = linebot._yobina(code, a)
+        except Exception:
+            nm = code
+        out.append({"code": code, "name": nm, "rank": r.get("rank") or "B",
+                    "kind": kind, "linked": r.get("linked"),
+                    "yobina": a.get("呼び名") or "", "company": a.get("仕事・会社") or ""})
+    _ko = {"customer": 0, "peer": 1, "staff": 2}
+    _ro = {"S": 0, "A": 1, "B": 2}
+    out.sort(key=lambda x: (_ko.get(x["kind"], 3), _ro.get(x["rank"], 3), x["code"]))
+    return {"ok": True, "contacts": out, "mode": config.MODE}
+
+
+@app.get("/api/web/contact/{code:path}")
+def api_web_contact(code: str):
+    from . import liff as _liff
+    p = _liff.contact_payload(code)
+    if not p:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return p
 
 
 @app.get("/demo")

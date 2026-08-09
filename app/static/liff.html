@@ -571,6 +571,7 @@ function route() {
   if (name === "seibi") return vSeibi(arg ? decodeURIComponent(arg) : "");
   if (name === "seibip") return vSeibi(arg ? decodeURIComponent(arg) : "", "pending");   // v141: この人の確認だけ
   if (name === "policy") return vPolicy();   // v167: じぶんの方針
+  if (name === "dups") return vDups(arg ? decodeURIComponent(arg) : "");   // v184: 重複カードの統合
   return vHome();
 }
 
@@ -1017,6 +1018,9 @@ function drawHome(d) {
   ${d.fixup ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
      onclick="nav('#fixup')">🪄<div class="txt"><b>あと${d.fixup}人、お名前の確認だけ</b>
      — 1人10秒。⚡ぜんぶおまかせなら1タップで終わります</div><span class="chev">›</span></div>` : ""}
+  ${d.dups ? `<div class="banner" style="cursor:pointer" onclick="nav('#dups')">🔀<div class="txt">
+     <b>同じ人かもしれないカードが${d.dups}組</b> — 見比べて1タップで統合できます</div>
+     <span class="chev">›</span></div>` : ""}
   ${d.pending_facts ? `<div class="banner" style="cursor:pointer" onclick="nav('#seibi')">✅<div class="txt">
      確認待ち <b>${d.pending_facts}件</b> — AIが拾った内容を○✕するだけ</div><span class="chev">›</span></div>` : ""}
   ${est.length ? `<div class="banner" style="cursor:pointer" onclick="nav('#ann')">🕰<div class="txt">
@@ -1344,6 +1348,7 @@ function drawCard(code, d) {
   <div class="chips" style="margin:4px 0 10px">
     <button class="chip" onclick="cardPrint('${cq}','share')">📄 印刷/PDF(見せる用)</button>
     <button class="chip" onclick="cardPrint('${cq}','full')">📄 印刷/PDF(自分用・全部)</button>
+    <button class="chip" onclick="nav('#dups/${cq}')">🔀 重複と統合</button>
   </div>
   <button class="btn primary" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button>
   <!-- v160: ‹は常にホーム固定(v144・迷子防止)なので、一覧から来た時にここで一覧へ戻る手段が
@@ -1444,6 +1449,101 @@ window.mergeGo = async (cq, keep) => {
     toast(`✓ 「${disp(keep)}」に統合しました`);
     nav("#card/" + encodeURIComponent(keep));
   } catch (e) { toast("統合に失敗しました(通信)"); }
+};
+
+// ============ 🔀 重複カードの統合 (v184) ============
+// 自動検出(呼び名/LINE検索名/本名/名前類似)+方向明示の統合。実行は必ず本人の確認を経る
+let _dups = [];
+function dupSide(s, hot) {
+  const kindLab = ({ customer: "💐", staff: "🏠", peer: "🏮" })[s.kind] || "💐";
+  const last = s.last_ts ? Math.floor((Date.now() / 1000 - s.last_ts) / 86400) : null;
+  return `<div style="flex:1;border:1px solid ${hot ? "var(--gold)" : "var(--border)"};border-radius:10px;padding:8px">
+    <div style="font-weight:700">${esc(disp(s.name || s.code))}</div>
+    <div style="font-size:11px;color:var(--sub);margin-top:2px">${kindLab} ランク${esc(s.rank)}
+      ${s.yobina ? "・呼び名 " + esc(s.yobina) : ""}${s.company ? "・" + esc(s.company) : ""}</div>
+    <div style="font-size:11px;color:var(--sub)">受信${s.msgs ?? 0}件${last != null ? "・最終 " + (last === 0 ? "今日" : last + "日前") : "・受信なし"}</div>
+  </div>`;
+}
+function dupRow(p, i) {
+  return `<div class="card" id="dp${i}">
+    <div style="font-size:11px;color:var(--gold);font-weight:700">🔀 ${esc(p.reason)}</div>
+    <div style="display:flex;gap:8px;align-items:stretch;margin:8px 0 4px">
+      ${dupSide(p.a)}<div style="align-self:center;color:var(--sub);font-size:11px">vs</div>${dupSide(p.b)}</div>
+    <div class="note" style="margin:4px 0 8px">残す方を選ぶと、<b>もう片方のカードは消えて</b>会話・履歴・情報が全部移ります。取り消せません</div>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" style="margin:0;flex:1;padding:11px" onclick="dupKeep(${i},'a')">◀ 「${esc(disp(p.a.name || p.a.code))}」を残す</button>
+      <button class="btn ghost" style="margin:0;flex:1;padding:11px" onclick="dupKeep(${i},'b')">「${esc(disp(p.b.name || p.b.code))}」を残す ▶</button></div>
+    <div style="margin-top:8px;text-align:center">
+      <button class="chip" onclick="dupNotSame(${i})">👥 別人です（今後表示しない）</button></div>
+  </div>`;
+}
+async function vDups(code) {
+  setHead("🔀 重複カードの統合", "同じ人が2枚になっていたら1枚に", true);
+  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+  let d; try { d = await api("/api/liff/dups"); } catch (e) {
+    $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
+  _dups = d.items || [];
+  // カード画面から来た時はその人のペアを先頭に
+  if (code) _dups.sort((p, q) => ((q.a.code === code || q.b.code === code) ? 1 : 0) - ((p.a.code === code || p.b.code === code) ? 1 : 0));
+  let html = _dups.length ? _dups.map((p, i) => dupRow(p, i)).join("")
+    : `<div class="empty">重複の疑いは見つかりませんでした</div>`;
+  html += `<details class="card" ${code && !_dups.some(p => p.a.code === code || p.b.code === code) ? "open" : ""}>
+    <summary>🔍 自分で選んで統合する</summary>
+    <div class="note" style="margin:6px 0">検出に出てこない2枚を統合する時に。まず1枚目、次に2枚目を選びます。</div>
+    <div class="chips" id="dupPickBox"><button class="chip" onclick="dupPick('${encodeURIComponent(code || "")}')">カードを選ぶ</button></div>
+    <div id="dupManual"></div>
+  </details>`;
+  $("#view").innerHTML = html;
+}
+window.dupKeep = async (i, side) => {
+  const p = _dups[i]; if (!p) return;
+  const keep = side === "a" ? p.a.code : p.b.code;
+  const absorb = side === "a" ? p.b.code : p.a.code;
+  const ok = await askDanger(`「${disp(absorb)}」→「${disp(keep)}」に統合`,
+    `「${disp(absorb)}」のカードが消えて、会話・履歴・情報が全部「${disp(keep)}」へ移ります。`);
+  if (!ok) return toast("やめました");
+  try {
+    const r = await api("/api/liff/merge", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keep, absorb }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + keep); store.del("card_" + absorb); bust("contacts"); bust("home");
+    const el = $("#dp" + i); if (el) el.remove();
+    toast(`✓ 「${disp(keep)}」に統合しました`);
+  } catch (e) { toast("統合に失敗しました(通信)"); }
+};
+window.dupNotSame = (i) => {
+  const p = _dups[i]; if (!p) return;
+  fire("/api/liff/dups/dismiss", { a: p.a.code, b: p.b.code });
+  const el = $("#dp" + i); if (el) el.remove();
+  toast("了解。今後この2枚は出しません");
+};
+// 手動選択: 1枚目→2枚目→方向つきペア行を出す(方向選択+確認は自動検出と同じ)
+window.dupPick = async (cq) => {
+  const box = $("#dupPickBox"); if (!box) return;
+  let all = [];
+  try { all = (await api("/api/liff/contacts?kind=all")).contacts || []; } catch (e) { return toast("一覧を取得できません"); }
+  const sel = { first: cq ? decodeURIComponent(cq) : "" };
+  const draw = q => {
+    const hits = all.filter(c => c.code !== sel.first && (!q || c.code.includes(q) || (c.name || "").includes(q))).slice(0, 8);
+    box.innerHTML = (sel.first ? `<div class="note" style="flex-basis:100%">1枚目: <b>${esc(disp(sel.first))}</b> — 2枚目を選んでください</div>` : "")
+      + `<input class="f" id="dupq" placeholder="${sel.first ? "2枚目" : "1枚目"}のカードを検索"
+          style="flex-basis:100%;font-size:15px;padding:9px 10px;margin-bottom:6px">`
+      + hits.map(c => `<button class="chip" data-dpick="${encodeURIComponent(c.code)}">${esc(disp(c.name || c.code))}</button>`).join("");
+    box.querySelectorAll("[data-dpick]").forEach(b => b.addEventListener("click", () => {
+      const code = decodeURIComponent(b.dataset.dpick);
+      if (!sel.first) { sel.first = code; draw(""); return; }
+      const mk = c => ({ code: c, name: c, rank: (all.find(x => x.code === c) || {}).rank || "B",
+        kind: (all.find(x => x.code === c) || {}).kind || "customer", yobina: "", company: "",
+        msgs: null, last_ts: 0 });
+      _dups.push({ a: mk(sel.first), b: mk(code), reason: "手動選択" });
+      $("#dupManual").innerHTML = dupRow(_dups[_dups.length - 1], _dups.length - 1);
+    }));
+    const inp = $("#dupq");
+    inp.addEventListener("input", e => { const val = e.target.value.trim(); draw(val);
+      const ni = $("#dupq"); ni.focus(); ni.setSelectionRange(val.length, val.length); });
+    if (q) inp.focus();
+  };
+  draw("");
 };
 // v145: カードの完全消去(取り消し不可→OK入力確認)
 window.cardWipe = async cq => {

@@ -242,6 +242,10 @@ def liff_home(request: Request):
         pending_n = len(linebot.visible_pending())   # v150: 4項目+🌐のみ数える
     except Exception:
         pending_n = 0
+    try:
+        dups_n = len(crm.find_duplicates())   # v184: 同じ人かも(5分キャッシュ)
+    except Exception:
+        dups_n = 0
     return {
         "fixup": fixup_n,
         "reader": reader,
@@ -251,6 +255,7 @@ def liff_home(request: Request):
         "queue_msgs": sum(int(x.get("count") or 1) for x in q),
         "deferred": deferred_n,   # v177: ↷あとで分(まとめ箱)の通数
 
+        "dups": dups_n,   # v184: 重複カードの疑い(組数)
         "neta": neta, "neta_hot": neta_hot, "neta_blink": neta_blink,
         "neta_latest_ts": neta_latest,
         "anni": anni, "contacts": n_contacts,
@@ -546,15 +551,14 @@ _PROFILE_KEYS = ("本名", "年齢", "誕生日", "仕事・会社", "家族", "
                  "好きなお酒", "好きな食べ物", "趣味・関心", "健康", "記念日")
 
 
-@router.get("/api/liff/contact/{code:path}")
-def liff_contact(code: str, request: Request):
-    if not _authed(request):
-        return _deny()
+def contact_payload(code: str):
+    """カード詳細の組み立て。v184: web閲覧ビュー(main.py /api/web/contact)と共用。
+    認証は呼び出し側の責務。見つからなければNone。"""
     from . import crm, linebot, news
     linebot.ensure()
     d = crm.contact_detail(code)
     if not d:
-        return JSONResponse({"error": "not found"}, status_code=404)
+        return None
     attrs = d.get("attrs") or {}
     # 履歴: 受信・返信・お席(直近)
     with db.conn() as c:
@@ -633,6 +637,16 @@ def liff_contact(code: str, request: Request):
         "pending_facts": pending_n, "review_facts": review_n,
         "gap_days": gap,
     }
+
+
+@router.get("/api/liff/contact/{code:path}")
+def liff_contact(code: str, request: Request):
+    if not _authed(request):
+        return _deny()
+    p = contact_payload(code)
+    if not p:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return p
 
 
 @router.post("/api/liff/contact_delete")
@@ -1006,7 +1020,43 @@ def liff_orei_list(request: Request):
     return {"ok": True, "sittings": out}
 
 
-# ============ 🔀 カード統合 (v133) ============
+# ============ 🔀 カード統合 (v133) / 重複検出 (v184) ============
+
+@router.get("/api/liff/dups")
+def liff_dups(request: Request):
+    """v184: 同じ人かもしれないカードのペア一覧(呼び名/LINE検索名/本名/名前類似)。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm, linebot
+    items = crm.find_duplicates()
+    for p in items:
+        for side in ("a", "b"):
+            try:
+                p[side]["name"] = linebot._yobina(p[side]["code"])
+            except Exception:
+                p[side]["name"] = p[side]["code"]
+    return {"ok": True, "items": items}
+
+
+@router.post("/api/liff/dups/dismiss")
+async def liff_dups_dismiss(request: Request):
+    """v184: 「別人です」= このペアを今後の検出から外す(永久)。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    try:
+        body = await request.json()
+        a = (body.get("a") or "").strip()
+        b = (body.get("b") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not a or not b:
+        return JSONResponse({"error": "no pair"}, status_code=400)
+    crm.dup_dismiss(a, b)
+    db.track("liff_dups_dismiss")
+    return {"ok": True}
+
+
 
 @router.post("/api/liff/merge")
 async def liff_merge(request: Request):
@@ -1023,6 +1073,10 @@ async def liff_merge(request: Request):
     r = crm.merge_contact(keep, absorb)
     if not r.get("ok"):
         return JSONResponse({"error": r.get("error") or "統合できませんでした"}, status_code=400)
+    try:
+        crm._DUP_CACHE["ts"] = 0.0   # v184: 統合したら重複検出キャッシュを捨てる
+    except Exception:
+        pass
     db.track("liff_merge")
     return {"ok": True}
 
