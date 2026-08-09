@@ -198,6 +198,12 @@ def liff_home(request: Request):
         anni = 0
     with db.conn() as c:
         last_ts = c.execute("SELECT MAX(ts) FROM messages").fetchone()[0]
+        # v177: ↷あとで(deferred)の件数を別枠で返す(queue数は変えない)
+        try:
+            deferred_n = c.execute(
+                "SELECT COUNT(*) FROM messages WHERE status='deferred'").fetchone()[0]
+        except Exception:
+            deferred_n = 0
         week = time.time() - 7 * 86400
         sent_n = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=?", (week,)).fetchone()[0]
         verb = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND IFNULL(edited,0)=0",
@@ -231,6 +237,8 @@ def liff_home(request: Request):
         "queue": len(q), "urgent": urgent_n, "unlinked": unlinked_n,
         # v175: 人数と通数を分けて返す(本人指摘「何通溜まっているか把握されていない」)
         "queue_msgs": sum(int(x.get("count") or 1) for x in q),
+        "deferred": deferred_n,   # v177: ↷あとで分(まとめ箱)の通数
+
         "neta": neta, "anni": anni, "contacts": n_contacts,
         "estranged": est_sa[:5],
         "sent_week": sent_n, "verbatim_week": verb,
@@ -1304,7 +1312,10 @@ async def liff_orei_resume(request: Request):
     for g in drafts_:
         if g.get("contact") in sent:
             g["done"] = True
-        g["sname"] = (_crm.get_attrs(g.get("contact") or "") or {}).get("LINE検索名") or ""  # v150
+        _a = _crm.get_attrs(g.get("contact") or "") or {}
+        g["sname"] = _a.get("LINE検索名") or ""  # v150
+        g["tanto"] = _a.get("担当") or ""        # v176: 検索語候補の降格判定用
+        g["sword"] = _a.get("LINE検索確定語") or ""  # v176: 本人タップで学習した検索語
     db.track("liff_orei_resume")
     return {"ok": True, "sid": sid, "drafts": drafts_}
 
@@ -1461,6 +1472,16 @@ async def liff_import(request: Request, files: list[UploadFile] = File(...)):
             out.append({"id": cur.lastrowid, "fname": fname, "status": status})
             continue
         contact, cands, name = _match_contact(fname)
+        # v177: ファイル名から取れない時(メール添付・AirDropで「talk.txt」等に化けた場合)、
+        # 本文先頭の定型ヘッダ「[LINE] ○○とのトーク履歴」から相手名を拾うフォールバック。
+        # _NAME_RE+ゆるい形がそのまま効くので_match_contactを本文先頭2行で再実行する。
+        if contact is None and name is None:
+            try:
+                head = "\n".join(text.split("\n")[:2])
+                if "とのトーク" in head:
+                    contact, cands, name = _match_contact(head)
+            except Exception as e:
+                print(f"[import head-name] {e}", flush=True)
         if contact is None and name and not cands:
             contact = name   # 新規カードとして作成(ジョブ内でupsert)
         # v131: 既存カードへのマッチは「このtxtはこの顧客？」確認を挟む(誤マージ防止)
@@ -1535,6 +1556,17 @@ def liff_inbox(request: Request):
     from . import linebot
     linebot.ensure()
     q = linebot.build_queue()
+    # v177: deferred(↷あとで)はPWAのまとめ箱でしか見えず、LIFF動線では黒穴だった
+    # (build_queueはopenのみ)。openと同じカードに合流し、deferredのみの相手は
+    # 末尾にdeferredフラグ付きカードで返す(PWAの既存意味論の移植)。
+    _def_by_contact = {}
+    try:
+        with db.conn() as c:
+            for r in c.execute("SELECT * FROM messages WHERE status='deferred' ORDER BY ts ASC"):
+                m = dict(r)
+                _def_by_contact.setdefault(m.get("contact") or "", []).append(m)
+    except Exception as e:
+        print(f"[inbox deferred] {e}", flush=True)
     out = []
     for it in q:
         # v175: 同一相手の未対応「全部」を時系列で連結して見せる(いままではアンカー1通だけ
@@ -1545,12 +1577,15 @@ def liff_inbox(request: Request):
             opens = db.open_for_contact(it["contact"])
         except Exception:
             pass
-        if opens:
-            mids = [m["id"] for m in opens]
-            full = "\n".join((m.get("text") or "") for m in opens)
+        defs = _def_by_contact.pop(it["contact"], [])
+        if opens or defs:
+            allm = sorted(opens + defs, key=lambda m: m.get("ts") or 0)
+            mids = [m["id"] for m in allm]
+            full = "\n".join((m.get("text") or "") for m in allm)
         else:
             mids = it.get("mids") or [it["mid"]]
             full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
+        it["_deferred_n"] = len(defs)
         from . import crm as _crm
         # v145: 未登録相手は既存カードの候補を添える(表記ゆれ・グループ着信の紐付け動線)
         cands = []
@@ -1561,16 +1596,46 @@ def liff_inbox(request: Request):
                          for x in _crm.find_candidates(it["contact"])]
             except Exception as e:
                 print(f"[inbox cands] {e}", flush=True)
+        _a = _crm.get_attrs(it["contact"]) or {}
         out.append({"mid": it["mid"], "contact": it["contact"],
                     "name": linebot._yobina(it["contact"]),
                     "rank": it.get("rank") or "B", "urgent": bool(it.get("urgent")),
                     "unlinked": bool(it.get("unlinked")), "reason": it.get("reason") or "",
-                    "ts": (opens[-1].get("ts") if opens else it.get("ts")),
+                    "ts": (max(m.get("ts") or 0 for m in (opens + defs)) if (opens or defs) else it.get("ts")),
                     "text": full[:600],
                     "mids": mids, "count": len(mids),
-                    "sname": (_crm.get_attrs(it["contact"]) or {}).get("LINE検索名") or "",
+                    "sname": _a.get("LINE検索名") or "",
+                    "sword": _a.get("LINE検索確定語") or "",   # v176: 学習済み検索語(コピー優先)
                     "cands": cands,
+                    "deferred": int(it.get("_deferred_n") or 0),  # v177: ↷あとで分の件数
                     "truncated": len(full) > 600})
+    # v177: deferredのみの相手(openゼロ)は末尾に「まとめ箱」カードとして追加
+    try:
+        from . import crm as _crm2
+        for ct, msgs in _def_by_contact.items():
+            if not ct:
+                continue
+            c = db.get_contact(ct) or {}
+            if (c.get("kind") or "customer") == "staff":
+                continue
+            mids = [m["id"] for m in msgs]
+            full = "\n".join((m.get("text") or "") for m in msgs)
+            _a = _crm2.get_attrs(ct) or {}
+            out.append({"mid": mids[0], "contact": ct,
+                        "name": linebot._yobina(ct),
+                        "rank": c.get("rank") or "B", "urgent": False,
+                        "unlinked": bool(c.get("linked") == 0 or not c),
+                        "reason": (msgs[-1].get("reason") or ""),
+                        "ts": msgs[-1].get("ts"),
+                        "text": full[:600],
+                        "mids": mids, "count": len(mids),
+                        "sname": _a.get("LINE検索名") or "",
+                        "sword": _a.get("LINE検索確定語") or "",
+                        "cands": [],
+                        "deferred": len(mids),
+                        "truncated": len(full) > 600})
+    except Exception as e:
+        print(f"[inbox deferred cards] {e}", flush=True)
     return {"ok": True, "items": out}
 
 
@@ -1627,11 +1692,16 @@ async def liff_reply_act(request: Request):
         mid = int(body.get("mid"))
         action = body.get("action") or ""
         text = body.get("text") or ""
+        # v177: クライアントが送るmids(画面に出ていた同一相手の全メッセージid)を捨てていた。
+        # skipped/deferredはclose_contact_openが走らないため、アンカー1通しか閉じず
+        # 残りが再出現するv175症状の残存経路だった(regress-1)。
+        mids = body.get("mids")
+        mids = [int(x) for x in mids] if isinstance(mids, list) else None
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     from .main import act as _act, Action as _Action
     try:
-        r = _act(mid, _Action(action=action, text=text))
+        r = _act(mid, _Action(action=action, text=text, mids=mids))
     except Exception as e:
         code = getattr(e, "status_code", 500)
         return JSONResponse({"error": str(getattr(e, "detail", e))}, status_code=code)
@@ -1748,10 +1818,13 @@ async def liff_ann_plan(request: Request):
             seen.add(c_)
             kind = (db.get_contact(c_) or {}).get("kind") or "customer"
             tone = {"peer": "peer", "staff": "staff"}.get(kind, "cust")
+            _a = crm.get_attrs(c_) or {}
             items.append({"code": c_, "name": linebot._yobina(c_),
                           "rank": (db.get_contact(c_) or {}).get("rank") or "B",
                           "tone": tone,
-                          "sname": (crm.get_attrs(c_) or {}).get("LINE検索名") or ""})
+                          "sname": _a.get("LINE検索名") or "",
+                          "tanto": _a.get("担当") or "",           # v176: 検索語候補の降格判定用
+                          "sword": _a.get("LINE検索確定語") or ""})  # v176: 学習済み検索語
     return {"ok": True, "items": items, "deduped": dup}
 
 
@@ -1773,15 +1846,18 @@ async def liff_ann_draft(request: Request):
         return JSONResponse({"error": "not found"}, status_code=404)
     if tone in ("peer", "staff"):
         text = linebot._casual_draft(code, tone)
+        row_ai = bool(config.ANTHROPIC_API_KEY)
     else:
         # 注: greetingはranks/tags必須の設計。宛先は確定済みなので全ランクを通す
         r = campaign.generate(mode="greeting", ranks=["S", "A", "B"], codes=[code],
                               template=template, purpose=purpose)
         items = r.get("items") or []
         text = items[0]["text"] if items else ""
+        # v177: AI生成できたか(row_ai)をフロントに通す=フォールバック時に琥珀注意を出す下地
+        row_ai = bool(items[0].get("ai")) if items else False
     from . import crm
     db.track("liff_ann_draft")
-    return {"ok": True, "text": text, "card_keys": crm.card_used_keys(code)}
+    return {"ok": True, "text": text, "ai": row_ai, "card_keys": crm.card_used_keys(code)}
 
 
 @router.post("/api/liff/ann/sent")
@@ -1878,7 +1954,10 @@ async def liff_orei_record(request: Request):
     drafts_ = sittings.generate_orei(sid)
     from . import crm as _crm
     for g in drafts_:   # v150: LINE検索名を添える(g.snameが常にundefinedだった)
-        g["sname"] = (_crm.get_attrs(g.get("contact") or "") or {}).get("LINE検索名") or ""
+        _a = _crm.get_attrs(g.get("contact") or "") or {}
+        g["sname"] = _a.get("LINE検索名") or ""
+        g["tanto"] = _a.get("担当") or ""        # v176: 検索語候補の降格判定用
+        g["sword"] = _a.get("LINE検索確定語") or ""  # v176: 本人タップで学習した検索語
     db.track("liff_orei_record")
     return {"ok": True, "sid": sid, "drafts": drafts_}
 
@@ -1925,10 +2004,14 @@ def liff_anni(request: Request):
         items = []
     out = []
     for x in items:
-        code = x.get("contact") or ""
-        out.append({"contact": code, "name": linebot._yobina(code),
+        # v177: crm側のキーは'code'(旧'contact'は常に空でカード遷移・宛先が壊れていた)。
+        # crmは呼び名解決済みのnameを返すのでそれを優先。days/draftも通す(祝い文動線の下地)。
+        code = x.get("code") or x.get("contact") or ""
+        out.append({"contact": code, "name": x.get("name") or linebot._yobina(code),
                     "label": x.get("label") or x.get("kind") or "記念日",
-                    "when": x.get("when") or x.get("date") or ""})
+                    "when": x.get("date") or x.get("when") or "",
+                    "days": x.get("days"),
+                    "draft": x.get("draft") or ""})
     return {"ok": True, "items": out}
 
 

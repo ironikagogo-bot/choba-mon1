@@ -43,13 +43,16 @@ _GROUP_SPLIT = re.compile(r"^(?P<sender>[^:：！？。、,.\d\n]{1,20})[:：]\s
 _MEDIA_SENDER = re.compile(r"^(?P<sender>.{1,30}?)が(?P<action>(?:写真|スタンプ|動画|画像|ファイル|ボイスメッセージ|アルバム|位置情報|連絡先|ギフト)を送信しました)$")
 
 
-def parse_line_notification(title: str, text: str, package: str | None = None) -> dict | None:
+def parse_line_notification(title: str, text: str, package: str | None = None,
+                            known_title: bool = False) -> dict | None:
     """LINE通知 → {"contact","message"} を返す。取り込むべきでなければ None。
 
     - package が LINE 以外なら None(パッケージ指定がある場合のみ判定)
     - 要約/集約通知(相手不明)は None
     - 1対1: title=相手名, text=本文
     - グループ: title=グループ名, text="送信者: 本文" → contact=送信者, message=本文
+    - known_title=True: titleが既存カード/エイリアスに解決済み=確実に1:1。
+      本文の「語: 残り」をグループ発言と誤認して偽カード(「集合」等)を作らない(v177)。
     """
     title = (title or "").strip()
     text = (text or "").strip()
@@ -76,15 +79,17 @@ def parse_line_notification(title: str, text: str, package: str | None = None) -
         return None
 
     # グループ判定: (a)"送信者: 本文"  (b)"送信者 が 写真等を送信しました"
+    # known_title(既存カードに解決済みの1:1)ではスキップ=「集合: 19時に」の誤分離を防ぐ
     sender = None
     body = None
-    m = _GROUP_SPLIT.match(text)
-    if m and title and m.group("sender").strip() != title:
-        sender, body = m.group("sender").strip(), m.group("msg").strip()
-    else:
-        mm = _MEDIA_SENDER.match(text)
-        if mm and title and mm.group("sender").strip() != title:
-            sender, body = mm.group("sender").strip(), mm.group("action").strip()
+    if not known_title:
+        m = _GROUP_SPLIT.match(text)
+        if m and title and m.group("sender").strip() != title:
+            sender, body = m.group("sender").strip(), m.group("msg").strip()
+        else:
+            mm = _MEDIA_SENDER.match(text)
+            if mm and title and mm.group("sender").strip() != title:
+                sender, body = mm.group("sender").strip(), mm.group("action").strip()
     if sender:
         # 相手=送信者(本人)。グループ名は文脈として本文頭に残す(簡易対応・スキーマ変更なし)
         gname = title.strip()

@@ -247,7 +247,24 @@ class DeskService:
                 if _CALL_TITLE.search(rtitle) or is_call_notice(rtext):
                     parsed = None
             else:
-                parsed = parse_line_notification(rtitle, rtext, package)
+                # v177: 旧リーダー(sender欄なし)でも、titleが既存カード/エイリアスに
+                # 完全一致するなら確実に1:1。本文の「集合: 19時に」等をグループ発言と
+                # 誤認して偽カードを湧かせない。crm.resolve_incomingは自動紐付けの
+                # 副作用があるため使わず、読み取り専用チェックに留める。
+                _known = False
+                if rtitle:
+                    try:
+                        if db.get_contact(rtitle):
+                            _known = True
+                        else:
+                            with db.conn() as _c0:
+                                _r0 = _c0.execute(
+                                    "SELECT contact FROM contact_aliases WHERE line_name=?",
+                                    (rtitle,)).fetchone()
+                            _known = bool(_r0)
+                    except Exception as _e:
+                        print(f"[known_title] {_e}", flush=True)
+                parsed = parse_line_notification(rtitle, rtext, package, known_title=_known)
             if not parsed:
                 self.log("→ 取り込まない(LINE以外/要約/相手不明)")
                 return {"status": "ignored"}

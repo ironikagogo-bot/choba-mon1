@@ -41,7 +41,7 @@ if not config.DEMO:
     # v72(9-16): 本番でトークン未設定=stats/quickdrawが無認証で公開になる事故の警告
     if config.STRICT_AUTH and not config.INGEST_TOKEN:
         import sys
-        print("⚠️ [帳場] CHOUBA_INGEST_TOKEN 未設定: /api/stats・/api/quickdraft は"
+        print("⚠️ [帳場] CHOUBA_INGEST_TOKEN 未設定: /api/stats・/api/quickdraft・/api/android/notify は"
               "STRICT_AUTHにより403で塞がれます。運用するにはRenderの環境変数にトークンを設定してください。",
               file=sys.stderr, flush=True)
 
@@ -225,7 +225,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v175"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v177"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -743,6 +743,11 @@ async def android_notify(request: Request):
             raise HTTPException(401, "bad token")
     elif config.INGEST_TOKEN and not hmac.compare_digest(_tok, config.INGEST_TOKEN):
         raise HTTPException(401, "bad token")
+    elif (not config.INGEST_TOKEN) and config.STRICT_AUTH and not config.DEMO:
+        # v177: 本番(STRICT_AUTH)でINGEST_TOKEN未設定なら受信注入口も403で塞ぐ。
+        # heartbeat(_reader_token_ok)・quickdraft(_require_ingest_token)はv72(9-16)で
+        # 同じ方針を適用済みで、最も影響の大きいここだけ無認証のまま漏れていた。
+        raise HTTPException(403, "token not configured")
     res = deskservice.SERVICE.android_ingest(
         str(data.get("package", "") or ""),
         str(data.get("title", "") or ""),
@@ -950,7 +955,24 @@ def act(mid: int, body: Action):
             pass
     if body.action in ("replied", "stamped", "done"):
         try:
-            db.close_contact_open(msg["contact"], time.time(), _sw, exclude_id=mid)
+            # v177: upto_tsは「画面に出ていた最後のメッセージのts」にする。現在時刻を渡すと
+            # カード表示後〜送信タップの数分間に届いた未読の新着まで無言でクローズしてしまい、
+            # close_contact_openのdocstring(読んでいない受信を握り潰さない)と矛盾していた。
+            # midsを送らないクライアント(旧PWA)は表示集合が不明なので現行どおり現在時刻
+            # =v175の五月雨再出現ループ修正を維持。
+            _upto = time.time()
+            if body.mids:
+                try:
+                    _tss = []
+                    for _m in set(list(body.mids) + [mid]):
+                        _row = db.get_message(int(_m))
+                        if _row and _row.get("ts"):
+                            _tss.append(_row["ts"])
+                    if _tss:
+                        _upto = max(_tss)
+                except Exception:
+                    _upto = time.time()
+            db.close_contact_open(msg["contact"], _upto, _sw, exclude_id=mid)
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる

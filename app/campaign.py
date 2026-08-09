@@ -283,6 +283,11 @@ def select_recipients(ranks=None, tags=None, mode="greeting", now=None, codes=No
     only = set(codes) if codes else None
     out = []
     for c in db.list_contacts():
+        # v177: 未仕分けの仮カード(linked=0=未知の送信者からingestが自動作成)は配信対象外。
+        # 顧客一覧(search_contacts)・ご無沙汰(estranged)と同じ境界。NULLは既存is_linkedの
+        # 意味論どおり紐付け済み扱い(==0のみ弾く)。
+        if c.get("linked") == 0:
+            continue
         v = contact_view(c, now)
         if only is not None and v["code"] not in only:
             continue
@@ -413,8 +418,11 @@ def hon(name: str) -> str:
     return name if _HON_RE.search(name) else name + "さん"
 
 
-def _template_one(v, mode) -> str:
-    """APIキー無しのフォールバック(品質検証用ではない・ダミー)。"""
+def _template_one(v, mode, template="") -> str:
+    """APIキー無しのフォールバック(品質検証用ではない・ダミー)。
+    v177: template=本人が書いた必達内容(「今週は金曜と土曜おります」等)。UIは
+    「書いた内容は全員の文面に必ず入ります」と約束しているので、AI失敗時の
+    フォールバックでも捨てずに機械連結して守る。"""
     name = hon(v["code"].split(".")[-1] if "." in v["code"] else v["code"])
     if mode == "thanks":
         ds = v.get("days_since")
@@ -422,10 +430,13 @@ def _template_one(v, mode) -> str:
         tpl = _THANKS_TEMPLATES[_seed(v["code"]) % len(_THANKS_TEMPLATES)]
         return tpl.format(n=name, when=when)
     if "誕生日近い" in v["tags"]:
-        return f"{name} もうすぐお誕生日ですね。近いうちにお祝いさせてください。"
-    if "ご無沙汰" in v["tags"]:
-        return f"{name} ごぶさたしてます。お変わりないですか？そろそろお会いしたいです。"
-    return f"{name} こんにちは。落ち着いたら、また顔を見せてくださいね。"
+        base = f"{name} もうすぐお誕生日ですね。近いうちにお祝いさせてください。"
+    elif "ご無沙汰" in v["tags"]:
+        base = f"{name} ごぶさたしてます。お変わりないですか？そろそろお会いしたいです。"
+    else:
+        base = f"{name} こんにちは。落ち着いたら、また顔を見せてくださいね。"
+    t = (template or "").strip()
+    return (base + "\n" + t) if t else base
 
 
 def _generate_one_ai(v, mode, template, now, purpose=""):
@@ -531,10 +542,10 @@ def generate(mode="greeting", ranks=None, tags=None, template="", now=None, code
     for v in recips:
         try:
             text = (_generate_one_ai(v, mode, template, now, purpose=purpose)
-                    if ai else _template_one(v, mode))
+                    if ai else _template_one(v, mode, template))
             row_ai = ai
         except Exception:
-            text = _template_one(v, mode)
+            text = _template_one(v, mode, template)
             row_ai = False
         items.append({
             "code": v["code"], "rank": v["rank"], "tags": v["tags"],

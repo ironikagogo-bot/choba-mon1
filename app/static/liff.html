@@ -115,6 +115,42 @@ textarea.f{min-height:90px;resize:vertical;overflow:hidden}
    iOS標準のタップ光彩を消しているぶん、押した瞬間の視覚フィードバックが無く「反応してない」と
    誤解されやすかった。押下時にわずかに縮む/薄くなる形で確実に返す(全chip・btn共通)。 */
 .chip:active,.btn:active{transform:scale(.96);opacity:.8}
+/* v176: 送信ユニット(検索語フィールド+回収レーン)。shareTargetPickerの検索が外れる問題対策。
+   合議(4案×3レンズ審査)の結論: 検索欄型フィールドで「貼る物」を絵で伝え、候補は常時可視、
+   外れ語は✗で二度踏み防止、学習(確定語)は本人タップ=確定・「戻す」で即取消。 */
+.swunit{border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-top:12px;background:var(--panel)}
+.swpaste{width:100%;background:var(--bubble);border:none;border-bottom:1px solid var(--bubble-bd);
+  padding:9px 13px;display:flex;align-items:center;gap:8px;cursor:pointer;font-family:inherit;text-align:left;
+  min-height:46px;transition:transform .08s,opacity .08s}
+.swpaste:active{transform:scale(.97);opacity:.85}
+.swpaste .mag{font-size:15px;flex:none;opacity:.85}
+.swpaste .w{font-size:17px;font-weight:700;color:var(--ink);flex:1;min-width:0;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+.swpaste .fx{flex:none;background:var(--gold);color:#fff;font-size:11px;font-weight:800;border-radius:6px;padding:2px 7px}
+body.dark .swpaste .fx{color:#1B2028}
+.swpaste .ok{flex:none;background:#EAF4EA;color:var(--green);border:1px solid #CBE3CC;font-size:12px;
+  font-weight:800;border-radius:8px;padding:3px 9px;white-space:nowrap}
+body.dark .swpaste .ok{background:#1E3320;border-color:#3A5C3D;color:#8FCF95}
+.swpaste.warn{background:#FBF6E9;border-bottom-color:#E8D9AE}
+body.dark .swpaste.warn{background:#332B18;border-bottom-color:#6A5A2E}
+.swstep{font-size:12.5px;color:var(--sub2);padding:7px 14px;border-bottom:1px solid var(--line2)}
+.swstep b{color:var(--ink)}
+.swwline{font-size:12.5px;color:#7A5F1E;background:#FBF6E9;padding:7px 14px;
+  border-bottom:1px solid #E8D9AE;font-weight:700}
+body.dark .swwline{background:#332B18;border-bottom-color:#6A5A2E;color:#E3C87A}
+.swunit .btn.green{margin:0;border-radius:0}
+.swalts{padding:12px 14px 13px;border-top:1px dashed var(--border)}
+.swaltlab{font-size:12.5px;color:var(--sub);font-weight:700;margin-bottom:9px}
+.chip.swdim{border-style:dashed;color:var(--sub);font-size:13px}
+.chip.swtried{color:var(--sub)}
+.chip.swtried .x{color:var(--red);font-weight:800;font-style:normal;margin-right:4px}
+.chip.swtried .t{text-decoration:line-through;text-decoration-thickness:1px;opacity:.75}
+.swlearn{display:flex;align-items:center;gap:8px;margin-top:10px}
+.swlearn .msg{font-size:12.5px;color:var(--green);font-weight:700;flex:1;min-width:0}
+.swundo{flex:none;border:1px solid var(--border);background:var(--panel);color:var(--chiptx);border-radius:99px;
+  padding:8px 14px;font-size:13px;font-weight:700;min-height:40px;cursor:pointer}
+.swexit{font-size:12.5px;color:var(--sub);margin-top:2px}
+.swexit b{color:var(--ink);font-weight:700}
 .jobrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:14px;flex-wrap:wrap}
 .jobrow:last-child{border-bottom:none}
 .jobrow .st{margin-left:auto;font-size:12px;font-weight:700;flex:1 1 auto;min-width:0;text-align:right;white-space:normal;word-break:break-word;max-width:100%}   /* v151: 長文エラーで画面幅が壊れない */
@@ -176,6 +212,43 @@ dialog{border:none;border-radius:16px;padding:20px;max-width:320px;width:88%;}
 dialog::backdrop{background:rgba(27,42,74,.45)}
 dialog p{margin-bottom:14px;font-size:14px}
 dialog .btn{margin-top:8px;padding:12px}
+
+/* ===== v177: デザイン洗練パッチD(B+C合体・Claude Design経由・2026-08-09) ===== */
+/* ===== 提案パッチD「B+C合体」(v177候補) =====
+   ライト=C(枠線を透明にして二層の極薄影・小見出しに細線)
+   ダーク=B(地を一段沈め・内側1pxハイライト・紺グラデ・金の灯り)
+   既存クラス名・変数維持。新色は変数追加のみ。 */
+/* --- C: ライトの輪郭を影へ --- */
+:root{--cream:#F5F2EA;
+  --shadow-soft:0 1px 3px rgba(27,42,74,.07),0 1px 2px rgba(27,42,74,.05);
+  --panel-hi:rgba(255,255,255,0);--navy-hi:#1E3054;--navy-lo:#16223C}
+.card,.row,.tile,.swunit,.navcard.gold{border-color:transparent;box-shadow:var(--shadow-soft)}
+.banner{border-color:#EFE3C2;box-shadow:var(--shadow-soft)}
+.draft{border-color:#EDE8DC}
+.hsec,.seclabel{display:flex;align-items:center;gap:10px}
+.hsec::after,.seclabel::after{content:"";flex:1;height:1px;background:var(--line2)}
+.prog{background:#EAE4D4}
+/* --- B: ダークの艶 --- */
+body.dark{
+  --cream:#0C0F15;--panel:#171C25;--border:#2B3240;--line2:#242B38;--track:#242B38;
+  --bubble:#1F2735;--bubble-bd:#2E3848;--panel-hi:rgba(255,255,255,.05)}
+body.dark .card,body.dark .row,body.dark .tile,body.dark .swunit,body.dark .draft{
+  border-color:var(--border);
+  box-shadow:inset 0 1px 0 var(--panel-hi),0 2px 12px rgba(0,0,0,.30)}
+body.dark .navcard{background:linear-gradient(165deg,var(--navy-hi),var(--navy-lo));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+body.dark .navcard.gold{background:var(--panel);
+  box-shadow:inset 0 1px 0 var(--panel-hi),0 2px 12px rgba(0,0,0,.30)}
+body.dark header{background:linear-gradient(180deg,var(--navy-hi),#1B2A4A)}
+/* v177fix: 230行の.prog{#EAE4D4}(ライト用ベタ色)が175行のvar(--track)を後勝ち上書きし、
+   ダークで進捗トラックが明るいベージュのまま眩しく浮いていた回帰の修正 */
+body.dark .prog{background:var(--track)}
+body.dark .prog i{box-shadow:0 0 10px rgba(201,164,76,.45)}
+body.dark .chip.on{background:#2A3B5E;border-color:#3E5178}
+body.dark .btn.ghost{background:transparent}
+body.dark .banner{box-shadow:none}
+body.dark .stickyfix{background:linear-gradient(165deg,var(--navy-hi),var(--navy-lo))}
+
 </style>
 </head>
 <body>
@@ -676,11 +749,164 @@ function lineSearchWord(name) {
   n = n.split(/[\s　・]/)[0] || n;                        // 最初の語だけ(部分一致で探す)
   return n.replace(/[\u{1F000}-\u{1FFFF}☀-➿]/gu, "").trim() || String(name || "");
 }
-async function sendViaLine(text, searchName, sname) {
+// v176: 検索語の候補分解。LINE表示名(検索名)を語片に割り、識別力の高い順に並べる。
+// 背景: LINE検索名の全文コピー(v150〜)は「Yo Kimura _ 木村 曜」のような混在文字列で
+// picker検索にヒットしない実運用報告(2026-08-09キムさん事故)。ホステス流の登録名
+// 「大山さん🌵AMANE芳美（誕生日）」にも対応: 客名が先頭・店/担当は後ろの構造を利用。
+// 並び: 漢字→英字(3字以上)→かな。担当名・複数カード共通語(店名の印)・2文字以下英字は
+// 末尾に降格(消さない: 別の語で当たる実例に備え全部見せる裁定)。数字は捨てる。
+function swTokens(s) {
+  s = String(s || "").replace(/[(（][^)）]*[)）]/g, " ");   // 括弧内(誕生日等のメモ)は捨てる
+  const toks = s.split(/[\s　_・、,./|~〜\-]+|[\u{1F000}-\u{1FAFF}☀-➿⬀-⯿️‍]+/u).filter(Boolean);
+  const runs = [];
+  for (let t of toks) {
+    t = t.replace(/(さん|様|さま|くん|君|ちゃん)$/, "");   // 末尾敬称を剥がす
+    if (!t) continue;
+    for (const r of (t.match(/[一-鿿々]+|[ぁ-んァ-ヶー]+|[A-Za-z]+|[0-9]+/g) || [])) runs.push(r);
+  }
+  const seen = new Set();
+  return runs.filter(r => !seen.has(r) && seen.add(r));
+}
+function _swDemoted(w, tanto, common) {
+  return (tanto && w === tanto) || (common || []).includes(w) || /^[A-Za-z]{1,2}$/.test(w);
+}
+function swCandidates(sname, yobina, tanto, common) {
+  const kanji = [], latin = [], kana = [], demoted = [];
+  for (const r of swTokens(sname)) {
+    if (/^[0-9]+$/.test(r)) continue;
+    if (_swDemoted(r, tanto, common)) { demoted.push(r); continue; }
+    if (/^[一-鿿々]+$/.test(r)) kanji.push(r);
+    else if (/^[A-Za-z]+$/.test(r)) latin.push(r);
+    else kana.push(r);
+  }
+  const out = kanji.concat(latin, kana, demoted);
+  if (!out.length && yobina) return [String(yobina)];   // 検索名なし=呼び名フォールバック(外れやすい)
+  return out;
+}
+function swCommon(snames) {   // 2枚以上のカードのLINE検索名に現れる語 = 店名・担当名の印
+  const cnt = {};
+  for (const s of (snames || [])) {
+    const set = new Set(swTokens(s));
+    for (const w of set) cnt[w] = (cnt[w] || 0) + 1;
+  }
+  return Object.keys(cnt).filter(w => cnt[w] >= 2);
+}
+function swBest(sname, searchName, sword) {   // sendViaLine既定語: 確定語 > 最良候補 > 従来
+  if ((sword || "").trim()) return sword.trim();
+  const c = swCandidates(sname, "", "", []);
+  return c.length ? c[0] : lineSearchWord(searchName);
+}
+// v177: 成否を返す(iOS WKWebViewはジェスチャ外のwriteTextを拒否→無音失敗していた)。
+// 「✓コピー済」バッジは実際に成功した時だけ出す(client-2)
+async function copyWord(w) {
+  if (!w) return false;
+  try { await navigator.clipboard.writeText(w); return true; } catch (e) { return false; }
+}
+
+// v176: 送信ユニットの状態(配信='ann'/お礼='or'+j の複数インスタンス)
+const SW = {};
+function swSetup(id, o) {   // o={code,sname,yobina,tanto,sword,common}
+  // v177(client-3): 同一相手の再描画では状態(sel/tried/学習/copied)を温存する。
+  // 他の1通を送った後のdrawOrei再描画などで、本人が外した旧語に巻き戻るのを防ぐ
+  if (SW[id] && o.code && SW[id].code === o.code) return;
+  const fb = !(o.sname || "").trim() && !!o.yobina;   // 呼び名フォールバック
+  let list = swCandidates(o.sname, o.yobina, o.tanto || "", o.common || []);
+  const sword = (o.sword || "").trim();
+  if (sword) list = [sword].concat(list.filter(w => w !== sword));   // 学習済み=確定語が先頭
+  SW[id] = { list, sel: 0, tried: [], snap: null, code: o.code, tanto: o.tanto || "",
+             common: o.common || [], fb, sword, origSword: sword, learnedNow: false, copied: false };
+}
+function swWord(id) { const s = SW[id]; return (s && s.list[s.sel]) || ""; }
+function swInner(id, sendHtml) {
+  const s = SW[id]; if (!s) return "";
+  const w = swWord(id);
+  const rest = s.list.map((x, i) => [x, i]).filter(([x, i]) => i !== s.sel);
+  const chips = rest.map(([x, i]) => {
+    const tr = s.tried.includes(i);
+    const cls = "chip" + (tr ? " swtried" : (_swDemoted(x, s.tanto, s.common) ? " swdim" : ""));
+    const body = tr ? `<i class="x">✗</i><span class="t">${esc(x)}</span>` : esc(x);
+    return `<button type="button" class="${cls}" onclick="swPick('${esc(id)}',${i})">${body}</button>`;
+  }).join("");
+  let exit = "";
+  if (s.fb) exit = `<div class="swexit">出ない時は<b>手で探してOK</b>・出た名前は🗂カードの「LINE検索名」にメモすると次から一発</div>`;
+  else if (!rest.length) exit = `<div class="swexit">この1語で出ない時は<b>手で探してOK</b></div>`;
+  return `<button type="button" class="swpaste${s.fb ? " warn" : ""}" onclick="swRecopy('${esc(id)}')">
+      <span class="mag">🔍</span><span class="w">${esc(w)}</span>
+      ${(s.sword && w === s.sword) ? `<span class="fx">✓確定語</span>` : ""}
+      ${s.copied ? `<span class="ok">✓ コピー済</span>`
+        : `<span class="ok" style="background:transparent;border-color:var(--border);color:var(--sub)">タップでコピー</span>`}</button>
+    ${s.fb ? `<div class="swwline">⚠ LINE名が未登録・呼び名は出ないことがあります</div>` : ""}
+    <div class="swstep">送ったら、相手検索に<b>長押し→ペースト</b></div>
+    ${sendHtml || ""}
+    ${(rest.length || s.learnedNow || exit) ? `<div class="swalts">
+      ${rest.length ? `<div class="swaltlab">出ない時は→</div><div class="chips">${chips}</div>` : ""}
+      ${s.learnedNow ? `<div class="swlearn"><div class="msg">✓ 覚えました・次からこの語</div>
+        <button type="button" class="swundo" onclick="swUndo('${esc(id)}')">戻す</button></div>` : ""}
+      ${exit}</div>` : ""}`;
+}
+function swUnitHtml(id, sendHtml) { return `<div class="swunit" id="swu_${esc(id)}">${swInner(id, sendHtml)}</div>`; }
+function swDraw(id, sendHtml) { const el = document.getElementById("swu_" + id); if (el) el.innerHTML = swInner(id, sendHtml); }
+const _swSend = {};   // id -> 送るボタンHTML(再描画用に保持)
+window.swPick = async (id, i) => {
+  const s = SW[id]; if (!s || i === s.sel) return;
+  s.snap = { sel: s.sel, tried: s.tried.slice() };
+  if (!s.tried.includes(s.sel)) s.tried.push(s.sel);   // いまの語=試して外れた扱い(セッション内のみ)
+  s.sel = i;
+  const w = swWord(id);
+  s.copied = await copyWord(w);
+  toast(s.copied ? `「${w}」をコピーしました` : `「${w}」に切替(🔍をタップでコピー)`);
+  // 学習: 本人が別の語を選んだ=確定扱い(規約: AIの推定でなく本人の確定)。「戻す」で即取消可。
+  // 保存失敗はFAILQ(赤バー)行きにしない: 学習は強化機能で、配信の本流を邪魔させない。
+  // 失敗時は学習表示を取り下げて一言だけ知らせる(「覚えました」の嘘を残さない)。
+  if (s.code && w && w !== s.sword) {
+    const prev = s.sword;
+    s.sword = w; s.learnedNow = true;
+    _swSave(id, w, prev);
+  }
+  swDraw(id, _swSend[id]);
+};
+function _swSave(id, w, prev) {
+  const code = SW[id] && SW[id].code;
+  api("/api/liff/contact/" + encodeURIComponent(code), { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: {}, attrs: { "LINE検索確定語": w } }) })
+    .then(r => { if (r && r.error) throw new Error(r.error);
+      // v177(client-3): 保存成功時は元データ(お礼の下書き/配信キュー)のswordも更新し、
+      // セッションを跨ぐ再構築(swSetup)でも新語が先頭に来るよう整合させる
+      try {
+        (orei.drafts || []).forEach(g => { if ((g.contact || g.code) === code) g.sword = w; });
+        (ann.q || []).forEach(p2 => { if (p2.code === code) p2.sword = w; });
+      } catch (e) {} })
+    .catch(() => { const s = SW[id]; if (!s) return;
+      if (s.sword === w) { s.sword = prev; s.learnedNow = false; swDraw(id, _swSend[id]); }
+      toast("検索語を覚えられませんでした(通信)"); });
+}
+window.swUndo = async id => {
+  const s = SW[id]; if (!s || !s.snap) return;
+  s.sel = s.snap.sel; s.tried = s.snap.tried; s.snap = null; s.learnedNow = false;
+  if (s.code && s.sword !== s.origSword) {
+    const prev = s.sword;
+    s.sword = s.origSword;
+    _swSave(id, s.origSword, prev);
+  }
+  const w = swWord(id);
+  s.copied = await copyWord(w);
+  toast(s.copied ? `「${w}」に戻してコピーしました` : `「${w}」に戻しました(🔍をタップでコピー)`);
+  swDraw(id, _swSend[id]);
+};
+window.swRecopy = async id => {
+  const s = SW[id], w = swWord(id);
+  if (await copyWord(w)) {
+    if (s && !s.copied) { s.copied = true; swDraw(id, _swSend[id]); }
+    toast(`「${w}」をコピーしました`);
+  } else toast("コピーできませんでした。もう一度タップしてください");
+};
+
+async function sendViaLine(text, searchName, sname, word) {
   try {
     if (window.liff && liff.isApiAvailable && liff.isApiAvailable("shareTargetPicker")) {
-      const word = (sname || "").trim() || lineSearchWord(searchName);
-      if (word) { try { await navigator.clipboard.writeText(word); } catch (e) {} }
+      const w2 = (word || "").trim() || swBest(sname, searchName, "");
+      if (w2) { try { await navigator.clipboard.writeText(w2); } catch (e) {} }
       const res = await liff.shareTargetPicker([{ type: "text", text }]);
       return res ? "sent" : "cancel";   // resなし=ユーザーが閉じた
     }
@@ -950,9 +1176,14 @@ function drawCard(code, d) {
   const nowHtml = (now.ongoing ? `<div class="pill green">🟢 ${esc(now.ongoing)}</div>` : "") +
     (now.ng ? `<div class="pill red">🚫 ${esc(now.ng)}</div>` : "") +
     (now.relmemo ? `<div class="pill gold">🤝 ${esc(now.relmemo)}</div>` : "");
-  const pf = (d.profile_keys || []).map(k =>
-    `<div class="kv"><div class="k">${esc(k)}</div><div class="v">${esc(d.attrs[k])}</div></div>`).join("");
   const cq = encodeURIComponent(code);
+  // v177(taps-4): profile_keys由来のkv行に✎即時編集チップ(personaFixと同型・askEdit→保存を
+  // 待ってから再描画=楽観更新禁止)。1項目直すのに全項目フォーム+長スクロールが不要になる。
+  // rel由来の導出行(口調・お席の実績など)には付けない。全項目フォーム(✎カードを直す)は従来通り
+  const pf = (d.profile_keys || []).map(k =>
+    `<div class="kv"><div class="k">${esc(k)}</div><div class="v">${esc(d.attrs[k])}
+      <div style="margin-top:4px"><button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
+        onclick="kvFix('${cq}',${JSON.stringify(String(k)).replace(/"/g, '&quot;')},${JSON.stringify(String(d.attrs[k] || "")).replace(/"/g, '&quot;')})">✎直す</button></div></div></div>`).join("");
   const pst = d.persona_stat || "";
   let persona;
   if (d.persona && d.persona.sections) {
@@ -1014,7 +1245,7 @@ function drawCard(code, d) {
     ${d.attrs["お気に入りキャスト"] ? `<div class="kv"><div class="k">お気に入り</div><div class="v">💛 ${esc(d.attrs["お気に入りキャスト"])}</div></div>` : ""}
     ${d.rel ? `<div class="kv"><div class="k">口調</div><div class="v">自分→${esc(d.rel.my_register)} ／ 相手→${esc(d.rel.your_register)}</div></div>` : ""}
     ${d.rel && d.rel.initiator ? `<div class="kv"><div class="k">会話の起点</div><div class="v">${esc(d.rel.initiator)}</div></div>` : ""}
-    ${d.rel && d.rel.visits ? `<div class="kv"><div class="k">お席の実績</div><div class="v">🍾 ${d.rel.visits}回${d.rel.dohan ? `・同伴${d.rel.dohan}` : ""}${d.rel.after ? `・アフター${d.rel.after}` : ""}</div></div>` : ""}
+    ${d.rel && d.rel.visits ? `<div class="kv"><div class="k">${W("お席の実績", "会った実績")}</div><div class="v">🍾 ${d.rel.visits}回${d.rel.dohan ? W("・同伴", "・一次会") + d.rel.dohan : ""}${d.rel.after ? W("・アフター", "・二次会") + d.rel.after : ""}</div></div>` : ""}
   </div>
   ${(d.arc && d.arc.current) ? `<details class="card" ${d.arc.ok == null ? "open" : ""}>
     <summary>🌡 温度メモ（AI分析${d.arc.ok == null ? "・要確認" : d.arc.ok === 1 ? "・下書きに反映中" : "・未使用"}）</summary>
@@ -1223,6 +1454,19 @@ window.personaDel = async (cq, i) => {
     store.del("card_" + code); toast("消しました"); vCard(code);
   } catch (e) { toast("失敗しました"); }
 };
+// v177(taps-4): カードのプロフィール1項目だけを即時修正(タップ→askEdit→保存待ち→再描画)
+window.kvFix = async (cq, k, cur) => {
+  const code = decodeURIComponent(cq);
+  const v = await askEdit(`「${k}」を直す`, cur);
+  if (!v) return;
+  try {
+    const r = await api("/api/liff/contact/" + encodeURIComponent(code), { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: {}, attrs: { [k]: v } }) });
+    if (r && r.error) throw new Error(r.error);
+    store.del("card_" + code); toast("直しました"); vCard(code);
+  } catch (e) { toast("保存できませんでした(通信)"); }
+};
 window.personaFix = async (cq, i, cur) => {
   const code = decodeURIComponent(cq);
   const v = await askEdit("ペルソナのこの項目を直す", cur);
@@ -1308,7 +1552,7 @@ async function vEdit(code) {
     <div class="note" style="margin-top:4px">一覧やカード見出しに使われる名前です。ご自身のLINEで表示されている名前と揃えると、返信時にLINE側の表示名から探しやすくなります。下の「呼び名」(メッセージ文で使う名前)とは別の項目です。</div>
   </div>
   <div class="card">
-    <label class="f">ランク</label>${chip("rank", [["S", "S(太客)"], ["A", "A"], ["B", "B"]], d.rank)}
+    <label class="f">ランク</label>${chip("rank", [["S", W("S(太客)", "S(大切な人)")], ["A", "A"], ["B", "B"]], d.rank)}
     <label class="f">種別</label>${chip("kind", [["customer", "顧客"], ["staff", "店内"], ["peer", "同業"], ["private", "私用"]], d.kind)}
     <div id="sgBox" style="display:${d.kind === "staff" ? "block" : "none"}">
       <label class="f">店内の区分</label>${chip("staffgender", [["女", "店内(女)"], ["男", "店内(男)"]], (d.attrs["店内区分"] || ""))}</div>
@@ -1625,7 +1869,10 @@ async function drawRep() {
         ${candHtml}
         <div class="note" style="margin:4px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
         <div class="chips">
-          <button class="chip on" onclick="repClsRank('S')">S（${W("太客", "大切な人")}）</button>
+          <!-- v177: class="chip on"(紺塗り)は他画面で「選択中」の意味に使われており「もうSで登録済み？」に
+               見えた。強調は金枠+太字に変更し、選択状態の表現とは分離(flow-inbox-7) -->
+          <button class="chip" style="border-color:var(--gold);border-width:2px;font-weight:800"
+            onclick="repClsRank('S')">💎 S（${W("太客", "大切な人")}）</button>
           <button class="chip" onclick="repClsRank('A')">A</button>
           <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
           <button class="chip" style="border-style:dashed"
@@ -1659,7 +1906,8 @@ async function drawRep() {
       + cardRefChip(r.card_keys)
       + ((r.drafts || []).length ? `<div class="note" style="margin:0 2px 6px">💡 直したい時は文章をタップ</div>` : "")
       + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
-      || `<div class="note">下書きを作れませんでした。下のボタンで記録だけもできます。</div>`);
+      || `<div class="note">下書きを作れませんでした。<button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin:0 6px"
+           onclick="repRegen(${cur})">🔁 もう一度つくる</button> 下のボタンで記録だけもできます。</div>`);
 }
 window.repRegen = async mid => {
   toast("作り直しています…");
@@ -1711,12 +1959,12 @@ window.repSend = async j => {
   if (!text) return;
   const edited = text !== orig;
   const it = rep.items[rep.i];
-  const res = await sendViaLine(text, it.contact, it.sname);
+  const res = await sendViaLine(text, it.contact, it.sname, it.sword || "");   // v176: 確定語優先
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)}に返信${edited ? "(手直し)" : ""}・文体を学習`); }
   else if (res === "copied") {
     d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="repMark(${j})">✓ 貼り付けて送った</button>
-      <button class="btn ghost" style="flex:0 0 84px" onclick="drawRep()">まだ</button>`;
+      <button class="btn ghost" style="flex:0 0 84px" onclick="repStill(${j})">まだ</button>`;
     d.querySelector(".row").insertAdjacentHTML("afterend",
       `<a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く(相手は最上位にいます)</a>`);
     d.dataset.text = text;
@@ -1729,6 +1977,14 @@ window.repSend = async j => {
     d.dataset.text = text;
     toast("送信を確認できませんでした。送っていたら「もう送った」を押してください");
   }
+};
+// v177: 「まだ」がdrawRep()の全再描画で手直し中の本文を無言破棄していた。編集状態(textarea/.sel)に
+// 触れず、送るボタンだけ元に戻す(コピー時に挿した📱リンクもここで回収)
+window.repStill = j => {
+  const d = $("#dr" + j); if (!d) return;
+  d.querySelectorAll("a.btn.green").forEach(a => a.remove());
+  const row = d.querySelector(".row");
+  if (row) row.innerHTML = `<button class="btn green" onclick="repSend(${j})">📤 LINEで送る</button>`;
 };
 window.repMark = j => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "", mids: it.mids });
@@ -1804,7 +2060,7 @@ window.repSendMine = async () => {
   const text = (ta.value || "").trim();
   if (!text) return toast("本文が空です");
   const it = rep.items[rep.i];
-  const res = await sendViaLine(text, it.contact, it.sname);
+  const res = await sendViaLine(text, it.contact, it.sname, it.sword || "");   // v176: 確定語優先
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); }
   else if (res === "copied") {
@@ -1859,19 +2115,27 @@ async function vAnn() {
   // v150: 配達おわり後に‹で抜けた古いrun状態が残り、次回「配達おわり!」から始まる問題
   if (ann.step === "run" && ann.q && ann.i >= ann.q.length)
     Object.assign(ann, { step: "purpose", q: [], i: 0, sent: 0 });
-  const saved = sessionStorage.getItem("annq");
-  if (saved && ann.step !== "run") { try { const s = JSON.parse(saved);
-    if (s.q && s.i < s.q.length) { Object.assign(ann, s, { step: "resume" }); } } catch (e) {} }
+  // v177(flow-tools-4): 中断キューをsessionStorage→store(localStorage)へ。「LINEに切替→LIFFが
+  // 閉じられる」という一番ありがちな中断パターンでWebView破棄と共にキューが消えていた。
+  // 読み出しはサニタイズ(規約12)+24h期限。壊れていたら黙って捨てる
+  const hit = store.get("annq");
+  const s = (hit && hit.d && (Date.now() - hit.t) < 24 * 3600 * 1000) ? hit.d : null;
+  if (s && ann.step !== "run") { try {
+    if (Array.isArray(s.q) && Number.isInteger(s.i) && s.i >= 0 && s.i < s.q.length
+        && s.q.every(p => p && typeof p.code === "string"))
+      Object.assign(ann, s, { step: "resume" });
+    else store.del("annq");
+  } catch (e) {} }
   drawAnn();
 }
-function annSave() { sessionStorage.setItem("annq", JSON.stringify(
-  { purpose: ann.purpose, detail: ann.detail, segs: ann.segs, tone: ann.tone, q: ann.q, i: ann.i, sent: ann.sent })); }
+function annSave() { store.set("annq",
+  { purpose: ann.purpose, detail: ann.detail, segs: ann.segs, tone: ann.tone, q: ann.q, i: ann.i, sent: ann.sent }); }
 async function drawAnn() {
   const v = $("#view");
   if (ann.step === "resume") {
     v.innerHTML = `<div class="card"><h3 class="sec">前回の配達が ${ann.i + 1}/${ann.q.length}人目 で止まっています</h3>
       <button class="btn primary" onclick="ann.step='run';drawAnn()">続きから</button>
-      <button class="btn ghost" onclick="sessionStorage.removeItem('annq');Object.assign(ann,{step:'purpose',q:[],i:0,sent:0});drawAnn()">最初から選び直す</button></div>`;
+      <button class="btn ghost" onclick="store.del('annq');Object.assign(ann,{step:'purpose',q:[],i:0,sent:0});drawAnn()">最初から選び直す</button></div>`;
     return;
   }
   if (ann.step === "purpose" || ann.step === "seg") {
@@ -1970,7 +2234,7 @@ function annTemplate() {
 async function drawAnnRun() {
   const n = ann.q.length;
   if (ann.i >= n) {
-    sessionStorage.removeItem("annq"); bust("home");
+    store.del("annq"); bust("home");
     $("#view").innerHTML = `<div class="empty" style="font-size:16px">📣 配達おわり！${ann.sent}人に送りました👏</div>
       <button class="btn ghost" onclick="Object.assign(ann,{step:'purpose',q:[],i:0,sent:0});nav('#home')">ホームへ</button>`;
     setHead("📣 配信", "完了", true); return;
@@ -1979,8 +2243,6 @@ async function drawAnnRun() {
   setHead(`📣 ${ann.i + 1}/${n}｜${disp(p.name)}`,
           `ランク${p.rank}・送信済み${ann.sent}${ann.sent >= 8 ? "(8人超・今夜は打ち止め推奨)" : "/8人目安"}`, true);
   $("#view").innerHTML = `<div class="prog"><i style="width:${ann.i / n * 100}%"></i></div>
-    <div class="note" style="margin:0 0 8px">📤送る→相手選択の検索欄に<b>長押し→ペースト</b>(検索語「${esc((p.sname || "").trim() || lineSearchWord(p.name))}」をコピー済み)。
-    出ない時は苗字や名前の一部で検索→見つけたらカードの「LINE検索名」に登録すると次から一発</div>
     <div id="drafts"><div class="skel"></div></div>
     <div class="actbar"><button onclick="annSkip()">スキップ</button>
       <button onclick="annSave();nav('#home')">中断(続きから再開可)</button></div>`;
@@ -1989,30 +2251,67 @@ async function drawAnnRun() {
   ann.q.slice(ann.i + 1, ann.i + 3).forEach(x => prefetchAnn(x.code, x.tone || ann.tone, tpl));  // 先読み
   const cur = p.code;
   const r = await prefetchAnn(cur, p.tone || ann.tone, tpl);
-  if (ann.q[ann.i] && ann.q[ann.i].code === cur && $("#drafts"))
+  if (ann.q[ann.i] && ann.q[ann.i].code === cur && $("#drafts")) {
+    // v176: 送信ユニット(検索語フィールド+回収レーン)。従来の全文コピー+文章案内を置換
+    swSetup("ann", { code: p.code, sname: p.sname, yobina: disp(p.name), tanto: p.tanto,
+                     sword: p.sword, common: swCommon(ann.q.map(x => x.sname)) });
+    // v160裁定の温存: 宛先名は送るボタンの直前(最後の確認点)
+    _swSend["ann"] = annBtns(p);
     $("#drafts").innerHTML =
       cardRefChip(r.card_keys)
       + (r.text ? `<div class="note" style="margin:0 0 4px">📮 宛先: <b style="color:var(--head)" class="plink" data-plink="${encodeURIComponent(p.code)}">${esc(disp(p.name))}</b></div>`
-        + draftHtml(0, r.text).replace("repSend(0)", "annSend(0)")
+        + `<div class="draft" id="dr0"><div class="t" onclick="repEdit(0)">${esc(r.text)}</div>
+           <textarea style="display:none">${esc(r.text)}</textarea>
+           ${swUnitHtml("ann", _swSend["ann"])}</div>`
       : `<div class="note">下書きを作れませんでした。スキップして次へ。</div>`);
+    // 画面表示と同時に既定語をコピー(送信時にも再コピーする)。ジェスチャ外なので
+    // iOSでは失敗し得る→成功した時だけ「✓コピー済」バッジを立てる(client-2)
+    copyWord(swWord("ann")).then(ok => {
+      const s = SW["ann"];
+      if (ok && s && !s.copied) { s.copied = true; swDraw("ann", _swSend["ann"]); }
+    });
+  }
+}
+// v177: 配信の送るボタン一式(swunitの送信エリア)。copied確認からの「まだ」でも使うため関数化
+function annBtns(p) {
+  return `<div class="swstep" style="font-weight:700;color:var(--ink)">📤 ${esc(disp(p.name))}へ送ります</div>
+      <button class="btn green" style="margin:0;border-radius:0" onclick="annSend(0)">📤 LINEで送る</button>`;
 }
 window.annSend = async j => {
   const d = $("#dr" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
   if (!text) return;
   const p = ann.q[ann.i], edited = text !== orig;
-  const res = await sendViaLine(text, p.code, p.sname);
+  const res = await sendViaLine(text, p.code, p.sname, swWord("ann"));   // v176: ユニットの現在語をコピー
   if (res === "sent") { fire("/api/liff/ann/sent", { code: p.code, text, edited, orig });
     delete draftCache["a" + p.code]; ann.sent += 1; ann.i += 1; annSave();
     toast(`✓ ${disp(p.name)}に送信`); drawAnnRun(); }
   else if (res === "copied") {
-    d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="annMark('${esc(p.code)}')">✓「${esc(disp(p.name))}」に貼り付けて送った</button>
-      <button class="btn ghost" style="flex:0 0 84px" onclick="drawAnnRun()">まだ</button>`;
-    d.querySelector(".row").insertAdjacentHTML("afterend",
-      `<div class="note" style="margin:6px 0 0;color:var(--red)">⚠️ 貼る前にトークの相手名が「${esc(disp(p.name))}」か確認</div>
-       <a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く</a>`);
+    // v177: v176で#dr0の.rowが送信ユニット(swUnitHtml)に置換され、旧 d.querySelector('.row') が
+    // nullでTypeError無言クラッシュ→「✓貼り付けて送った」(annMark)の記録経路が消滅していた。
+    // .rowに依存せず、swunitの送信エリア(_swSend)を確認UIに差し替えて再描画する。
+    // 注意文は琥珀(規約13: 赤は本流エラー専用)
+    _swSend["ann"] = `<button class="btn primary" style="margin:0;border-radius:0" onclick="annMark('${esc(p.code)}')">✓「${esc(disp(p.name))}」に貼り付けて送った</button>
+      <button class="btn ghost" style="margin:0;border-radius:0" onclick="annStill()">まだ</button>
+      <div class="note" style="margin:6px 10px;color:#7A5F1E">⚠️ 貼る前にトークの相手名が「${esc(disp(p.name))}」か確認</div>
+      <a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く</a>`;
+    swDraw("ann", _swSend["ann"]);
     d.dataset.text = text;
   }
+  else {
+    // v177: v175でrepSendに入れた「共有画面を閉じた/SDKが結果を返さない」時の回収UIを配信にも適用。
+    // いままでは無言で何も起きず、二重送信か記録漏れを誘っていた。
+    _swSend["ann"] = `<button class="btn primary" style="margin:0;border-radius:0" onclick="annMark('${esc(p.code)}')">✓ もう送った(記録する)</button>
+      <button class="btn ghost" style="margin:0;border-radius:0" onclick="annSend(${j})">↻ もう一度</button>`;
+    swDraw("ann", _swSend["ann"]);
+    d.dataset.text = text;
+    toast("送信を確認できませんでした。送っていたら「もう送った」を押してください");
+  }
+};
+window.annStill = () => {   // 「まだ」= 編集中の本文に触れず、送るボタンだけ元に戻す
+  const p = ann.q[ann.i]; if (!p) return;
+  _swSend["ann"] = annBtns(p);
+  swDraw("ann", _swSend["ann"]);
 };
 window.annMark = code => { const d = document.querySelector(".draft");
   fire("/api/liff/ann/sent", { code, text: d.dataset.text || "", edited: false });
@@ -2043,6 +2342,12 @@ function tapGroup(label, cands, selected, gid) {
     <input class="f" id="${gid}in" placeholder="上に無い名前だけ入力してEnter" style="margin-top:6px;font-size:14px;padding:8px 10px">`;
 }
 let _oreiPre = null;   // prefill(タップ素材)
+// v177(flow-tools-3): 同席・紹介の候補から主賓本人を除外。主賓を同席にもタップできてしまい、
+// 同一人物へ「主賓客」「同席顧客」の矛盾した2通のお礼下書きが生成される事故を防ぐ
+function _oreiGuests() {
+  return ((_oreiPre && _oreiPre.guests) || [])
+    .filter(c => !orei.main || (c.code !== orei.main.code && c.name !== orei.main.name));
+}
 function drawOrei() {
   const v = $("#view");
   if (orei.step === "main") {
@@ -2051,13 +2356,13 @@ function drawOrei() {
     const top = _oreiPre ? _oreiPre.mains : (_contacts || []).slice(0, 8).map(c => ({ code: c.code, name: c.name, rank: c.rank }));
     v.innerHTML = `<input class="search" id="oq" placeholder="上に無い人だけ検索" autocomplete="off">
       <div id="orows">${top.map(c => oreiRow(c)).join("")}</div>
-      <div class="card" id="ohist" style="margin-top:14px"><h3 class="sec">🕘 最近のお席</h3><div class="note">読み込み中…</div></div>`;
+      <div class="card" id="ohist" style="margin-top:14px"><h3 class="sec">${W("🕘 最近のお席", "🕘 最近の記録")}</h3><div class="note">読み込み中…</div></div>`;
     api("/api/liff/orei/list").then(r => {
       const el = $("#ohist"); if (!el) return;
       const ss = r.sittings || [];
-      el.innerHTML = `<h3 class="sec">🕘 最近のお席</h3>` + (ss.length ? ss.map(x =>
+      el.innerHTML = `<h3 class="sec">${W("🕘 最近のお席", "🕘 最近の記録")}</h3>` + (ss.length ? ss.map(x =>
         `<div class="hist"><div class="d">${esc(x.date)}</div><span class="plink" data-plink="${encodeURIComponent(x.main || "")}">${esc(disp(x.name))}</span>
-         ${x.gaiso ? "・店外" : ""}${x.dohan ? "・同伴(" + esc(x.dohan) + ")" : ""}${x.after ? "・アフター" : ""}
+         ${x.gaiso ? W("・店外", "・外で") : ""}${x.dohan ? W("・同伴(", "・一次会(") + esc(x.dohan) + ")" : ""}${x.after ? W("・アフター", "・二次会") : ""}
          <span style="color:var(--sub);font-size:11px">・${x.members}人</span>
          ${x.unsent > 0 ? `<button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;margin-left:6px;color:var(--green);font-weight:700"
            onclick="oreiResume(${x.sid})">▶ お礼の続き(あと${x.unsent}人)</button>` : ""}</div>`).join("")
@@ -2071,35 +2376,35 @@ function drawOrei() {
     return;
   }
   if (orei.step === "detail") {
-    setHead(`🙏 ${disp(orei.main.name)}のお席`, "2/3 どんな夜？", true);
+    setHead(`🙏 ${disp(orei.main.name)}${W("のお席", "との記録")}`, W("2/3 どんな夜？", "2/3 どんな会だった？"), true);
     const chip = (on, lab, fn) => `<button class="chip ${on ? "on" : ""}" onclick="${fn}">${lab}</button>`;
     const keep = () => { const d1 = $("#odohan"), d2 = $("#oafter"), d3 = $("#odate");
       if (d1) orei.dohan = d1.value.trim(); if (d2) orei.after = d2.value.trim();
       if (d3) orei.customDate = d3.value; };
     window._okeep = keep;
     v.innerHTML = `<div class="card">
-      <label class="f">いつの夜？</label><div class="chips">
+      <label class="f">${W("いつの夜？", "いつ会った？")}</label><div class="chips">
         ${chip(orei.day === "today", "今日", "_okeep();orei.day='today';drawOrei()")}
         ${chip(orei.day === "yesterday", "昨日", "_okeep();orei.day='yesterday';drawOrei()")}
         ${chip(orei.day === "custom", "日付を選ぶ", "_okeep();orei.day='custom';if(!orei.customDate)orei.customDate=_todayIso();drawOrei()")}</div>
       ${orei.day === "custom" ? `<input class="f" type="date" id="odate" value="${esc(orei.customDate || _todayIso())}" max="${_todayIso()}" style="margin-top:6px">` : ""}
-      <label class="f">お席</label><div class="chips">
-        ${chip(orei.stype === "", "店内にお席", "_okeep();orei.stype='';drawOrei()")}
-        ${chip(orei.stype === "gaiso", "店外のみ(食事など)", "_okeep();orei.stype='gaiso';drawOrei()")}</div>
-      <label class="f">同伴(あれば店名)</label>
+      <label class="f">${W("お席", "会食")}</label><div class="chips">
+        ${chip(orei.stype === "", W("店内にお席", "会食あり"), "_okeep();orei.stype='';drawOrei()")}
+        ${chip(orei.stype === "gaiso", W("店外のみ(食事など)", "食事・お茶のみ"), "_okeep();orei.stype='gaiso';drawOrei()")}</div>
+      <label class="f">${W("同伴(あれば店名)", "一次会のお店(あれば)")}</label>
       <div class="chips" style="margin-bottom:6px">${(((_oreiPre||{}).venues||{}).dohan||[]).map(x =>
         `<button class="chip" onclick="_okeep();document.getElementById('odohan').value='${esc(x)}'">${esc(x)}</button>`).join("")}</div>
       <input class="f" id="odohan" value="${esc(orei.dohan)}" placeholder="なしなら空欄">
-      <label class="f">アフター(あれば店名)</label>
+      <label class="f">${W("アフター(あれば店名)", "二次会(あれば)")}</label>
       <div class="chips" style="margin-bottom:6px">${(((_oreiPre||{}).venues||{}).after||[]).map(x =>
         `<button class="chip" onclick="_okeep();document.getElementById('oafter').value='${esc(x)}'">${esc(x)}</button>`).join("")}</div>
       <input class="f" id="oafter" value="${esc(orei.after)}" placeholder="なしなら空欄">
-      ${tapGroup("ヘルプに入ってくれた子(タップで選択)", (_oreiPre && _oreiPre.staff) || [], orei.helpers, "ohelp")}
-      ${tapGroup("同席していた他のお客様", (_oreiPre && _oreiPre.guests) || [], orei.guests, "oguest")}
-      ${tapGroup("紹介してくれた方", (_oreiPre && _oreiPre.guests) || [], orei.intros, "ointro")}
+      ${tapGroup(W("ヘルプに入ってくれた子(タップで選択)", "同席した同僚(タップで選択)"), (_oreiPre && _oreiPre.staff) || [], orei.helpers, "ohelp")}
+      ${tapGroup(W("同席していた他のお客様", "同席していた他の方"), _oreiGuests(), orei.guests, "oguest")}
+      ${tapGroup("紹介してくれた方", _oreiGuests(), orei.intros, "ointro")}
       <button class="btn primary" onclick="oreiRecord(this)">記録してお礼を作る</button>
       <button class="btn ghost" style="margin-top:8px" onclick="_okeep();orei.step='main';drawOrei()">← 相手を選び直す</button>
-      <div class="note">記録すると来店・同伴・紹介の実績も自動で付きます</div></div>`;
+      <div class="note">${W("記録すると来店・同伴・紹介の実績も自動で付きます", "記録すると会った実績・紹介も自動で付きます")}</div></div>`;
     ["ohelp", "oguest", "ointro"].forEach((gid, k) => {
       const arr = [orei.helpers, orei.guests, orei.intros][k];
       const box = $("#" + gid); if (!box) return;
@@ -2119,14 +2424,20 @@ function drawOrei() {
   }
   if (orei.step === "send") {
     setHead(`🙏 お礼を送る`, `3/3 ${orei.drafts.length}人分`, true);
-    v.innerHTML = `<div class="note" style="margin-bottom:10px">✓ お席は記録しました(来店・同伴の実績も自動)。上から順にどうぞ。</div>` +
+    // v176: 各下書きに送信ユニット(検索語フィールド+回収レーン)
+    const _oc = swCommon(orei.drafts.map(g => g.sname));
+    orei.drafts.forEach((g, j) => { if (!g.done) {
+      swSetup("or" + j, { code: g.contact || g.code, sname: g.sname, yobina: disp(g.name),
+                          tanto: g.tanto, sword: g.sword, common: _oc });
+      _swSend["or" + j] = oreiBtns(j);
+    } });
+    v.innerHTML = `<div class="note" style="margin-bottom:10px">${W("✓ お席は記録しました(来店・同伴の実績も自動)。上から順にどうぞ。", "✓ 記録しました(会った実績も自動)。上から順にどうぞ。")}</div>` +
       orei.drafts.map((g, j) => `
         <div class="draft ${g.done ? "" : ""}" id="or${j}" style="${g.done ? "opacity:.45" : ""}">
           <div style="font-size:11px;color:var(--sub);margin-bottom:4px"><span class="plink" data-plink="${encodeURIComponent(g.code || g.contact || "")}">${esc(disp(g.name))}</span>(${esc(g.role_label || g.role)})${g.done ? " ✓送信済み" : ""}</div>
           <div class="t">${esc(g.text)}</div>
-          ${g.done ? "" : `<div class="row"><button class="btn green" onclick="oreiSend(${j})">📤 LINEで送る</button>
-            <button class="btn ghost" style="flex:0 0 84px" onclick="oreiEdit(${j})">✎ 直す</button></div>`}
-          <textarea style="display:none">${esc(g.text)}</textarea></div>`).join("") +
+          <textarea style="display:none">${esc(g.text)}</textarea>
+          ${g.done ? "" : swUnitHtml("or" + j, _swSend["or" + j])}</div>`).join("") +
       `<button class="btn ghost" onclick="bust('home');nav('#home')">おわる</button>`;
     return;
   }
@@ -2174,16 +2485,52 @@ window.oreiRecord = async (btn) => {
   } catch (e) { if (btn) btn.textContent = "記録してお礼を作る";
     toast("記録できませんでした: " + (e.message || "通信エラー")); }
 };
+// v177: お礼の送るボタン一式(swunitの送信エリア)。回収UIからの復帰でも使うため関数化
+function oreiBtns(j) {
+  return `<div style="display:flex;gap:1px">
+        <button class="btn green" style="flex:1;margin:0;border-radius:0" onclick="oreiSend(${j})">📤 LINEで送る</button>
+        <button class="btn ghost" style="flex:0 0 84px;margin:0;border-radius:0;border-top:none;border-bottom:none;border-right:none" onclick="oreiEdit(${j})">✎ 直す</button></div>`;
+}
 window.oreiSend = async j => {
   const d = $("#or" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
   const g = orei.drafts[j];
-  const res = await sendViaLine(text, g.name || g.contact, g.sname);   // v150: 検索語は人名寄り
-  if (res === "sent" || res === "copied") {
-    if (res === "copied") toast("貼り付けて送ったら完了です");
+  const res = await sendViaLine(text, g.name || g.contact, g.sname, swWord("or" + j));   // v176: ユニットの現在語
+  if (res === "sent") {
     fire("/api/liff/orei/sent", { sid: orei.sid, contact: g.contact, text, edited: text !== orig, orig });
     g.done = true; drawOrei();
   }
+  else if (res === "copied") {
+    // v177: copied(コピーしただけ)で即fire+doneにすると、貼り忘れても「✓送信済み」の虚偽記録が
+    // 付き再コピー手段も無かった。annと同じ2段確認(✓貼り付けて送った/まだ)に統一し、
+    // 本人の確定タップ(oreiMark)でのみ記録する(規約13: 送った事実の確定は本人)
+    d.dataset.text = text;
+    _swSend["or" + j] = `<button class="btn primary" style="margin:0;border-radius:0" onclick="oreiMark(${j})">✓「${esc(disp(g.name))}」に貼り付けて送った</button>
+      <button class="btn ghost" style="margin:0;border-radius:0" onclick="oreiStill(${j})">まだ</button>
+      <div class="note" style="margin:6px 10px;color:#7A5F1E">⚠️ 貼る前にトークの相手名が「${esc(disp(g.name))}」か確認</div>
+      <a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く</a>`;
+    swDraw("or" + j, _swSend["or" + j]);
+    toast("貼り付けて送ったら「送った」を押して完了です");
+  }
+  else {
+    // v177: v175でrepSendに入れた「共有画面を閉じた/SDKが結果を返さない」時の回収UIをお礼にも適用
+    d.dataset.text = text;
+    _swSend["or" + j] = `<button class="btn primary" style="margin:0;border-radius:0" onclick="oreiMark(${j})">✓ もう送った(記録する)</button>
+      <button class="btn ghost" style="margin:0;border-radius:0" onclick="oreiSend(${j})">↻ もう一度</button>`;
+    swDraw("or" + j, _swSend["or" + j]);
+    toast("送信を確認できませんでした。送っていたら「もう送った」を押してください");
+  }
+};
+window.oreiStill = j => {   // 「まだ」= 編集中の本文に触れず、送るボタンだけ元に戻す
+  _swSend["or" + j] = oreiBtns(j);
+  swDraw("or" + j, _swSend["or" + j]);
+};
+window.oreiMark = j => {   // 本人の確定タップで送信記録(fire)+完了化
+  const d = $("#or" + j), ta = d.querySelector("textarea"), g = orei.drafts[j];
+  const text = d.dataset.text || ta.defaultValue;
+  fire("/api/liff/orei/sent", { sid: orei.sid, contact: g.contact, text,
+    edited: text !== ta.defaultValue, orig: ta.defaultValue });
+  g.done = true; drawOrei();
 };
 
 // ============ 📰 ネタ ============

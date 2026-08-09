@@ -197,10 +197,12 @@ def close_contact_open(contact: str, upto_ts, new_status: str, exclude_id=None):
     「10分連続チェーンのみ」だったため、隙間の空いた未対応(五月雨受信)が閉じられず、
     返信するたびに過去の1通が再出現するループの原因だった(本人報告 2026-08-09)。
     意味論を「この相手に対応した=その時点までの未対応はすべて対応済み」に統一する。
-    upto_tsより後に届いた新着は閉じない(読んでいない受信を握り潰さない)。"""
+    upto_tsより後に届いた新着は閉じない(読んでいない受信を握り潰さない)。
+    v177: deferred(あとで)も道連れに含める(close_rally_siblingsが元々open+deferredを
+    対象にしていた前例どおり。deferredがLIFF返信後も残留して不可視の黒穴になるのを防ぐ)。"""
     with conn() as c:
         ids = [r["id"] for r in c.execute(
-            "SELECT id FROM messages WHERE contact=? AND status='open' AND ts<=? AND id!=?",
+            "SELECT id FROM messages WHERE contact=? AND status IN ('open','deferred') AND ts<=? AND id!=?",
             (contact, upto_ts or time.time(), exclude_id if exclude_id is not None else -1))]
     for i in ids:
         set_status(i, new_status, auto=True)
