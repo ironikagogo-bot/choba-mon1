@@ -1739,6 +1739,12 @@ def dig_async(contact):
                 facts = curate_facts(facts or [])   # v96: 厳選(上位12・正規キー・低確信度破棄)
                 facts = _ensure_name_questions(contact, facts)
                 ncrit, nauto = save_split(contact, facts)
+                # v167: 本人実例庫の収穫(状況×相手の発言×本人の返し)。失敗しても本流は止めない
+                try:
+                    from . import situations
+                    situations.harvest_and_save(contact, r["text"], self_name)
+                except Exception as e:
+                    print(f"[situations dig] {e}", flush=True)
                 _meta_set(f"dig_{contact}", f"done:{ncrit}:{nauto}")
                 _notify_card_ready(contact, ncrit, nauto)   # v96: LIFF編集への通知1通
                 maybe_auto_persona(contact)                 # v109: ペルソナも同時に

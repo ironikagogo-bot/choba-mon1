@@ -79,6 +79,13 @@ try:
 except Exception as _e:
     print(f"[watchdog disabled] {_e}", flush=True)
 
+# v167: 本人実例庫のバックフィル(過去取り込み済みtxtからの一括収穫・初回起動時のみ・裏方)
+try:
+    from . import situations as _situations
+    _situations.backfill_async()
+except Exception as _e:
+    print(f"[situations backfill disabled] {_e}", flush=True)
+
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -211,7 +218,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v164"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v167"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")

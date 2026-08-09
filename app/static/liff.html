@@ -456,6 +456,7 @@ function route() {
   if (name === "anni") return vAnni();
   if (name === "seibi") return vSeibi(arg ? decodeURIComponent(arg) : "");
   if (name === "seibip") return vSeibi(arg ? decodeURIComponent(arg) : "", "pending");   // v141: この人の確認だけ
+  if (name === "policy") return vPolicy();   // v167: じぶんの方針
   return vHome();
 }
 
@@ -745,6 +746,8 @@ function drawHome(d) {
     <div class="desc">${W("今夜のお席を残して、お礼を一巡", "会食・打合せを残して、お礼を一巡")}</div></div><span class="chev">›</span></button>
   <button class="navcard gold" onclick="nav('#news')">📰<div><b>今日のネタ</b>
     <div class="desc">${d.neta}件 — ${W("お客様", "相手")}の会社の話題</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
+    <div class="desc">返信の基本姿勢を5タップで登録 — ${W("新しいお客様", "新しい相手")}への下書きに効く</div></div><span class="chev">›</span></button>
   <div class="card" style="cursor:pointer" onclick="nav('#reader')"><h3 class="sec">📡 受信係 <span class="chev" style="margin-left:auto">›</span></h3>${moto}
     <div class="note">今週: 送信${d.sent_week}件・そのまま率${rate}</div></div>
   ${d.urgent_push ? `<div class="card"><h3 class="sec">🔔 緊急通知(LINE)</h3>
@@ -763,6 +766,52 @@ window.notifyTgl = async on => {
     if (r.error) return toast(r.error);
     bust("home"); toast(on ? "🔔 緊急通知をONにしました" : "通知をOFFにしました"); vHome();
   } catch (e) { toast("切り替えできませんでした"); }
+};
+
+// ============ 🧭 じぶんの方針(v167) ============
+// 5問×3択。タップ=保存を待ってから点灯(楽観更新禁止の規約)。未選択=おまかせ=従来挙動。
+// 画面名は意図的に無色(「bot」「再現」等の語を出さない=覗き見られても代筆の証拠にならない)
+const POLICY_QS = () => [
+  ["first_dist", "新しい相手への最初の距離感",
+    [["keigo", "きっちり敬語"], ["soft", "丁寧だけど柔らかく"], ["casual", "早めにくだける"]]],
+  ["invite", "日付を決めない誘い(「今度ごはんでも」)",
+    [["ride", "乗って具体を聞く"], ["vague", "ふんわりかわす"], ["store", W("お店に誘導する", "保留して様子見")]]],
+  ["push", W("お店へのお誘い(営業)", "会う誘いを自分から"),
+    [["active", "自分から積極的に"], ["watch", "相手の温度を見て"], ["rare", "ほぼしない"]]],
+  ["length", "文の長さ",
+    [["short", "短くテンポよく"], ["match", "相手に合わせる"], ["rich", "しっかりめ"]]],
+  ["koi", W("色恋っぽさ", "親密トーン"),
+    [["ng", "使わない"], ["some", "相手によって少し"], ["auto", "実例におまかせ"]]],
+];
+let _policy = null;
+async function vPolicy() {
+  setHead("🧭 じぶんの方針", "5タップで登録 — 新しい相手への下書きに効く", true);
+  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+  try { _policy = (await api("/api/liff/selfpolicy")).policy || {}; }
+  catch (e) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
+  drawPolicy();
+}
+function drawPolicy() {
+  $("#view").innerHTML = `
+  <div class="note" style="margin-bottom:10px">まだ実例(あなたの過去の返し)が無い<b>新しい相手</b>への下書きは、ここで選んだ方針で書かれます。実例がある相手はいつも通り実例が優先。未選択は「おまかせ」(今まで通り)です。</div>
+  <div class="card">${POLICY_QS().map(([k, lab, opts]) => `
+    <label class="f">${lab}</label>
+    <div class="chips">${opts.map(([v, ol]) =>
+      `<button type="button" class="chip ${_policy[k] === v ? "on" : ""}"
+        onclick="policyTap('${k}','${v}')">${ol}</button>`).join("")}</div>`).join("")}
+  </div>
+  <div class="note" style="margin-top:10px">タップした瞬間に保存されます。もう一度タップで解除。いつでも変えられます。</div>`;
+}
+window.policyTap = async (k, v) => {
+  const next = Object.assign({}, _policy);
+  if (next[k] === v) delete next[k]; else next[k] = v;   // 同じ選択肢の再タップ=解除(おまかせに戻す)
+  try {
+    const r = await api("/api/liff/selfpolicy", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ policy: next }) });
+    if (!r.ok) throw new Error();
+    _policy = r.policy || next;
+    drawPolicy();
+  } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); }
 };
 
 // ============ 顧客一覧 ============
@@ -1190,6 +1239,14 @@ async function vEdit(code) {
     return h;
   };
   $("#view").innerHTML = `
+  <div class="card" style="margin-bottom:10px">
+    <label class="f">登録名<span class="note" style="display:inline">(一覧・見出しの表示名)</span></label>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div style="flex:1;font-weight:700;word-break:break-all;font-size:15px">${esc(code)}</div>
+      <button type="button" class="chip" onclick="cardRename('${encodeURIComponent(code)}')">✎ 直す</button>
+    </div>
+    <div class="note" style="margin-top:4px">一覧やカード見出しに使われる名前です。ご自身のLINEで表示されている名前と揃えると、返信時にLINE側の表示名から探しやすくなります。下の「呼び名」(メッセージ文で使う名前)とは別の項目です。</div>
+  </div>
   <div class="card">
     <label class="f">ランク</label>${chip("rank", [["S", "S(太客)"], ["A", "A"], ["B", "B"]], d.rank)}
     <label class="f">種別</label>${chip("kind", [["customer", "顧客"], ["staff", "店内"], ["peer", "同業"], ["private", "私用"]], d.kind)}
@@ -1256,6 +1313,24 @@ async function vEdit(code) {
     } catch (e) { $("#btnSave").textContent = "保存する"; toast("保存できませんでした"); }
   };
 }
+// v166: 登録名(索引名=code)を直接直す。呼び名(メッセージ文用)とは別概念。
+// 旧名は別名として残るので、旧名からの今後の受信も引き続きこのカードに届く(カード分裂しない)。
+window.cardRename = async (codeEnc) => {
+  const code = decodeURIComponent(codeEnc);
+  const v = await askEdit("登録名を直す(一覧・見出しに使われます)", code);
+  if (!v || v === code) return;
+  try {
+    const r = await api("/api/liff/contact/" + encodeURIComponent(code) + "/rename", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ new_code: v }) });
+    if (!r.ok) throw new Error(r.error || "rename failed");
+    toast(`✓ 登録名を「${v}」に変更しました`);
+    store.del("card_" + code); bust("contacts"); bust("home");
+    allowNav = true; nav("#edit/" + encodeURIComponent(r.code || v));
+  } catch (e) {
+    toast(e.message === "その名前は既に使われています" ? "その名前はすでに他のカードで使われています" : "変更できませんでした");
+  }
+};
 
 // ============ 📥 一括取り込み ============
 let _pollT = null;

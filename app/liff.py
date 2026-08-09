@@ -599,6 +599,84 @@ async def liff_contact_delete(request: Request):
     return r
 
 
+_POLICY_KEYS = {
+    "first_dist": ("keigo", "soft", "casual"),
+    "invite": ("ride", "vague", "store"),
+    "push": ("active", "watch", "rare"),
+    "length": ("short", "match", "rich"),
+    "koi": ("ng", "some", "auto"),
+}
+
+
+@router.get("/api/liff/selfpolicy")
+def liff_selfpolicy_get(request: Request):
+    """v167: じぶんの方針(本人の返信の基本姿勢)。実例が無い新規の相手への下書きに効く。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    linebot.ensure()
+    import json as _json
+    try:
+        pol = _json.loads(linebot._meta_get("self_policy") or "{}")
+    except Exception:
+        pol = {}
+    return {"ok": True, "policy": pol if isinstance(pol, dict) else {}}
+
+
+@router.post("/api/liff/selfpolicy")
+async def liff_selfpolicy_set(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    linebot.ensure()
+    import json as _json
+    try:
+        body = await request.json()
+        raw = body.get("policy") or {}
+        if not isinstance(raw, dict):
+            raise ValueError()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    # 許可キー・許可値のみ保存(それ以外は黙って捨てる=プロンプトに任意文字列を注入させない)
+    clean = {k: v for k, v in raw.items()
+             if k in _POLICY_KEYS and isinstance(v, str) and v in _POLICY_KEYS[k]}
+    linebot._meta_set("self_policy", _json.dumps(clean, ensure_ascii=False))
+    db.track("liff_selfpolicy")
+    return {"ok": True, "policy": clean}
+
+
+@router.post("/api/liff/contact/{code:path}/rename")
+async def liff_contact_rename(code: str, request: Request):
+    """v166: 本人要望(ゆみさん↔Aki間のLINEでのやり取りより)。呼び名はメッセージ文だけに使い、
+    カード一覧・見出しの索引名(=code)は、ご自身の端末のLINEで表示されている名前(=本人が既に
+    連絡先交換時にフルネーム等へ編集している名前)と揃えたい、という要望。
+    既存のcrm.rename_contact()をLIFFから呼べるようにするだけ(呼び名とは別の概念として、
+    識別名そのものを直接直せるようにする)。旧名は別名(alias)として残るため、その名前からの
+    今後の受信も引き続きこのカードに届く=カード分裂は起きない。
+    ⚠️ ルート登録順の注意: 直後の /api/liff/contact/{code:path} (POSTのカード編集)は{code:path}が
+    スラッシュも呑み込むため、このrenameルートを先に登録しないと "X/rename" ごとcodeとして
+    奪われ、常に404になる(実際にテストで踏んだ実バグ→登録順を入れ替えて解消)。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    if not db.get_contact(code):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    try:
+        body = await request.json()
+        new_code = (body.get("new_code") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not new_code:
+        return JSONResponse({"error": "empty"}, status_code=400)
+    if len(new_code) > 60:
+        return JSONResponse({"error": "too long"}, status_code=400)
+    res = crm.rename_contact(code, new_code)
+    if not res.get("ok"):
+        return JSONResponse({"error": res.get("error", "rename failed")}, status_code=400)
+    db.track("liff_card_rename")
+    return res
+
+
 @router.post("/api/liff/contact/{code:path}")
 async def liff_contact_update(code: str, request: Request):
     if not _authed(request):
@@ -1283,6 +1361,12 @@ def _run_import_job(jid: int, contact: str, text: str):
         facts = linebot.curate_facts(facts or [])
         facts = linebot._ensure_name_questions(contact, facts)
         ncrit, nauto = linebot.save_split(contact, facts)
+        # v167: 本人実例庫(状況×相手の発言×本人の返し)の収穫。失敗しても取り込みは止めない
+        try:
+            from . import situations
+            situations.harvest_and_save(contact, text, self_name)
+        except Exception as e:
+            print(f"[situations liff] {e}", flush=True)
         upd("done", f"{ncrit + nauto}")
         # v150: 原文メタの掃除(無限蓄積の防止。救済再実行はqueued/runningのみ対象なので不要になる)
         try:

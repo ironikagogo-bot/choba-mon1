@@ -236,6 +236,57 @@ def generate(message_id: int) -> list[dict]:
         ev.set()
 
 
+# v167: じぶんの方針(本人がタップ設定した基本姿勢)。実例が無い相手=新規で特に効く
+_POLICY_TEXT = {
+    "first_dist": {"keigo": "きっちり敬語で始める", "soft": "丁寧だけど柔らかく",
+                   "casual": "わりと早めにくだけてよい"},
+    "invite": {"ride": "乗って「どこ・何時」など次の具体を素直に聞く",
+               "vague": "ふんわりかわして約束にしない"},
+    "push": {"active": "自分から積極的に入れる", "watch": "相手の温度を見てから",
+             "rare": "ほぼ入れない"},
+    "length": {"short": "短くテンポよく", "match": "相手に合わせる", "rich": "しっかりめに書く"},
+    "koi": {"ng": "使わない", "some": "相手によっては少し"},
+}
+
+
+def _self_policy_block() -> str:
+    """保存済みの方針をプロンプト用の文に組む。未設定なら空(=注入ゼロ・従来とバイト一致)。
+    値は保存時に許可リスト検証済みだが、ここでも辞書引きのみ(任意文字列は組み込まれない)。"""
+    try:
+        from . import linebot as _lb
+        pol = json.loads(_lb._meta_get("self_policy") or "{}")
+    except Exception:
+        return ""
+    if not isinstance(pol, dict) or not pol:
+        return ""
+    lines = []
+    v = _POLICY_TEXT["first_dist"].get(pol.get("first_dist"))
+    if v:
+        lines.append(f"- 初対面・付き合いの浅い相手への最初の距離感: {v}")
+    v = _POLICY_TEXT["invite"].get(pol.get("invite"))
+    if pol.get("invite") == "store":
+        v = ("お店に来る方向へ自然に誘導する" if config.MODE != "general"
+             else "すぐには確定させず保留して様子を見る")
+    if v:
+        lines.append(f"- 日付を決めない軽い誘い(「今度ごはんでも」等)への基本方針: {v}")
+    v = _POLICY_TEXT["push"].get(pol.get("push"))
+    if v:
+        lines.append(("- お店への誘い(営業)は: " if config.MODE != "general" else "- 会う誘いを自分からは: ") + v)
+    v = _POLICY_TEXT["length"].get(pol.get("length"))
+    if v:
+        lines.append(f"- 文の長さの好み: {v}")
+    v = _POLICY_TEXT["koi"].get(pol.get("koi"))
+    if v:
+        lines.append(("- 色恋っぽい含み・思わせぶりは: " if config.MODE != "general"
+                      else "- 親密すぎるトーンは: ") + v)
+    if not lines:
+        return ""
+    return ("【本人の方針(本人がアプリで設定した基本姿勢)】"
+            "この相手への実例・上の個別指示と食い違う場合はそちらを優先。"
+            "この相手への実例が無い(新しい相手・付き合いの浅い相手)場合はこの方針を必ず守る:\n"
+            + "\n".join(lines))
+
+
 def _generate_inner(message_id: int) -> list[dict]:
     msg = db.get_message(message_id)
     if not msg:
@@ -313,6 +364,13 @@ def _generate_inner(message_id: int) -> list[dict]:
         _tol = _lb.tolerance_prompt_block(contact["code"])
         if _tol:
             user_prompt += "\n\n" + _tol
+    except Exception:
+        pass
+    # v167: じぶんの方針(未設定なら空=注入ゼロで従来とバイト一致)
+    try:
+        _sp = _self_policy_block()
+        if _sp:
+            user_prompt += "\n\n" + _sp
     except Exception:
         pass
 

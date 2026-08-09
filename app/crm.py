@@ -263,6 +263,19 @@ def resolve_pending(line_name: str, action: str, contact: str = None,
         if name != contact and db.get_contact(name):
             merge_contact(contact, name)
         target = contact
+        # v166: 本人要望「登録名(索引名)を、自分のLINE上で表示されている名前(=連絡先交換時に
+        # フルネーム等へ編集した後の名前)と揃えたい」。仕分けトレイでの紐付け時点のLINE表示名
+        # (name)が現在の索引名(contact)と違う場合、それが最新のLINE上の表示である可能性が高い
+        # ので索引名自体をnameへ更新する。旧名はrename_contact内でalias化されるので、
+        # 引き続きどちらの名前からの受信もこのカードに届く(カード分裂しない)。
+        # rename失敗時(何らかの理由でnewが既存等)は従来通りaliasだけで沈黙継続。
+        if name != contact:
+            try:
+                ren = rename_contact(contact, name)
+                if ren.get("ok"):
+                    target = ren["code"]
+            except Exception:
+                pass
     elif action in ("new", "staff", "peer"):
         code = (contact or name).strip()
         db.upsert_contact(code, rank)
