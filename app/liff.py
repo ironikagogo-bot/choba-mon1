@@ -229,6 +229,8 @@ def liff_home(request: Request):
         "reader": reader,
         "ok": True,
         "queue": len(q), "urgent": urgent_n, "unlinked": unlinked_n,
+        # v175: 人数と通数を分けて返す(本人指摘「何通溜まっているか把握されていない」)
+        "queue_msgs": sum(int(x.get("count") or 1) for x in q),
         "neta": neta, "anni": anni, "contacts": n_contacts,
         "estranged": est_sa[:5],
         "sent_week": sent_n, "verbatim_week": verb,
@@ -438,6 +440,15 @@ def liff_contacts(request: Request, q: str = "", kind: str = ""):
         pass
     kinds = None if not kind else ("all" if kind == "all" else [kind])
     rows = crm.search_contacts(q=q, kinds=kinds)
+    # v174: 並び順「やり取りが新しい順」用の最終接触ts(受信+送信の新しい方)を1クエリで取得
+    _lt = {}
+    try:
+        with db.conn() as c:
+            _lt = {r[0]: r[1] for r in c.execute(
+                "SELECT contact, MAX(ts) FROM (SELECT contact, ts FROM messages "
+                "UNION ALL SELECT contact, ts FROM sent_replies) GROUP BY contact")}
+    except Exception:
+        pass
     order = {"S": 0, "A": 1, "B": 2}
     out = []
     for r in rows:
@@ -455,6 +466,7 @@ def liff_contacts(request: Request, q: str = "", kind: str = ""):
             "iname": (p if g else r["code"]),
             "yobina": attrs.get("呼び名") or "",
             "honmyo": attrs.get("本名") or "",
+            "last_ts": _lt.get(r["code"]) or 0,
             "gname": g or "",
             "rank": r.get("rank") or "B",
             "kind": r.get("kind") or "customer",
@@ -1525,7 +1537,20 @@ def liff_inbox(request: Request):
     q = linebot.build_queue()
     out = []
     for it in q:
-        full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
+        # v175: 同一相手の未対応「全部」を時系列で連結して見せる(いままではアンカー1通だけ
+        # 表示していて、AI下書きと完了処理との三者がズレていた)。表示した分のmidsを添えて
+        # クライアントが対応時にまとめて閉じられるようにする。
+        opens = []
+        try:
+            opens = db.open_for_contact(it["contact"])
+        except Exception:
+            pass
+        if opens:
+            mids = [m["id"] for m in opens]
+            full = "\n".join((m.get("text") or "") for m in opens)
+        else:
+            mids = it.get("mids") or [it["mid"]]
+            full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
         from . import crm as _crm
         # v145: 未登録相手は既存カードの候補を添える(表記ゆれ・グループ着信の紐付け動線)
         cands = []
@@ -1540,7 +1565,9 @@ def liff_inbox(request: Request):
                     "name": linebot._yobina(it["contact"]),
                     "rank": it.get("rank") or "B", "urgent": bool(it.get("urgent")),
                     "unlinked": bool(it.get("unlinked")), "reason": it.get("reason") or "",
-                    "ts": it.get("ts"), "text": full[:600],
+                    "ts": (opens[-1].get("ts") if opens else it.get("ts")),
+                    "text": full[:600],
+                    "mids": mids, "count": len(mids),
                     "sname": (_crm.get_attrs(it["contact"]) or {}).get("LINE検索名") or "",
                     "cands": cands,
                     "truncated": len(full) > 600})
@@ -1554,6 +1581,13 @@ def liff_msg_full(mid: int, request: Request):
     m = db.get_message(mid)
     if not m:
         return JSONResponse({"error": "not found"}, status_code=404)
+    # v175: カード表示が「その相手の未対応ぜんぶ連結」になったので、全文も同じ集合で返す
+    try:
+        opens = db.open_for_contact(m.get("contact") or "")
+        if opens and any(x["id"] == mid for x in opens):
+            return {"ok": True, "text": "\n".join((x.get("text") or "") for x in opens)}
+    except Exception:
+        pass
     return {"ok": True, "text": m.get("text") or ""}
 
 

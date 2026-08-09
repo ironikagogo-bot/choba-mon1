@@ -169,6 +169,8 @@ textarea.f{min-height:90px;resize:vertical;overflow:hidden}
   background-size:200% 100%;animation:sk 1.2s infinite;height:72px;margin-bottom:10px}
 @keyframes sk{from{background-position:200% 0}to{background-position:-200% 0}}
 .hasbar{padding-bottom:96px}
+/* v175: ホーム整頓(本人指摘)。カードの羅列を用途別の小見出しで区切る */
+.hsec{font-size:12px;color:var(--sub);font-weight:700;letter-spacing:.06em;margin:16px 4px 6px}
 #toast.show{opacity:1}
 dialog{border:none;border-radius:16px;padding:20px;max-width:320px;width:88%;}
 dialog::backdrop{background:rgba(27,42,74,.45)}
@@ -249,11 +251,17 @@ function idxName(code, yobina, honmyo) {
   if (NAMEMODE === "honmyo" && (honmyo || "").trim()) return honmyo;
   return code;
 }
-window.nameModeCycle = () => {
-  NAMEMODE = NAMEMODE === "code" ? "yobina" : NAMEMODE === "yobina" ? "honmyo" : "code";
-  try { localStorage.setItem("cb_namemode", NAMEMODE); } catch (e) {}
-  toast(`見出しの表示: ${NAMEMODE_LAB[NAMEMODE]}(未登録の人は登録名)`);
-  route();
+// v174: 本人指摘「循環チップは何が起きるかわかりにくい。ドロップダウンかよりいい方法で」。
+// 循環をやめ、⚙で開く専用ピッカーパネル(選択肢が全部見える・現在値が点灯)に変更+並び順を追加
+let SORTMODE = "rank";
+try { SORTMODE = localStorage.getItem("cb_sortmode") || "rank"; } catch (e) {}
+const SORTMODE_LAB = { rank: "ランク順", recent: "やり取りが新しい順", name: "名前順" };
+let _dispOpen = false;
+window.dispPanel = () => { _dispOpen = !_dispOpen; vList(); };
+window.dispSet = (kind, v) => {
+  if (kind === "name") { NAMEMODE = v; try { localStorage.setItem("cb_namemode", v); } catch (e) {} }
+  else { SORTMODE = v; try { localStorage.setItem("cb_sortmode", v); } catch (e) {} }
+  vList();
 };
 
 // v151: タイプ「OK」確認の全廃。半角英字入力は合言葉と同じ脱落スキルなので、
@@ -555,7 +563,7 @@ function drawSeibi() {
   const cc = cands.map(a => `<button class="chip ${seibi.val === a ? "on" : ""}"
       onclick="seibiVal(${JSON.stringify(a).replace(/"/g, '&quot;')})">${esc(a)}</button>`).join("");
   const custom = !cands.includes(seibi.val)
-    ? `<button class="chip on" onclick="seibiEdit()">✎ ${esc(seibi.val)}</button>` : "";
+    ? `<button class="chip on" onclick="seibiEdit()">✎ ${esc(seibi.val)}</button>` : "";   // 書いた値の直し=値を残す
   $("#view").innerHTML = `<div class="prog"><i style="width:${seibi.i / n * 100}%"></i></div>
     <div class="card">
       <div class="note" style="margin-bottom:4px">${who}</div>
@@ -564,14 +572,16 @@ function drawSeibi() {
       ${f.src ? `<div class="quote">「${esc(f.src)}」</div>` : ""}
       <div class="note" style="margin:10px 0 4px">この内容で合ってる？${cands.length > 1 ? "(タップで選べます)" : ""}</div>
       <div class="chips">${cc}${custom}
-        <button class="chip" style="border-style:dashed" onclick="seibiEdit()">✎ 自分で書く</button></div>
+        <button class="chip" style="border-style:dashed" onclick="seibiEdit(1)">✎ 自分で書く</button></div>
       ${foot}</div>`;
 }
 window.seibiRel = (key, val) => { seibi[key] = val; drawSeibi(); };
 window.seibiVal = v => { seibi.val = v; drawSeibi(); };
-window.seibiEdit = async () => {
+window.seibiEdit = async (blank) => {
+  // v173: 本人指摘「自分で入力する場合は空欄でいいのでは」。「✎自分で書く」は空欄で開き、
+  // 既に自分で書いた値の「✎(値)」からは書いた値を残して開く(書き直しと新規入力は別)
   const f = seibi.items[seibi.i];
-  const v = await askEdit(`${disp(f.name)}の「${f.k}」を直す`, seibi.val || f.v);
+  const v = await askEdit(`${disp(f.name)}の「${f.k}」を${blank ? "書く" : "直す"}`, blank ? "" : (seibi.val || f.v));
   if (!v) return;
   seibi.val = v; drawSeibi();
 };
@@ -702,11 +712,14 @@ window.retryFails = async () => {
   _failbar();
   if (ok) toast(`✓ ${ok}件 保存し直しました`);
 }
+const PENDING_FIRES = [];   // v175: 完走画面の前に飛行中POSTを待つ(件数の食い違い防止)
 function fire(path, body) {   // 楽観更新: 待たずに裏でPOST(失敗は赤バーに積む)
-  api(path, { method: "POST", headers: { "Content-Type": "application/json" },
+  const p = api(path, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body) })
     .then(r => { if (r && r.error) { FAILQ.push({ path, body }); _failbar(); } })
     .catch(() => { FAILQ.push({ path, body }); _failbar(); });
+  PENDING_FIRES.push(p);
+  return p;
 }
 
 // ============ ホーム ============
@@ -738,7 +751,7 @@ function drawHome(d) {
     <span style="color:var(--sub);font-weight:400">${ago}</span>
     <span class="chev" style="margin-left:auto">›</span></div>
   <div class="tiles">
-    <div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち ›</span></div>
+    <div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち${(d.queue_msgs || 0) > d.queue ? `(全${d.queue_msgs}通)` : ""} ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
   </div>
@@ -750,19 +763,20 @@ function drawHome(d) {
   ${est.length ? `<div class="banner" style="cursor:pointer" onclick="nav('#ann')">🕰<div class="txt">
      ご無沙汰の${W("太客", "大切な人")} <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
      <span class="chev">›</span></div>` : ""}
-  <button class="navcard" onclick="nav('#list')">🗂<div><b>${W("顧客", "人脈カード")}</b>
-    <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
-  <button class="navcard" onclick="nav('#import')">📥<div><b>${W("お客様を追加", "相手を追加")}</b>
-    <div class="desc">${W("その人との会話ごとお迎え — やり方は3ステップ", "トーク履歴ごと取り込み — やり方は3ステップ")}</div></div><span class="chev">›</span></button>
+  <div class="hsec">📬 きょうの仕事</div>
   <button class="navcard" onclick="nav('#inbox')">📨<div><b>いまの返信</b>
-    <div class="desc">急ぎ${d.urgent}件・未登録${d.unlinked}件</div></div>
+    <div class="desc">急ぎ${d.urgent}件・未登録${d.unlinked}件${(d.queue_msgs || 0) > d.queue ? `・全${d.queue_msgs}通` : ""}</div></div>
     ${d.queue ? `<span class="n">${d.queue}</span>` : `<span class="chev">›</span>`}</button>
   <button class="navcard" onclick="nav('#ann')">📣<div><b>${W("配信をつくる", "まとめて連絡")}</b>
     <div class="desc">${W("出勤・イベント・ご無沙汰の挨拶を一斉に", "近況・お誘い・ご無沙汰の挨拶を一斉に")}</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#orei')">${W("🙏", "🍽")}<div><b>${W("お席の記録とお礼", "会った記録とお礼")}</b>
     <div class="desc">${W("今夜のお席を残して、お礼を一巡", "会食・打合せを残して、お礼を一巡")}</div></div><span class="chev">›</span></button>
-  <button class="navcard gold" onclick="nav('#news')">📰<div><b>今日のネタ</b>
-    <div class="desc">${d.neta}件 — ${W("お客様", "相手")}の会社の話題</div></div><span class="chev">›</span></button>
+  <div class="hsec">🗂 ひと</div>
+  <button class="navcard" onclick="nav('#list')">🗂<div><b>${W("顧客", "人脈カード")}</b>
+    <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#import')">📥<div><b>${W("お客様を追加", "相手を追加")}</b>
+    <div class="desc">${W("その人との会話ごとお迎え — やり方は3ステップ", "トーク履歴ごと取り込み — やり方は3ステップ")}</div></div><span class="chev">›</span></button>
+  <div class="hsec">⚙️ 帳場くんを育てる</div>
   <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
     <div class="desc">返信の基本姿勢を5タップで登録 — ${W("新しいお客様", "新しい相手")}への下書きに効く</div></div><span class="chev">›</span></button>
   <div class="card" style="cursor:pointer" onclick="nav('#reader')"><h3 class="sec">📡 受信係 <span class="chev" style="margin-left:auto">›</span></h3>${moto}
@@ -836,12 +850,21 @@ let _contacts = null;
 let _listRows = null;   // v132: 一覧表示中の行(フィルタ別)
 let _listKind = "";   // v132: 一覧の種別フィルタ("":顧客 / staff / peer / all)
 async function vList() {
-  setHead("🗂 カード", W("S/A/B順", "つながりの濃さ順"), true);
+  setHead("🗂 カード", `${NAMEMODE_LAB[NAMEMODE]}・${SORTMODE_LAB[SORTMODE]}`, true);
   const KTABS = [["", W("💐お客様", "💐仕事の相手")], ["staff", W("🏠店内", "🏠社内")], ["peer", W("🏮同業", "🏮社外")], ["private", "🔒私用"], ["all", "全部"]];
   $("#view").innerHTML = `
     <div class="chips" style="margin-bottom:8px">${KTABS.map(([k, lab]) =>
       `<button class="chip ${_listKind === k ? "on" : ""}" onclick="listKind('${k}')">${lab}</button>`).join("")}
-      <button class="chip" style="margin-left:auto;border-style:dashed" onclick="nameModeCycle()">👁 ${NAMEMODE_LAB[NAMEMODE]}</button></div>
+      <button class="chip ${_dispOpen ? "on" : ""}" style="margin-left:auto" onclick="dispPanel()">⚙ 表示・並び</button></div>
+    ${_dispOpen ? `<div class="card" style="padding:12px;margin-bottom:8px">
+      <label class="f" style="margin-top:0">名前の表示</label>
+      <div class="chips">${["code", "yobina", "honmyo"].map(v =>
+        `<button class="chip ${NAMEMODE === v ? "on" : ""}" onclick="dispSet('name','${v}')">${NAMEMODE_LAB[v]}</button>`).join("")}</div>
+      <div class="note" style="margin:4px 0 8px">呼び名・本名が未登録の人は登録名で出ます</div>
+      <label class="f">並び順</label>
+      <div class="chips">${["rank", "recent", "name"].map(v =>
+        `<button class="chip ${SORTMODE === v ? "on" : ""}" onclick="dispSet('sort','${v}')">${SORTMODE_LAB[v]}</button>`).join("")}</div>
+    </div>` : ""}
     <input class="search" id="q" placeholder="名前・会社で検索" autocomplete="off">
     <div id="rows">${store.get("contacts" + _listKind) ? "" : `<div class="empty"><span class="spin"></span></div>`}</div>`;
   const _kindAt = _listKind;   // v150: タブ切替レース対策(遅れて来た別タブの結果を描かない)
@@ -853,7 +876,10 @@ async function vList() {
   }, 45);
   const KMARK = { staff: "🏠", peer: "🏮", private: "🔒" };
   const draw = q => {
-    const src = _listRows || _contacts || [];
+    let src = _listRows || _contacts || [];
+    if (SORTMODE === "recent") src = [...src].sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+    else if (SORTMODE === "name") src = [...src].sort((a, b) =>
+      String(a.iname || a.name).localeCompare(String(b.iname || b.name), "ja"));
     const rows = src.filter(c => !q || c.name.includes(q) || c.code.includes(q) ||
       (c.company || "").includes(q));
     const note = _listKind === "private"
@@ -961,8 +987,9 @@ function drawCard(code, d) {
     .map(x => `<div class="hist"><div class="d">${new Date(x.ts * 1000).toLocaleDateString("ja-JP")}</div>${x.t}</div>`)
     .join("");
   $("#view").innerHTML = `
-  <div style="display:flex;justify-content:flex-end;gap:8px;margin:-4px 0 8px">
-    <button class="chip" onclick="nav('#list')">🗂 一覧へ</button>
+  <div style="display:flex;justify-content:space-between;gap:8px;margin:-4px 0 8px">
+    <button class="chip" style="border-color:var(--gold);color:var(--gold);font-weight:700"
+      onclick="nav('#list')">‹ 🗂 一覧へ</button>
     <button class="chip on" onclick="nav('#edit/${encodeURIComponent(code)}')">✎ カードを直す</button></div>
   ${d.pending_facts ? `<div class="banner" onclick="nav('#seibip/${cq}')">✅<div class="txt">
     この人の確認<b>${d.pending_facts}件</b> — タップで○✕するだけ(30秒)</div><span class="chev">›</span></div>` : ""}
@@ -1252,7 +1279,9 @@ async function vEdit(code) {
   const bigKeys = ["進行中の話", "NG話題", "関係性メモ", "家族", "趣味・関心", "記念日", "資産・事業"];
   const REQ = ["呼び名"];   // 本名は分からないこと多い=任意
   const attrField = k => {
-    const v = d.attrs[k] || "";
+    // v173: 本人指摘「LINE検索名はこの時点で分かっているはず」。空ならカード作成元の
+    // 登録名(=LINE表示名)を初期値に入れておく(保存すると確定。変えたければ上書きするだけ)
+    const v = d.attrs[k] || (k === "LINE検索名" ? (d.gname ? d.pname : d.code) : "");
     const req = REQ.includes(k);
     let h = `<label class="f">${esc(k)}${req ? ' <span style="color:var(--red)">*必須</span>' : ""}</label>`;
     h += bigKeys.includes(k)
@@ -1515,6 +1544,11 @@ async function vInbox(pri) {
 }
 function repAdvance(stampText) {
   if (stampText) toast(stampText);
+  // v175: 済んだ相手の下書きキャッシュを破棄(再出現時に古い下書きが即出る問題)+
+  // ホーム件数キャッシュを都度無効化(途中で‹離脱しても件数が古いまま残らない)
+  const cur = rep.items[rep.i];
+  if (cur) delete draftCache["m" + cur.mid];
+  bust("home");
   rep.i += 1;
   const nx = rep.items.slice(rep.i).filter(x => !x.unlinked).slice(0, 2);
   nx.forEach(x => prefetchReply(x.mid));
@@ -1523,10 +1557,29 @@ function repAdvance(stampText) {
 async function drawRep() {
   const n = rep.items.length;
   if (rep.i >= n) {
-    bust("home"); $("#view").innerHTML = `<div class="empty" style="font-size:16px">
+    // v175: 完走画面の作り直し。(1)下のボタンバーを確実に消す(「ホームへ」と「✓対応した」が
+    // 同居して意味不明だった・本人指摘) (2)飛行中の対応POSTを待ってから件数を確定
+    // (3)サーバに残り(対応中の新着など)が無いか確認し、あればその場で続ける
+    $("#view").classList.remove("hasbar");
+    // v175: 直前の「✓対応した」トーストがボタンと同じ見た目で完了画面に残り、
+    // 「ホームへ」との違いが分からなくなっていた(本人指摘)。完了画面では即消す。
+    try { const _t = $("#toast"); _t.classList.remove("show"); clearTimeout(_t._h); } catch (e) {}
+    setHead("📨 いまの返信", "完了", true);
+    $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+    try { await Promise.allSettled(PENDING_FIRES.splice(0)); } catch (e) {}
+    bust("home");
+    let fresh = null;
+    try { fresh = await api("/api/liff/inbox"); } catch (e) {}
+    if (fresh && (fresh.items || []).length) {
+      rep.items = fresh.items; rep.i = 0;
+      toast("📨 対応中に新しい受信がありました。つづけます");
+      rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
+      return drawRep();
+    }
+    $("#view").innerHTML = `<div class="empty" style="font-size:16px">
       📨 返信待ちはここまで！おつかれさま👏</div>
       <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
-    setHead("📨 いまの返信", "完了", true); return;
+    return;
   }
   const it = rep.items[rep.i];
   setHead(`📨 返信`, `${rep.i + 1}/${n}件`, true);
@@ -1552,6 +1605,7 @@ async function drawRep() {
     <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">
       ${it.urgent ? `<span class="rtag rt-urgent">🔥 急ぎ</span>` : ""}
       <span class="rtag ${tag.c}">${tag.t}</span>
+      ${(it.count || 1) > 1 ? `<span class="rtag rt-chat">📬 ${it.count}通ぶん</span>` : ""}
       <span style="font-size:12.5px;color:var(--sub)">${stat}${it.unlinked ? "" : " ▸カード"}</span></div></div>`;
   let mid = `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>` + bar + `
     <div class="msgcard">「${esc(it.text)}${it.truncated ? "…" : ""}」
@@ -1589,7 +1643,7 @@ async function drawRep() {
   }
   $("#view").innerHTML = mid + `<div id="drafts"><div class="skel"></div><div class="skel"></div></div>
     <div class="actbar">
-      <button onclick="repAct('done','✓ 対応した')">✓ 対応した</button>
+      <button onclick="repAct('done','✓ 記録しました')">✓ 対応した</button>
       <button onclick="repWrite()">✎ 自分で書く</button>
       <button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
       <button onclick="repAct('skipped','✕ 返さない')">✕ 返さない</button></div>`;
@@ -1638,7 +1692,7 @@ function draftHtml(j, text) {
   // v160(D2対策): shareTargetPickerでLINE側の相手選択を誤る事故は帳場側では防げないため、
   // 送るボタンの直前(スクロールしても離れない位置)に宛先名を出し、最後の確認点を強化する。
   const it = rep.items && rep.items[rep.i];
-  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}さんへ送ります</div>` : "";
+  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}へ送ります</div>` : "";
   return `<div class="draft" id="dr${j}"><div class="t" onclick="repEdit(${j})">${esc(text)}</div>
     ${who}
     <div class="row"><button class="btn green" onclick="repSend(${j})">📤 LINEで送る</button></div>
@@ -1658,7 +1712,7 @@ window.repSend = async j => {
   const edited = text !== orig;
   const it = rep.items[rep.i];
   const res = await sendViaLine(text, it.contact, it.sname);
-  if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text });
+  if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)}に返信${edited ? "(手直し)" : ""}・文体を学習`); }
   else if (res === "copied") {
     d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="repMark(${j})">✓ 貼り付けて送った</button>
@@ -1667,12 +1721,20 @@ window.repSend = async j => {
       `<a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く(相手は最上位にいます)</a>`);
     d.dataset.text = text;
   }
+  else {
+    // v175: 送信画面を閉じた(またはSDKが結果を返さなかった)場合、いままで無言で何も
+    // 起きなかった。送った/送っていないを本人に選ばせ、未対応のまま残る事故を防ぐ。
+    d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="repMark(${j})">✓ もう送った(記録する)</button>
+      <button class="btn ghost" style="flex:0 0 96px" onclick="repSend(${j})">↻ もう一度</button>`;
+    d.dataset.text = text;
+    toast("送信を確認できませんでした。送っていたら「もう送った」を押してください");
+  }
 };
 window.repMark = j => { const it = rep.items[rep.i];
-  fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "" });
+  fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "", mids: it.mids });
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
 window.repAct = (action, stampText) => { const it = rep.items[rep.i];
-  fire("/api/liff/reply/act", { mid: it.mid, action, text: "" }); repAdvance(stampText); };
+  fire("/api/liff/reply/act", { mid: it.mid, action, text: "", mids: it.mids }); repAdvance(stampText); };
 // v153: 登録系は楽観更新禁止(改善#1後半)。保存を待ち、失敗したら画面を進めない。
 // 圏外でタップ→成功トースト→実は未保存、という「昨日やったのに」の残存経路を塞ぐ
 async function clsSave(body) {
@@ -1694,8 +1756,13 @@ window.repCls = async kind => {
 window.repLink = async target => {
   const it = rep.items[rep.i];
   if (!await clsSave({ contact: it.contact, kind: "link", target })) return;
-  bust("contacts"); bust("inbox");
-  repAdvance(`🔗 ${disp(target)}のカードに紐付けました(次からは自動)`);
+  bust("contacts"); bust("home");
+  // v175: 従来は紐付けだけして次へ進み、メッセージがopenのまま残って次回も再出現していた
+  // (監査で発見)。紐付けたらその場で返信画面に切り替えて、この受信をその流れで片付ける。
+  it.unlinked = false; it.name = target;
+  toast(`🔗 ${disp(target)}のカードに紐付けました(次からは自動)`);
+  prefetchReply(it.mid);
+  drawRep();
 };
 // v120: 業界の人=2段階目(同僚ホステス/黒服さん/よその店の子)
 window.repInd = () => {
@@ -1714,6 +1781,9 @@ window.repCls2 = async (kind, gender) => {
   const it = rep.items[rep.i];
   if (!await clsSave({ contact: it.contact, kind, gender })) return;
   bust("contacts");
+  // v175: 仕分けだけでメッセージをopenのまま放置していたため、同じ受信が次回また出ていた
+  // (監査で発見)。画面を進める=この受信は片付いた、として記録する。
+  fire("/api/liff/reply/act", { mid: it.mid, action: "skipped", text: "", mids: it.mids });
   const lab = kind === "peer" ? W("よその店の子", "社外の仲間") : (gender === "男" ? W("黒服さん", "上司・先輩") : W("同僚ホステス", "同僚・チーム"));
   repAdvance(`✓ ${it.name}を「${lab}」に仕分け`);
 };
@@ -1722,7 +1792,7 @@ window.repWrite = () => {
   const dr = $("#drafts");
   if (!dr || $("#mywrite")) { const t = $("#mywrite textarea"); if (t) t.focus(); return; }
   const it = rep.items && rep.items[rep.i];
-  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}さんへ送ります</div>` : "";
+  const who = it ? `<div class="note" style="margin:6px 0 0;font-weight:700">📤 ${esc(disp(it.name))}へ送ります</div>` : "";
   dr.insertAdjacentHTML("afterbegin", `<div class="draft sel" id="mywrite">
     <textarea placeholder="自分の言葉で書く(送るとこの文体も学習されます)"></textarea>
     ${who}
@@ -1735,7 +1805,7 @@ window.repSendMine = async () => {
   if (!text) return toast("本文が空です");
   const it = rep.items[rep.i];
   const res = await sendViaLine(text, it.contact, it.sname);
-  if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text });
+  if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); }
   else if (res === "copied") {
     $("#mywrite .row").innerHTML = `<button class="btn primary" onclick="repMarkMine()">✓ 貼り付けて送った</button>`;
@@ -1743,9 +1813,15 @@ window.repSendMine = async () => {
     $("#mywrite .row").insertAdjacentHTML("afterend",
       `<a class="btn green" style="text-decoration:none;text-align:center" href="line://nv/chat">📱 LINEのトーク一覧を開く</a>`);
   }
+  else {
+    $("#mywrite .row").innerHTML = `<button class="btn primary" onclick="repMarkMine()">✓ もう送った(記録する)</button>
+      <button class="btn ghost" style="flex:0 0 96px" onclick="repSendMine()">↻ もう一度</button>`;
+    $("#mywrite").dataset.text = text;
+    toast("送信を確認できませんでした。送っていたら「もう送った」を押してください");
+  }
 };
 window.repMarkMine = () => { const it = rep.items[rep.i];
-  fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "" });
+  fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "", mids: it.mids });
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
 window.repClsRank = async rank => {
   const it = rep.items[rep.i];
@@ -1757,6 +1833,25 @@ window.repClsRank = async rank => {
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
 const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0 };
+// v175: 「今週は今週は来週は…」のような壊れた組み立て文が履歴チップとして永久に再提示され、
+// タップすると全員の文面に必達注入される問題の掃除(本人指摘 2026-08-09)。
+// 壊れ判定 = 時期語の二重連結 or 同一句の連続反復。読み出し時に毎回フィルタ+書き戻しで恒久除去。
+const annBroken = s => /(今週|来週|先週)は.*(今週|来週|先週)は/.test(s) || /(.{3,10})\1/.test(s);
+const annNorm = s => String(s || "").trim().replace(/[、。\s]+$/, "");
+function annHistList() {
+  let h = (store.get("annhist") ? store.get("annhist").d : []).map(annNorm).filter(x => x && !annBroken(x));
+  h = [...new Set(h)].slice(0, 5);
+  store.set("annhist", h);
+  return h;
+}
+function annFlash(el) { el.scrollIntoView({ block: "nearest" });
+  el.style.transition = "background .4s"; el.style.background = "#FCF3D9";
+  setTimeout(() => { el.style.background = ""; }, 500); }
+// v175: 履歴チップは入力欄への反映だけでann.detailを更新しておらず、再描画で消えていた
+// (「タップで全然機能しない」の一因)。状態と画面を必ず両方更新し、目に見える反応を返す。
+window.annHist = x => { const el = document.getElementById("annDetail"); if (!el) return;
+  el.value = x; ann.detail = x; annFlash(el);
+  toast("入力欄に入れました(このまま配るか、手直しもできます)"); };
 const ANN_PURPOSES = () => [["shukkin", W("🏮 出勤のお知らせ", "🗓 近況のお知らせ")], ["event", W("🎉 イベント", "🍽 お誘い")],
   ["season", "🍂 季節のご挨拶"], ["gobusata", W("🕰 ご無沙汰の掘り起こし", "🕰 ご無沙汰の声かけ")], ["free", "✍️ 自由"]];
 async function vAnn() {
@@ -1786,8 +1881,8 @@ async function drawAnn() {
         `<button class="chip ${ann.purpose === k ? "on" : ""}"
           onclick="ann.detail=(document.getElementById('annDetail')||{value:ann.detail}).value.trim();ann.purpose='${k}';drawAnn()">${lab}</button>`).join("")}</div>
       <label class="f">伝えたい内容(タップで組み立てもOK。<b>書いた内容は全員の文面に必ず入ります</b>)</label>
-      <div class="chips" style="margin-bottom:6px">${(store.get("annhist") ? store.get("annhist").d : []).map(x =>
-        `<button class="chip" onclick="document.getElementById('annDetail').value='${esc(x)}'">${esc(x.slice(0, 18))}${x.length > 18 ? "…" : ""}</button>`).join("")}</div>
+      <div class="chips" style="margin-bottom:6px">${annHistList().map(x =>
+        `<button class="chip" onclick="annHist(${jarg(x)})">${esc(x.slice(0, 18))}${x.length > 18 ? "…" : ""}</button>`).join("")}</div>
       <div class="chips" style="margin-bottom:6px">${["今週", "来週", "月", "火", "水", "木", "金", "土",
         W("お店に出ます", "ごはん行きませんか"), W("イベントがあります", "近況のご報告です"), W("同伴できます", "久しぶりに会いたいです")].map(w =>
         `<button class="chip" style="padding:7px 12px;font-size:13px" onclick="annWord(${jarg(w)})">${esc(w)}</button>`).join("")}</div>
@@ -1806,10 +1901,13 @@ async function drawAnn() {
         `<button class="chip" data-seg="${k}">${lab}</button>`).join("")
         || `<div class="note">相手がいません</div>`)
         + `<button class="btn primary" id="annGo" style="margin-top:12px">▶ 配達をはじめる(重複は自動でまとめます)</button>`;
-      $("#annSegs").addEventListener("click", e => {
+      // v175: addEventListenerは再描画(キャッシュ表示→通信後の再render)のたびに多重登録され、
+      // 2回目以降の訪問でトグルが偶数回走って「タップしても選択が付かない」完全な機能停止に
+      // なっていた(本人指摘)。onclickプロパティ代入なら常に1本。
+      $("#annSegs").onclick = e => {
         const b2 = e.target.closest("[data-seg]"); if (!b2) return;
         b2.classList.toggle("on");
-      });
+      };
       $("#annGo").onclick = () => {
         const sel = [...$("#annSegs").querySelectorAll(".chip.on")].map(x => x.dataset.seg);
         if (!sel.length) return toast("配る相手のグループを1つ以上タップしてください");
@@ -1829,10 +1927,14 @@ window.annPlan = async segs => {
   catch (e) { v.innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   if (!r.items || !r.items.length) { toast("対象の相手がいません"); ann.step = "seg"; drawAnn(); return; }
   if (r.deduped) toast(`重複${r.deduped}件をまとめました(同じ人に二度送りません)`);
-  if (ann.detail) {
-    const h = (store.get("annhist") ? store.get("annhist").d : []).filter(x => x !== ann.detail);
-    h.unshift(ann.detail); store.set("annhist", h.slice(0, 5));
+  // v175: 壊れた文は履歴に入れない+末尾の句読点ゆれで別枠を食わないよう正規化
+  const _d = annNorm(ann.detail);
+  if (_d && !annBroken(_d)) {
+    const h = annHistList().filter(x => x !== _d);
+    h.unshift(_d); store.set("annhist", h.slice(0, 5));
   }
+  // v175: 配信下書きキャッシュを全破棄(内容を書き直しても古い内容の下書きが出るバグ)
+  Object.keys(draftCache).filter(k => k[0] === "a").forEach(k => delete draftCache[k]);
   // v123(E6): 配達前プレビュー=1人ずつ外せる
   Object.assign(ann, { segs, tone: "cust", q: r.items, i: 0, sent: 0, step: "preview", excl: {} });
   drawAnnPreview();
@@ -2146,14 +2248,17 @@ window.annWord = w => {
   if (!el) return;
   let cur = el.value.trim();
   if (["月", "火", "水", "木", "金", "土"].includes(w)) w = w + "曜";
-  // v162: 本人指摘「タップできない、機能性悪し」の実体は反応が無いように見えて連打してしまい、
-  // 同じ語が「今週は今週は来週はイベントがあります」のように壊れて二重に入ることだった。
-  // 直前に同じ語が既に入っていたら何もせず知らせるだけにする(取り消し線的な誤操作防止)。
-  if (cur && cur.endsWith(w)) { toast(`「${w}」はすでに入っています`); return; }
+  // v162→v175: 旧ガードは「直前の1語」しか見ておらず、間に別の語を挟むと同じ語を何度でも
+  // 追記できて「今週は今週は来週は…」が量産されていた。文全体での重複を禁止する。
+  if (cur && cur.includes(w)) { toast(`「${w}」はすでに入っています`); return; }
   if (cur && !/[、。 ]$/.test(cur) && !cur.endsWith("週")) cur += (w.endsWith("曜") && /曜$/.test(cur) ? "と" : "、");
   if (/週$/.test(cur.trim()) ) cur = cur.replace(/週$/, "週は");
   el.value = (cur + w).replace(/曜と曜/, "曜");
   ann.detail = el.value;
+  // v175: タップの結果が画面外(下の入力欄)で「機能しない」ように見えていた。
+  // 入力欄へスクロール+一瞬ハイライト+いまの文をトーストで見せる。
+  annFlash(el);
+  toast(`＋「${w}」 → ${el.value.slice(0, 22)}${el.value.length > 22 ? "…" : ""}`);
 };
 window.fxBulk = async () => {
   const ok = await askDanger(`${(fx.items || []).length}人をまとめて確定`,

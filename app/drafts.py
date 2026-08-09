@@ -90,6 +90,12 @@ def _template_drafts(contact: dict, text: str, reason: str) -> list[dict]:
             {"tone": "丁寧・軽く", "text": "ご連絡ありがとうございます！その件、ぜひ今度ゆっくりお聞かせください"},
             {"tone": "丁寧・最小", "text": "ありがとうございます。またお会いできるのを楽しみにしています！"},
         ]
+    # v175: 笑いだけの受信には絵文字・笑い返しの定型(敬語系は上で除外済み)
+    if _is_light_reaction(text):
+        return [
+            {"tone": "笑い返し", "text": "🤣🤣"},
+            {"tone": "ひとこと", "text": "ｗｗｗ"},
+        ]
     if "来店" in reason or "席" in reason:
         if _general:
             return [
@@ -124,9 +130,51 @@ _MEDIA_ONLY_LINE_RE = re.compile(
 
 def _is_media_only(text: str) -> bool:
     """受信テキストが(1行でも複数行でも)写真等の送信通知だけで、実質的な本文が無いか。
-    連投の一部にでも普通の文があれば通常どおり生成する(誤って止めない)。"""
-    lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+    連投の一部にでも普通の文があれば通常どおり生成する(誤って止めない)。
+    v175: 通知経路によっては本文が「…」で囲まれて届くことがあり判定をすり抜けていたため、
+    行頭行末のかぎ括弧・引用符を剥いでから判定する。"""
+    lines = [ln.strip().strip("「」『』\"'") for ln in (text or "").split("\n") if ln.strip()]
+    lines = [ln for ln in lines if ln]
     return bool(lines) and all(_MEDIA_ONLY_LINE_RE.match(ln) for ln in lines)
+
+
+# v175: 「笑」「ｗｗ」「🤣」だけの軽いリアクション受信の検出(本人指摘 2026-08-09:
+# 「笑といた場合への返信は絵文字もしくはスタンプでいいのでは？」)。
+# 笑いだけの受信に文章(「そうそうｗ」等)で返すと会話の温度より重くなる。
+# 注: LINEの共有経由ではスタンプ自体は送れない(テキストのみ)ため、実装形は絵文字案。
+_LIGHT_CHARS_RE = re.compile(r"^[wｗWＷ笑草〜ー～。、．.!！?？\s\U0001F600-\U0001F64F\U0001F900-\U0001F9FF]+$")
+_LIGHT_LAUGH_RE = re.compile(r"[笑草🤣😂😆😅😄😁]|[wｗWＷ]")
+
+
+def _is_light_reaction(text: str) -> bool:
+    t = (text or "").strip().strip("「」")
+    return bool(t) and len(t) <= 12 and bool(_LIGHT_CHARS_RE.match(t)) and bool(_LIGHT_LAUGH_RE.search(t))
+
+
+def _parse_json_out(out: str) -> dict:
+    """v175: AI出力からJSONを頑丈に取り出す。本人報告「生成失敗(JSONDecodeError)が増えた。
+    他の人でもなる」への対策。従来は```除去+json.loads直呼びで、(1)AIが前置き・後語りを
+    付けた場合 (2)max_tokens切れでJSONの閉じが欠けた場合に必ず失敗していた。
+    (1)フェンス除去 (2)最初の{〜最後の}を切り出す (3)それでも壊れていれば、
+    完成している{"tone":…,"text":…}だけを個別に救出する(途中で切れた末尾案は捨てる)。"""
+    out = re.sub(r"```(json)?", "", out or "").strip()
+    s, e = out.find("{"), out.rfind("}")
+    if s >= 0 and e > s:
+        try:
+            return json.loads(out[s:e + 1])
+        except Exception:
+            pass
+    salvaged = []
+    for m in re.finditer(r'\{[^{}]*?"text"[^{}]*?\}', out):
+        try:
+            d = json.loads(m.group(0))
+        except Exception:
+            continue
+        if (d.get("text") or "").strip():
+            salvaged.append({"tone": str(d.get("tone") or "案"), "text": d["text"]})
+    if salvaged:
+        return {"drafts": salvaged}
+    raise ValueError("AI出力にJSONが見つからない")
 
 
 _FUEL_RE = re.compile(r"(会いたい|寂しい|さみしい|大好き|愛して|楽しみにして|二人で|ふたりで|❤️|💕|💗|❣️|😍|🥰|💘|💝)")
@@ -170,7 +218,7 @@ def _review_pass(contact: dict, incoming: str, drafts: list, base_prompt: str) -
         },
         json={
             "model": getattr(config, "REVIEW_MODEL", config.ANTHROPIC_MODEL),
-            "max_tokens": 500,
+            "max_tokens": 800,   # v175: 500→800(途中切れ→JSON破損対策。使った分だけ課金)
             "system": SYSTEM,
             "messages": [{"role": "user", "content": base_prompt},
                           {"role": "assistant", "content": json.dumps({"drafts": drafts}, ensure_ascii=False)},
@@ -180,8 +228,7 @@ def _review_pass(contact: dict, incoming: str, drafts: list, base_prompt: str) -
     )
     r.raise_for_status()
     out = "".join(b.get("text", "") for b in r.json().get("content", []))
-    out = re.sub(r"```(json)?", "", out).strip()
-    fixed = json.loads(out).get("drafts", [])[:3]
+    fixed = _parse_json_out(out).get("drafts", [])[:3]
     return fixed or None
 
 
@@ -299,9 +346,12 @@ def _generate_inner(message_id: int) -> list[dict]:
     # はurgent/batchになりrallyにはならない)を選ぶため、旧条件では合体がほぼ発動しなかった。
     thread_text = msg["text"]
     try:
-        cluster = db.rally_cluster(msg["contact"], message_id, config.RALLY_WINDOW_MIN * 60)
-        if len(cluster) > 1:
-            thread_text = "\n".join(x["text"] for x in cluster)
+        # v175: 10分窓のラリー連結→「その相手の未対応ぜんぶ」(直近10通まで)に変更。
+        # 受信カードの表示・下書きが読む文・完了時のクローズを同じ集合に統一する
+        # (旧: 表示1通/AIは10分窓/クローズも10分窓、と三者バラバラで再出現ループの一因)。
+        cluster = db.open_for_contact(msg["contact"])[-10:]
+        if len(cluster) > 1 and any(x["id"] == message_id for x in cluster):
+            thread_text = "\n".join((x.get("text") or "") for x in cluster)
     except Exception:
         pass
 
@@ -383,6 +433,12 @@ def _generate_inner(message_id: int) -> list[dict]:
     except Exception:
         pass
 
+    # v175: 笑いだけの軽い反応には絵文字・超短文案(本人指摘)。敬語系の相手には出さない(事故防止)
+    if _is_light_reaction(thread_text) and (contact.get("register") or "") not in ("keigo_only", "keigo"):
+        user_prompt += ("\n\n【軽い反応への返し・最優先】相手は「笑」や絵文字だけの軽いリアクション。"
+                        "文章で返すと相手より温度が重くなる。1案目は絵文字か笑いだけにする(例:「🤣」「ｗｗ」)。"
+                        "2案目も笑い+ひとことまで。新しい話題や質問をここで無理に作らない。")
+
     # いなしモード: 下ネタ癖のある相手、または性的な冗談・要求を含む受信は「乗らず・拒まず」で受け流す
     # v30: 注入は「いなしON(flag_ero==1)」の相手のみ。検知→確認は受信箱の下ネタアラームが担う。
     # ノリOK(flag_ero==2)=プロレス型の相手には絶対に注入しない(実例学習がノリを再現する)。
@@ -455,7 +511,9 @@ def _generate_inner(message_id: int) -> list[dict]:
             },
             json={
                 "model": config.ANTHROPIC_MODEL,
-                "max_tokens": 500,
+                # v175: 500→1000。ガチ恋の長文3案+plan欄で500では途中切れ→JSON破損が頻発していた
+                # (出力トークンは使った分だけの課金で、上限引き上げ自体のコストはゼロ)
+                "max_tokens": 1000,
                 "system": SYSTEM,
                 "messages": [{"role": "user", "content": user_prompt}],
             },
@@ -463,8 +521,7 @@ def _generate_inner(message_id: int) -> list[dict]:
         )
         r.raise_for_status()
         out = "".join(b.get("text", "") for b in r.json().get("content", []))
-        out = re.sub(r"```(json)?", "", out).strip()
-        drafts = json.loads(out).get("drafts", [])[:3]
+        drafts = _parse_json_out(out).get("drafts", [])[:3]
         if not drafts:
             raise ValueError("empty drafts")
         # ガチ恋/いなしは検品パス: 燃料・復唱・接客敬語・ぎこちなさを自己審査→必要なら書き直し

@@ -323,7 +323,7 @@ def build_queue():
     店内(staff)は含めない(第1弾はPWA側で。第2弾でクイック返信を移植)。"""
     from . import crm
     crm.ensure()
-    items, seen = [], set()
+    items, seen = [], {}
     msgs = _open_msgs()
     msgs.sort(key=lambda m: ((0 if m["category"] == "urgent" else 1), m["ts"] or 0))
     for m in msgs:
@@ -332,15 +332,22 @@ def build_queue():
         if kind == "staff":
             continue
         if m["contact"] in seen:
+            # v175: 2通目以降も件数・midを積む(「何通溜まっているか」を正しく数えるため)
+            it = seen[m["contact"]]
+            it["mids"].append(m["id"])
+            it["count"] += 1
+            it["urgent"] = it["urgent"] or (1 if m["category"] == "urgent" else 0)
             continue
-        seen.add(m["contact"])
-        items.append({"mid": m["id"], "contact": m["contact"],
-                      "unlinked": 1 if c.get("linked") == 0 or not c else 0,
-                      "rank": c.get("rank") or "B",
-                      "reason": m.get("reason") or "",
-                      "urgent": 1 if m["category"] == "urgent" else 0,
-                      "ts": m.get("ts"),   # v120: 受信時刻(いつ来たかの表示に必須)
-                      "text": (m.get("text") or "")[:1000]})
+        it = {"mid": m["id"], "contact": m["contact"],
+              "unlinked": 1 if c.get("linked") == 0 or not c else 0,
+              "rank": c.get("rank") or "B",
+              "reason": m.get("reason") or "",
+              "urgent": 1 if m["category"] == "urgent" else 0,
+              "ts": m.get("ts"),   # v120: 受信時刻(いつ来たかの表示に必須)
+              "text": (m.get("text") or "")[:1000],
+              "mids": [m["id"]], "count": 1}
+        seen[m["contact"]] = it
+        items.append(it)
     return items
 
 
@@ -356,13 +363,12 @@ def _finish_message(mid, action, sent_text=None):
               "skipped": "skipped"}[action]
     db.set_status(mid, status)
     if status == "replied":
-        # v160: 「anchor以前(過去)のみ」だった一括クローズをdb.close_rally_siblingsへ統一。
-        # build_queueは常にその相手の一番古い未対応を選ぶため、旧条件では返信直後に来ていた
-        # 新しい連投が閉じられず、毎回「新しい未対応」として再出現するバグがあった。
-        # 同種の実装がmain.py act()にも重複していたため両方をこのヘルパーに揃えた。
+        # v175: 10分窓のチェーンクローズ(close_rally_siblings)では隙間の空いた五月雨受信が
+        # 閉じられず、返信のたびに過去の1通が再出現するループになっていた(本人報告 2026-08-09)。
+        # 「この相手に返信した=いま時点までの未対応は対応済み」の相手単位クローズに変更。
         try:
-            db.close_rally_siblings(msg["contact"], mid, msg["ts"], "replied",
-                                     config.RALLY_WINDOW_MIN * 60)
+            import time as _t
+            db.close_contact_open(msg["contact"], _t.time(), "replied", exclude_id=mid)
         except Exception:
             pass
         if action == "replied" and (sent_text or "").strip():

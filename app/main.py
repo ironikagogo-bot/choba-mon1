@@ -225,7 +225,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v172"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v175"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -648,6 +648,7 @@ class Incoming(BaseModel):
 class Action(BaseModel):
     action: str  # replied / stamped / deferred / skipped
     text: str = ""  # replied のとき: 実際にコピーした最終文(編集込み)→文体学習に還元
+    mids: list[int] | None = None  # v175: 画面に出ていた同一相手の全メッセージid(まとめて同じ状態に)
 
 
 @app.post("/api/incoming")
@@ -934,15 +935,22 @@ def act(mid: int, body: Action):
         db.set_status(mid, "replied", no_ts=True)
     else:
         db.set_status(mid, body.action)
-    # ラリー連投対策: 返信/スタンプは「その相手との未対応スレッド全体」への対応とみなして閉じる。
-    # これをしないと連投の残り(古い通)が open のまま残り、コピペ後も同じ会話がカードに再表示され続ける。
-    # v160: 「anchor以前(過去)のみ」だった条件をdb.close_rally_siblingsへ統一(前後どちらの連投も
-    # 対象になる)。linebot.py _finish_message()に同型のバグが重複実装されていたため両方揃えた。
+    # ラリー連投対策(v175で全面改修): 旧実装は「10分以内で連続するチェーン」しか道連れに
+    # しなかったため、隙間の空いた五月雨受信が open のまま残り、返信のたびに過去の1通が
+    # 「新しい受信」として再出現するループになっていた(本人報告 2026-08-09)。
+    # 新仕様: (1)画面に出ていた全メッセージid(body.mids)は本体と同じ状態にする
+    #        (2)返信系はさらに相手単位で「いま時点までの未対応」を一括クローズ
+    _sw = {"replied": "replied", "stamped": "stamped", "done": "replied",
+           "deferred": "deferred", "skipped": "skipped"}[body.action]
+    for _m in (body.mids or []):
+        try:
+            if int(_m) != mid and db.get_message(int(_m)):
+                db.set_status(int(_m), _sw, auto=True)
+        except Exception:
+            pass
     if body.action in ("replied", "stamped", "done"):
         try:
-            _sw = "replied" if body.action == "done" else body.action
-            db.close_rally_siblings(msg["contact"], mid, msg["ts"], _sw,
-                                     config.RALLY_WINDOW_MIN * 60)
+            db.close_contact_open(msg["contact"], time.time(), _sw, exclude_id=mid)
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる

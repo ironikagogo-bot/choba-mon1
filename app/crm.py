@@ -327,6 +327,15 @@ def mute(line_name: str):
         c.execute("INSERT OR IGNORE INTO muted_names(line_name,created_ts) VALUES(?,?)",
                   (name, time.time()))
         c.execute("DELETE FROM pending_links WHERE line_name=?", (name,))
+        # v175: 取り込み済みの未対応も掃除。従来は「以後の取り込みを止める」だけだったため、
+        # 私用にした相手の既存メッセージが受信箱に居座り続けていた(監査で発見)。
+        ids = [r["id"] for r in c.execute(
+            "SELECT id FROM messages WHERE contact=? AND status IN ('open','deferred')", (name,))]
+    for i in ids:
+        try:
+            db.set_status(i, "skipped", auto=True)
+        except Exception:
+            pass
 
 
 def unmute(line_name: str):

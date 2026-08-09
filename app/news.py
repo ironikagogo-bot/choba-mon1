@@ -57,14 +57,38 @@ def _meta_set(k: str, v: str):
                   "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (k, v))
 
 
-def _fetch_rss(query: str) -> list[dict]:
+# v175: 本人指摘「ニュースの選別がしょぼい。日経・大手新聞だけでいい」。
+# 出典を大手に限定するホワイトリスト。Google News RSSの<source url>のドメインで判定。
+# クローリングは今後もしない(RSSの見出しだけ。記事本文の取得・解析はコスト・規約・鮮度の
+# 割に一言ネタへの寄与が小さい。見出し+出典の質で絞る方が効く)
+_MAJOR_SOURCES = ("nikkei.com", "asahi.com", "yomiuri.co.jp", "mainichi.jp",
+                  "sankei.com", "www3.nhk.or.jp", "nhk.or.jp", "toyokeizai.net",
+                  "diamond.jp", "bloomberg.co.jp", "reuters.com", "jiji.com", "47news.jp")
+
+
+def _major(src_url: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse(src_url).netloc or "").lower()
+        return any(host == d or host.endswith("." + d) for d in _MAJOR_SOURCES)
+    except Exception:
+        return False
+
+
+def _fetch_rss(query: str, require_in_title: str = "") -> list[dict]:
     r = requests.get(
         "https://news.google.com/rss/search",
         params={"q": query, "hl": "ja", "gl": "JP", "ceid": "JP:ja"},
         headers={"User-Agent": "Mozilla/5.0 (chouba-neta)"},
         timeout=15)
     r.raise_for_status()
-    return parse_rss(r.content)
+    items = parse_rss(r.content)
+    # v175: ①大手出典のみ ②会社ネタは会社名が見出しに実際に含まれるものだけ
+    # (Google Newsの検索は緩く、無関係な記事が混ざる=「選別がしょぼい」の主因)
+    out = [it for it in items if _major(it.get("src_url", ""))]
+    if require_in_title:
+        out = [it for it in out if require_in_title in it["title"]]
+    return out
 
 
 def parse_rss(xml_bytes: bytes) -> list[dict]:
@@ -74,13 +98,15 @@ def parse_rss(xml_bytes: bytes) -> list[dict]:
         title = (it.findtext("title") or "").strip()
         link = (it.findtext("link") or "").strip()
         pub = (it.findtext("pubDate") or "").strip()
+        src = it.find("source")
+        src_url = (src.get("url") if src is not None else "") or ""
         ts = 0.0
         try:
             ts = parsedate_to_datetime(pub).timestamp()
         except Exception:
             pass
         if title:
-            out.append({"title": title, "link": link, "ts": ts})
+            out.append({"title": title, "link": link, "ts": ts, "src_url": src_url})
     return out
 
 
@@ -169,7 +195,7 @@ def refresh(force: bool = False) -> dict:
             if added >= _MAX_PER_DAY:
                 break
             try:
-                items = _fetch_rss(ct["company"])
+                items = _fetch_rss(ct["company"], require_in_title=ct["company"])
             except Exception:
                 failed += 1
                 continue
@@ -271,6 +297,10 @@ def _kw_opener(kw: str, title: str) -> str:
 def list_items(limit: int = 20) -> list[dict]:
     ensure()
     with db.conn() as c:
+        # v175: v169以前に生成された「◯◯さん」プレースホルダ入りの一言が残り、
+        # コピペ時に◯◯ごと送られる実害(本人指摘)。残存分を非表示化(新規生成はv169で禁止済み)
+        c.execute("UPDATE news_items SET dismissed=1 WHERE dismissed=0 AND "
+                  "(opener LIKE '%◯◯%' OR opener LIKE '%〇〇%' OR opener LIKE '%○○%')")
         return [dict(r) for r in c.execute(
             "SELECT * FROM news_items WHERE dismissed=0 ORDER BY created_ts DESC, id DESC LIMIT ?",
             (limit,))]

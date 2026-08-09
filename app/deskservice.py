@@ -43,7 +43,7 @@ DEMO_SCRIPT = [
 ]
 
 
-def ingest(contact: str, text: str, log=None, predraft: bool = False):
+def ingest(contact: str, text: str, log=None, predraft: bool = False, src_ts: float = 0.0):
     """受信1件を本番と同じ順で処理する(APIエンドポイントとウォッチャー共用)。
 
     predraft=True (デスク経由):
@@ -81,7 +81,10 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False):
     log(f"受信検知: {contact}「{preview}」")
 
     cat, reason = triage.classify(contact, text)
-    mid = db.add_message(contact, text, cat, reason)
+    # v175: 通知の元時刻(src_ts)があればそれを保存する。従来はサーバ受信時刻だったため、
+    # 電波復帰などでAPKがまとめて再送すると「3時間前のメッセージが今来た」ことになり、
+    # 並び順・ラリー判定・「過去メッセージの再出現」誤認の原因になっていた(監査で発見)。
+    mid = db.add_message(contact, text, cat, reason, ts=(src_ts or None))
     log(f"判定: {CAT_LABEL[cat]} — {reason}")
 
     # エロ/ガチ恋フラグの相手は、カテゴリに関わらず受信時に裏で下書きを事前生成
@@ -216,8 +219,13 @@ class DeskService:
 
             # 空欄を他の欄で補完(長文=大きな文字/テキスト行、概要="送信者: 本文"形式)
             rtitle = (title or "").strip() or (sub_text or "").strip()
-            rtext = ((text or "").strip() or (big_text or "").strip()
-                     or (text_lines or "").strip())
+            # v175: text_lines(まとめ通知のInboxStyle)は「その会話の直近数通」が複数行で入る。
+            # 丸ごと採用すると取り込み済みの過去行が混ざり、毎回本文が微妙に違う重複カードが
+            # 生まれる(監査で発見)。使う場合は最終行=最新の1通だけを採る。
+            _tl = (text_lines or "").strip()
+            if _tl and "\n" in _tl:
+                _tl = [x for x in _tl.split("\n") if x.strip()][-1].strip()
+            rtext = ((text or "").strip() or (big_text or "").strip() or _tl)
             tk = (ticker or "").strip()
             if (not rtitle or not rtext) and tk:
                 m = re.match(r"^(?P<s>[^:：]{1,40})[:：]\s*(?P<m>.+)$", tk, re.S)
@@ -290,12 +298,40 @@ class DeskService:
             if not self.dedup.should_process(contact, message, msg_id=msg_id):
                 self.log(f"→ 重複のためスキップ: {contact}(同一通知の再掲)")
                 return {"status": "duplicate", "contact": contact}
+            # v175: 通知IDの重複判定をDBに永続化。従来はプロセスメモリ60秒だけだったため、
+            # サーバ再起動(再デプロイ・スリープ復帰)後にAPKが通知を再スキャンすると
+            # 全通が新規openとして再挿入され「対応済みの過去メッセージが再出現」していた(監査で発見)。
+            if msg_id:
+                try:
+                    with db.conn() as _c:
+                        _c.execute("CREATE TABLE IF NOT EXISTS ingest_keys"
+                                   "(k TEXT PRIMARY KEY, ts REAL)")
+                        _c.execute("DELETE FROM ingest_keys WHERE ts < ?", (time.time() - 7 * 86400,))
+                        _cur = _c.execute("INSERT OR IGNORE INTO ingest_keys(k,ts) VALUES(?,?)",
+                                          (msg_id, time.time()))
+                        if _cur.rowcount == 0:
+                            self.log(f"→ 重複のためスキップ: {contact}(取り込み済みの通知ID)")
+                            return {"status": "duplicate", "contact": contact}
+                except Exception as _e:
+                    self.log(f"[ingest_keys] {_e}")
+
+            # v175: 通知の元時刻を正規化(ミリ秒→秒、7日以上前・10分以上未来は不採用=サーバ時刻)
+            _sts = 0.0
+            try:
+                _sts = float(ts or 0)
+                if _sts > 1e12:
+                    _sts /= 1000.0
+                _now = time.time()
+                if not (_now - 7 * 86400 <= _sts <= _now + 600):
+                    _sts = 0.0
+            except Exception:
+                _sts = 0.0
 
             self.android_count += 1
         # v72(9-9): AIトリアージ(最大12秒)を含む取り込みはロックの外で実行。
         # 通知バースト時に解析・重複判定まで直列化されてリーダー側がタイムアウトする問題の修正。
         # (重複判定は上のロック内で完了済みなので、ここが並行しても二重取り込みは起きない)
-        mid, cat, reason = ingest(contact, message, log=self.log, predraft=True)
+        mid, cat, reason = ingest(contact, message, log=self.log, predraft=True, src_ts=_sts)
         if mid is None:
             return {"status": "muted", "contact": contact}
         return {"status": "ingested", "contact": contact, "message": message,

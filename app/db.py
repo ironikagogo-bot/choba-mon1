@@ -184,6 +184,28 @@ def rally_cluster(contact: str, anchor_id: int, rally_window_sec: float):
     return rows[lo:hi + 1]
 
 
+def open_for_contact(contact: str):
+    """v175: その相手の未対応(open)全件を時系列で返す。受信カードの表示・下書き・
+    一括クローズの3者を同じ集合に揃えるための単一の真実の源。"""
+    with conn() as c:
+        return [dict(r) for r in c.execute(
+            "SELECT * FROM messages WHERE contact=? AND status='open' ORDER BY ts ASC", (contact,))]
+
+
+def close_contact_open(contact: str, upto_ts, new_status: str, exclude_id=None):
+    """v175: 相手単位の一括クローズ。キュー表示は「1相手1カード」なのにクローズは
+    「10分連続チェーンのみ」だったため、隙間の空いた未対応(五月雨受信)が閉じられず、
+    返信するたびに過去の1通が再出現するループの原因だった(本人報告 2026-08-09)。
+    意味論を「この相手に対応した=その時点までの未対応はすべて対応済み」に統一する。
+    upto_tsより後に届いた新着は閉じない(読んでいない受信を握り潰さない)。"""
+    with conn() as c:
+        ids = [r["id"] for r in c.execute(
+            "SELECT id FROM messages WHERE contact=? AND status='open' AND ts<=? AND id!=?",
+            (contact, upto_ts or time.time(), exclude_id if exclude_id is not None else -1))]
+    for i in ids:
+        set_status(i, new_status, auto=True)
+
+
 def close_rally_siblings(contact: str, anchor_id: int, anchor_ts, new_status: str, rally_window_sec: float):
     """v160: 相手への対応完了時、同じ相手の未対応(open/deferred)のうち、anchorと連続受信で
     つながっている分(隙間<=rally_window_sec)を道連れでnew_statusにする。
