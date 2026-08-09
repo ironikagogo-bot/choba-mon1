@@ -151,6 +151,17 @@ body.dark .swwline{background:#332B18;border-bottom-color:#6A5A2E;color:#E3C87A}
   padding:8px 14px;font-size:13px;font-weight:700;min-height:40px;cursor:pointer}
 .swexit{font-size:12.5px;color:var(--sub);margin-top:2px}
 .swexit b{color:var(--ink);font-weight:700}
+/* v181: お礼カードの役割帯(本人要望: 横一直線・半透明・テーマ連動。客=金/ヘルプ=緑/紹介・共有=紺) */
+.orole{display:flex;align-items:center;gap:8px;margin:-14px -14px 10px;padding:9px 14px;
+  border-radius:14px 14px 0 0;font-size:13.5px;font-weight:700}
+.orole .plink{color:inherit}
+.orole .rl{margin-left:auto;font-size:12px;font-weight:800;opacity:.85;flex:none}
+.orole.gold{background:rgba(168,132,47,.13);color:#7A5F1E;border-bottom:1px solid rgba(168,132,47,.25)}
+.orole.green{background:rgba(46,125,50,.11);color:#2E7D32;border-bottom:1px solid rgba(46,125,50,.22)}
+.orole.navy{background:rgba(27,42,74,.10);color:#1B2A4A;border-bottom:1px solid rgba(27,42,74,.20)}
+body.dark .orole.gold{background:rgba(201,164,76,.16);color:#E3C87A;border-bottom-color:rgba(201,164,76,.30)}
+body.dark .orole.green{background:rgba(96,200,120,.13);color:#8FCF95;border-bottom-color:rgba(96,200,120,.26)}
+body.dark .orole.navy{background:rgba(120,150,210,.13);color:#AFC3E8;border-bottom-color:rgba(120,150,210,.26)}
 .jobrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:14px;flex-wrap:wrap}
 .jobrow:last-child{border-bottom:none}
 .jobrow .st{margin-left:auto;font-size:12px;font-weight:700;flex:1 1 auto;min-width:0;text-align:right;white-space:normal;word-break:break-word;max-width:100%}   /* v151: 長文エラーで画面幅が壊れない */
@@ -2451,7 +2462,9 @@ function drawOrei() {
     v.innerHTML = `<div class="note" style="margin-bottom:10px">${W("✓ お席は記録しました(来店・同伴の実績も自動)。上から順にどうぞ。", "✓ 記録しました(会った実績も自動)。上から順にどうぞ。")}</div>` +
       orei.drafts.map((g, j) => `
         <div class="draft ${g.done ? "" : ""}" id="or${j}" style="${g.done ? "opacity:.45" : ""}">
-          <div style="font-size:11px;color:var(--sub);margin-bottom:4px"><span class="plink" data-plink="${encodeURIComponent(g.code || g.contact || "")}">${esc(disp(g.name))}</span>(${esc(g.role_label || g.role)})${g.done ? " ✓送信済み" : ""}</div>
+          <div class="orole ${({help:"green",peer:"green",intro:"navy",report:"navy"})[g.role] || "gold"}">
+            <span class="plink" data-plink="${encodeURIComponent(g.code || g.contact || "")}">${esc(disp(g.name))}</span>
+            <span class="rl">${esc(g.role_label || g.role)}${g.done ? " ✓送信済み" : ""}</span></div>
           <div class="t">${esc(g.text)}</div>
           <textarea style="display:none">${esc(g.text)}</textarea>
           ${g.done ? "" : swUnitHtml("or" + j, _swSend["or" + j])}</div>`).join("") +
