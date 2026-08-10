@@ -341,6 +341,8 @@ def build_queue():
         it = {"mid": m["id"], "contact": m["contact"],
               "unlinked": 1 if c.get("linked") == 0 or not c else 0,
               "rank": c.get("rank") or "B",
+              "koi": (int(c.get("flag_koi") or 0)
+                      if (c.get("kind") or "customer") == "customer" else 0),   # v186/v187: customer限定
               "reason": m.get("reason") or "",
               "urgent": 1 if m["category"] == "urgent" else 0,
               "ts": m.get("ts"),   # v120: 受信時刻(いつ来たかの表示に必須)
@@ -1928,6 +1930,91 @@ def save_facts(contact, facts, status="pending"):
                        json.dumps(f["alts"], ensure_ascii=False), status, time.time()))
 
 
+# ============ v187(§11): 顧客抽出の検疫(分類ファースト・キーワード判定なし) ============
+# 種別が本人確定される前のカードには、AI抽出事実を「適用せず保留」する。
+# 確定が客→保留分を適用+後段分析を実行 / 店内・同業・私用→破棄(顧客抽出を走らせない)。
+# 判定機を持たない=誤検知が構造的に存在しない(「迷ったら守り」を全員に既定で適用)。
+# 野口哲型(店内スレッド・第三者機微が高密度)をAIが客と誤分類しても、確定タップまで
+# カードに何も書かれないため機微データ事故が起きない。
+
+def rel_confirmed(contact) -> bool:
+    """種別・立場が本人確定済みか。pending🔖あり=未確定。relファクト自体が無い
+    旧カードは確定扱い(従来挙動を変えない)。"""
+    ensure()
+    with db.conn() as c:
+        if c.execute("SELECT 1 FROM linebot_facts WHERE contact=? AND k=? AND status='confirmed' "
+                     "LIMIT 1", (contact, _REL_KEY)).fetchone():
+            return True
+        if c.execute("SELECT 1 FROM linebot_facts WHERE contact=? AND k=? AND status='pending' "
+                     "LIMIT 1", (contact, _REL_KEY)).fetchone():
+            return False
+    return True
+
+
+def quarantine_add(contact, facts):
+    """保留箱へ(hold空でもマーカーは残す=後段分析の実行予約を兼ねる)。"""
+    try:
+        cur = json.loads(_meta_get(f"quarantine_{contact}") or "[]")
+    except Exception:
+        cur = []
+    seen = {(f.get("k"), f.get("v")) for f in cur}
+    cur += [f for f in (facts or []) if (f.get("k"), f.get("v")) not in seen]
+    _meta_set(f"quarantine_{contact}", json.dumps(cur[-200:], ensure_ascii=False))
+    print(f"[quarantine] {contact}: {len(facts or [])}件を種別確定まで保留", flush=True)
+
+
+def quarantine_release_async(contact):
+    threading.Thread(target=quarantine_release, args=(contact,), daemon=True).start()
+
+
+def quarantine_release(contact):
+    """種別確定時に呼ぶ。検疫マーカーが無ければ何もしない(旧カードの確定で走らない)。"""
+    raw = _meta_get(f"quarantine_{contact}")
+    if not raw:
+        return
+    with db.conn() as c:
+        c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{contact}",))
+    ct = db.get_contact(contact) or {}
+    kind = ct.get("kind") or "customer"
+    try:
+        facts = json.loads(raw)
+    except Exception:
+        facts = []
+    if kind != "customer":
+        print(f"[quarantine] {contact}: 非顧客({kind})確定 → 保留{len(facts)}件を破棄・分析なし",
+              flush=True)
+        return
+    try:
+        if facts:
+            ncrit, nauto = save_split(contact, facts)
+            print(f"[quarantine] {contact}: 顧客確定 → 保留適用 重要{ncrit}/自動{nauto}", flush=True)
+    except Exception as e:
+        print(f"[quarantine apply] {e}", flush=True)
+    # 取り込み時にスキップした後段分析(実例庫・力学・ペルソナ)をここで実行
+    try:
+        with db.conn() as c:
+            r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
+        text = r["text"] if r else ""
+    except Exception:
+        text = ""
+    if text:
+        self_name = (db.get_profile("_selfname") or {}).get("name") or "自分"
+        try:
+            from . import situations
+            situations.harvest_and_save(contact, text, self_name)
+        except Exception as e:
+            print(f"[quarantine situations] {e}", flush=True)
+        try:
+            from . import dynamics
+            dynamics.analyze_and_save(contact, text, self_name)
+        except Exception as e:
+            print(f"[quarantine dynamics] {e}", flush=True)
+    try:
+        maybe_auto_persona(contact)
+    except Exception as e:
+        print(f"[quarantine persona] {e}", flush=True)
+
+
 def save_split(contact, facts):
     """超重要=確認待ち(pending) / それ以外=即カード反映(applied)。戻り(重要件数, 自動件数)。"""
     facts = _prefilter_facts(contact, facts)   # 既知・重複を除去(二度聞き防止)
@@ -2045,6 +2132,7 @@ def apply_fact(contact, k, v):
                 c.execute("UPDATE contacts SET stand=? WHERE code=?", (stand, contact))
         except Exception:
             pass
+        quarantine_release_async(contact)   # v187: ✅整備/チャット○での確定でも検疫解放
         db.track("linebot_fact_apply")
         return
     if k == "誕生日":

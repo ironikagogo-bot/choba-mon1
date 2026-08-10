@@ -83,6 +83,14 @@ def draft_from_text(text: str, contact_code: str | None = None,
         drafts = json.loads(out).get("drafts", [])[:3]
         if not drafts:
             raise ValueError("empty drafts")
+        # v186(P0): ガチ恋相手には誓約表現の決定論フィルタを通す(drafts.pyと同じ二重化)
+        if (int((contact or {}).get("flag_koi") or 0) == 1 and contact.get("code")
+                and (contact.get("kind") or "customer") == "customer"):
+            try:
+                from . import koi_guard
+                drafts = koi_guard.guard_drafts(contact["code"], drafts)
+            except Exception:
+                pass
         return drafts
     except Exception:
         return _template_drafts(contact if contact.get("code") else None, text, reason)

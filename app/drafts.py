@@ -62,7 +62,8 @@ def _template_drafts(contact: dict, text: str, reason: str) -> list[dict]:
     # 固定で出ていた漏れを修正。ガチ恋・来店・日程/同伴の3ブロックのみ夜職固有表現を含むため対応。
     _general = config.MODE == "general"
     # ガチ恋・線引き: 燃料を足さない・突き放さない・話題転換 or (夜職)店へ／(一般)保留
-    if int(contact.get("flag_koi") or 0) == 1:
+    # v187(§10): 客向けモードはcustomer限定(店内・同業カードに客UIを誤爆させない)
+    if int(contact.get("flag_koi") or 0) == 1 and (contact.get("kind") or "customer") == "customer":
         if _general:
             return [
                 {"tone": "線引き・流す", "text": "ふふ、ありがと😊 それより最近ちゃんと寝てる？無理しないでね"},
@@ -443,14 +444,15 @@ def _generate_inner(message_id: int) -> list[dict]:
     # v30: 注入は「いなしON(flag_ero==1)」の相手のみ。検知→確認は受信箱の下ネタアラームが担う。
     # ノリOK(flag_ero==2)=プロレス型の相手には絶対に注入しない(実例学習がノリを再現する)。
     mode_prompt = ""
-    if int(contact.get("flag_ero") or 0) == 1:
+    _is_cust = (contact.get("kind") or "customer") == "customer"   # v187(§10): 客向けモードはcustomer限定
+    if int(contact.get("flag_ero") or 0) == 1 and _is_cust:
         mode_prompt += ("\n【いなしモード】相手の性的な冗談・写真や下着などの要求には絶対に乗らない"
                         "(送るとも送らないとも約束せず、具体的な返答をしない)。ただし拒否語(無理・やめて・嫌)も使わず、"
                         "(1)状況のせいにして外す(例:ホテルのプールだから追い出される) "
                         "(2)自虐や笑いで幻想を潰す(例:毛がめっちゃ出るよ？) "
                         "(3)軽く相手を立てて話題を閉じる・変える、のいずれかで受け流す。"
                         "要求の水位を上げさせない=次につながる含みを残さない。冗談の温度は保ち、説教・沈黙・急な敬語化はしない。")
-    if int(contact.get("flag_koi") or 0):
+    if int(contact.get("flag_koi") or 0) and _is_cust:
         mode_prompt += ("\n【ガチ恋・線引きモード】相手は本気の恋愛感情を持っている(または傾向がある)。"
                         "目的=気持ちよく受け流して距離を一定に保つ。守ること:"
                         "\n- 恋愛の燃料を足さない: 「会いたい」「寂しい」「大好き」・ハート系絵文字・特別扱い・将来の匂わせ・二人きりの約束は禁止。"
@@ -473,6 +475,9 @@ def _generate_inner(message_id: int) -> list[dict]:
                         "(4)心配は健康・仕事・生活に限定(恋愛的な心配はしない) (5)自分の話は店・仕事の範囲で軽く "
                         "(6)締めは生活習慣か次の来店への言及で、恋愛的な余韻を残さない。"
                         "禁止事項(燃料・復唱・二人きりの約束・将来の匂わせ)は長文でも同じ。絵文字は実例準拠でノルマなし。")
+        # v186(P0): A〜C誓約表現の名指し禁止(後日武器化される表現を既定で出さない)
+        from . import koi_guard as _kg
+        mode_prompt += _kg.PROMPT_BLOCK
     if (contact.get("kind") or "") == "staff":
         _st = (contact.get("stand") or "").strip()
         if config.MODE == "general":   # v158: staff=社内・チーム
@@ -525,7 +530,7 @@ def _generate_inner(message_id: int) -> list[dict]:
         if not drafts:
             raise ValueError("empty drafts")
         # ガチ恋/いなしは検品パス: 燃料・復唱・接客敬語・ぎこちなさを自己審査→必要なら書き直し
-        if int(contact.get("flag_koi") or 0) == 1 or int(contact.get("flag_ero") or 0) == 1:
+        if (int(contact.get("flag_koi") or 0) == 1 or int(contact.get("flag_ero") or 0) == 1) and _is_cust:
             if _needs_review(thread_text, drafts):   # 明白な問題がある時だけAI検品(速度優先)
                 try:
                     drafts = _review_pass(contact, thread_text, drafts, user_prompt) or drafts
@@ -548,5 +553,13 @@ def _generate_inner(message_id: int) -> list[dict]:
         drafts = _template_drafts(contact, msg["text"], msg["reason"])
     else:
         _LAST_ERR.pop(message_id, None)
+    # v186(P0): ガチ恋相手への下書きから誓約表現(依存宣言・絶対保証・永続約束)を
+    # 決定論で除去(プロンプト指示だけに頼らない二重化)。ハート連打も1個に間引く
+    if int(contact.get("flag_koi") or 0) == 1 and (contact.get("kind") or "customer") == "customer":
+        try:
+            from . import koi_guard
+            drafts = koi_guard.guard_drafts(contact["code"], drafts)
+        except Exception as e:
+            print(f"[koi guard] {e}", flush=True)
     db.save_drafts(message_id, drafts)
     return drafts

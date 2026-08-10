@@ -389,6 +389,7 @@ async def liff_fixup_bulk_ep(request: Request):
                 c.execute("UPDATE contacts SET kind=?, stand=? WHERE code=?", (kind, stand, code))
                 c.execute("UPDATE linebot_facts SET status='confirmed' WHERE contact=? "
                           "AND k IN ('呼び名','本名','誕生日','🔖種別・立場') AND status='pending'", (code,))
+            linebot.quarantine_release_async(code)   # v187: ⚡おまかせ確定でも検疫解放
             n += 1
         except Exception as e:
             print(f"[fixup bulk] {code}: {e}", flush=True)
@@ -401,7 +402,7 @@ async def liff_fixup_save(request: Request):
     """1人分の確定。呼び名・本名・種別・立場は必須(サーバー側でも強制)。"""
     if not _authed(request):
         return _deny()
-    from . import crm
+    from . import crm, linebot
     try:
         b = await request.json()
         code = (b.get("code") or "").strip()
@@ -442,6 +443,7 @@ async def liff_fixup_save(request: Request):
                   "AND k IN ('呼び名','本名','誕生日','🔖種別・立場') AND status='pending'", (code,))
     if belong:
         crm.add_def("所属"); crm.set_attr(code, "所属", belong)
+    linebot.quarantine_release_async(code)   # v187: 種別確定→検疫解放(客=適用/非客=破棄)
     db.track("liff_fixup_save")
     return {"ok": True}
 
@@ -1514,7 +1516,25 @@ def _run_import_job(jid: int, contact: str, text: str):
             return
         facts = linebot.curate_facts(facts or [])
         facts = linebot._ensure_name_questions(contact, facts)
-        ncrit, nauto = linebot.save_split(contact, facts)
+        # v187(§11): 検疫=種別が本人確定前のカードには🔖種別・立場以外の事実を適用しない。
+        # 確定(仕分け3連タップ/⚡おまかせ/✅整備)で客→保留分適用+分析、非客→破棄。
+        # 店内スレッドの第三者機微が客カード化する事故を、判定機なし(誤検知ゼロ)で防ぐ
+        _confirmed = (not was_new) and linebot.rel_confirmed(contact)
+        _kind_now = (db.get_contact(contact) or {}).get("kind") or "customer"
+        if _confirmed and _kind_now != "customer":
+            # 確定済みの非顧客(店内・同業・私用): 顧客抽出は恒久スキップ(§11 AC。再取り込みも)
+            ncrit, nauto = 0, 0
+            _quar = True   # 後段分析(実例庫・力学・ペルソナ)もスキップ
+            print(f"[quarantine] {contact}: 確定済み非顧客({_kind_now}) → 顧客抽出スキップ", flush=True)
+        elif not _confirmed:
+            _quar = True
+            _keep = [f for f in facts if f.get("k") == linebot._REL_KEY]
+            _hold = [f for f in facts if f.get("k") != linebot._REL_KEY]
+            ncrit, nauto = linebot.save_split(contact, _keep)
+            linebot.quarantine_add(contact, _hold)
+        else:
+            _quar = False
+            ncrit, nauto = linebot.save_split(contact, facts)
         # v182: 本人裁定「手入力までは裏予想で動く」。AIの種別・立場推定を暫定適用する。
         # 🔖種別・立場のpending(確認待ち)は残る=仕分け画面の3連タップを必ず求め続け、
         # 本人の入力があれば上書きされる(家訓5の管理された例外・既存のkindがある相手は触らない)
@@ -1532,17 +1552,19 @@ def _run_import_job(jid: int, contact: str, text: str):
         except Exception as e:
             print(f"[import rel-provisional] {e}", flush=True)
         # v167: 本人実例庫(状況×相手の発言×本人の返し)の収穫。失敗しても取り込みは止めない
-        try:
-            from . import situations
-            situations.harvest_and_save(contact, text, self_name)
-        except Exception as e:
-            print(f"[situations liff] {e}", flush=True)
-        # v172: 関係ダイナミクス分析(決定論指標+温度アーク)。失敗しても取り込みは止めない
-        try:
-            from . import dynamics
-            dynamics.analyze_and_save(contact, text, self_name)
-        except Exception as e:
-            print(f"[dynamics liff] {e}", flush=True)
+        # v187: 検疫中は後段分析もスキップ(種別確定時にquarantine_releaseがまとめて実行)
+        if not _quar:
+            try:
+                from . import situations
+                situations.harvest_and_save(contact, text, self_name)
+            except Exception as e:
+                print(f"[situations liff] {e}", flush=True)
+            # v172: 関係ダイナミクス分析(決定論指標+温度アーク)。失敗しても取り込みは止めない
+            try:
+                from . import dynamics
+                dynamics.analyze_and_save(contact, text, self_name)
+            except Exception as e:
+                print(f"[dynamics liff] {e}", flush=True)
         upd("done", f"{ncrit + nauto}")
         # v150: 原文メタの掃除(無限蓄積の防止。救済再実行はqueued/runningのみ対象なので不要になる)
         try:
@@ -1555,7 +1577,8 @@ def _run_import_job(jid: int, contact: str, text: str):
             linebot._notify_card_ready(contact, ncrit, nauto)
         except Exception as e:
             print(f"[import notify] {e}", flush=True)
-        linebot.maybe_auto_persona(contact)   # v109: 一括取り込みでもペルソナ同時生成
+        if not _quar:
+            linebot.maybe_auto_persona(contact)   # v109: 一括取り込みでもペルソナ同時生成
         db.track("liff_bulk_import")
     except Exception as e:
         upd("error", f"{type(e).__name__}")
@@ -1670,7 +1693,7 @@ def liff_import_status(request: Request):
 def liff_inbox(request: Request):
     if not _authed(request):
         return _deny()
-    from . import linebot
+    from . import linebot, koi_guard
     linebot.ensure()
     q = linebot.build_queue()
     # v177: deferred(↷あとで)はPWAのまとめ箱でしか見えず、LIFF動線では黒穴だった
@@ -1725,6 +1748,9 @@ def liff_inbox(request: Request):
                     "sword": _a.get("LINE検索確定語") or "",   # v176: 学習済み検索語(コピー優先)
                     "cands": cands,
                     "deferred": int(it.get("_deferred_n") or 0),  # v177: ↷あとで分の件数
+                    # v186(P0): 送信前ガード用(内部語は画面に出さない。koi=発火条件、ok=本人が○済みのID)
+                    "koi": int(it.get("koi") or 0),
+                    "koi_ok": (koi_guard.ok_ids(it["contact"]) if it.get("koi") else []),
                     "truncated": len(full) > 600})
     # v177: deferredのみの相手(openゼロ)は末尾に「まとめ箱」カードとして追加
     try:
@@ -1750,10 +1776,36 @@ def liff_inbox(request: Request):
                         "sword": _a.get("LINE検索確定語") or "",
                         "cands": [],
                         "deferred": len(mids),
+                        "koi": int(c.get("flag_koi") or 0),   # v186
+                        "koi_ok": (koi_guard.ok_ids(ct) if c.get("flag_koi") else []),
                         "truncated": len(full) > 600})
     except Exception as e:
         print(f"[inbox deferred cards] {e}", flush=True)
-    return {"ok": True, "items": out}
+    # v186(P0): 送信前ガードのパターン(koiの相手が1人でもいる時だけ同梱)
+    try:
+        kp = koi_guard.patterns() if any(x.get("koi") for x in out) else []
+    except Exception:
+        kp = []
+    return {"ok": True, "items": out, "koi_patterns": kp}
+
+
+@router.post("/api/liff/koiguard/ok")
+async def liff_koiguard_ok(request: Request):
+    """v186(P0): 「これは自分の本音」の○。そのパターンはこの相手について以後黙る。"""
+    if not _authed(request):
+        return _deny()
+    from . import koi_guard
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        pid = (body.get("pid") or "").strip()
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not code or not pid:
+        return JSONResponse({"error": "no code/pid"}, status_code=400)
+    koi_guard.add_ok(code, pid)
+    db.track("liff_koiguard_ok")
+    return {"ok": True}
 
 
 @router.get("/api/liff/message/{mid}/full")
