@@ -45,6 +45,17 @@ def ensure():
     with db.conn() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS linebot_meta(k TEXT PRIMARY KEY, v TEXT);
+        CREATE TABLE IF NOT EXISTS acted_log(   -- v190: 裁定ログ(undo文脈・履歴・完走人数の単一ソース)
+          act_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          contact TEXT NOT NULL,
+          action TEXT NOT NULL,                 -- done/replied/deferred/skipped
+          changed TEXT NOT NULL,                -- JSON [[mid, 旧status], ...]
+          sent_reply_id INTEGER,                -- learn_from_sentで増えた行(undoで消す)
+          sent_text TEXT DEFAULT '',
+          event_id INTEGER,                     -- 来店(仮)等のtentativeイベント(undoで消す)
+          undone INTEGER NOT NULL DEFAULT 0,
+          acted_ts REAL NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS linebot_state(
           user_id TEXT PRIMARY KEY,
           flow TEXT DEFAULT '',
@@ -189,10 +200,9 @@ def push_urgent(contact, reason):
                          "text": f"🔔 今月の緊急通知が上限({URGENT_PUSH_CAP}通)に達したため、"
                                  "月末まで通知を止めます。受信箱は通常どおり動いています。"}])
         return False
-    _r = f"({reason})" if reason and reason != "急ぎの気配" else ""   # v154: (急ぎの気配)の二重表示を防ぐ
-    # ⚠️ altText先頭の「から急ぎの気配」はdeskservice._BOT_SIGS(bot共鳴フィルタ)の照合句。
-    # 文言を変えるときは必ず両方同時に変えること(v154の共鳴バグ再発防止)
-    alt = f"🔥 {_hon_disp(contact)}から急ぎの気配{_r}。"
+    # v190(#2): 匿名化。相手名・用件をLINE通知に載せない(覗き見対策)。
+    # ⚠️「1件届いています」はdeskservice._BOT_SIGS(bot共鳴フィルタ)の照合句。同時更新必須。
+    alt = "🔥 1件届いています。"
     liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
     if liff_id:
         # v155: ボタン1タップでその人の下書きへ直行(メニュー→一覧探索の3画面を省略)。
@@ -320,7 +330,9 @@ def _open_msgs():
 
 def build_queue():
     """📨返信キュー: 未対応(open)を相手単位で1件化。急ぎ(urgent)→古い順。
-    店内(staff)は含めない(第1弾はPWA側で。第2弾でクイック返信を移植)。"""
+    v189: 店内(staff)も含める。旧「第1弾はPWA側・第2弾で移植」の除外が残っており、
+    仕分けで店内を選んだ瞬間に未対応メッセージがLIFFのどこからも見えなくなる実機バグ
+    (本人報告「客以外を選ぶとメッセージ全体が消える」)。下書きは既存の同僚・チームモードが担当。"""
     from . import crm
     crm.ensure()
     items, seen = [], {}
@@ -329,8 +341,6 @@ def build_queue():
     for m in msgs:
         c = db.get_contact(m["contact"]) or {}
         kind = c.get("kind") or "customer"
-        if kind == "staff":
-            continue
         if m["contact"] in seen:
             # v175: 2通目以降も件数・midを積む(「何通溜まっているか」を正しく数えるため)
             it = seen[m["contact"]]
@@ -341,6 +351,7 @@ def build_queue():
         it = {"mid": m["id"], "contact": m["contact"],
               "unlinked": 1 if c.get("linked") == 0 or not c else 0,
               "rank": c.get("rank") or "B",
+              "kind": kind,   # v189: UIの種別バッジ(店内・同業)用
               "koi": (int(c.get("flag_koi") or 0)
                       if (c.get("kind") or "customer") == "customer" else 0),   # v186/v187: customer限定
               "reason": m.get("reason") or "",

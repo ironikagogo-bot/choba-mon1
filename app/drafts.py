@@ -5,6 +5,7 @@ ANTHROPIC_API_KEY があれば Claude API、なければテンプレートにフ
 import json
 import re
 import threading
+import time
 
 import requests
 
@@ -79,6 +80,12 @@ def _template_drafts(contact: dict, text: str, reason: str) -> list[dict]:
                      "季節の変わり目だから体調だけは気をつけてね。私は相変わらずお店でばたばたしてるけど元気にやってます。"
                      "ちゃんとご飯食べて、あったかくして寝ること！また来てくれた時にゆっくり聞かせてね"},
         ]
+    # v189: 店内は実務トーンの定型(汎用の営業寄り定型を身内に出さない)
+    if (contact.get("kind") or "") == "staff":
+        return [
+            {"tone": "実務・短く", "text": "りょうかい！確認して連絡するね"},
+            {"tone": "ねぎらい", "text": "おつかれさま！その件あとで見とくね、ありがとう"},
+        ]
     # いなし: 乗らない・拒まない・軽く外す
     if int(contact.get("flag_ero") or 0) == 1 or _KAWASU_MSG.search(text or ""):
         return [
@@ -150,6 +157,32 @@ _LIGHT_LAUGH_RE = re.compile(r"[笑草🤣😂😆😅😄😁]|[wｗWＷ]")
 def _is_light_reaction(text: str) -> bool:
     t = (text or "").strip().strip("「」")
     return bool(t) and len(t) <= 12 and bool(_LIGHT_CHARS_RE.match(t)) and bool(_LIGHT_LAUGH_RE.search(t))
+
+
+# v189: 受信の経過時間ラベル。時刻を知らないAIが2日前の「今どこ？」に
+# いま進行中かのように答える実機バグの対策(時制の決定論注入)
+def _age_label(ts, now) -> str:
+    try:
+        d = now - float(ts or 0)
+    except Exception:
+        return ""
+    if not ts or d < 3600:
+        return ""
+    if d < 86400:
+        return f"({int(d // 3600)}時間前) "
+    return f"({int(d // 86400)}日前) "
+
+
+# v189: グループ発言の判定。通知取り込みはグループ発言の本文頭に【グループ名】/【グループ】
+# を付ける(notify_ingest)。旧形式のグループ由来コードも対象。
+def _is_group_thread(contact_code: str, texts: list) -> bool:
+    try:
+        from . import crm
+        if crm.group_split(contact_code or "")[0]:
+            return True
+    except Exception:
+        pass
+    return any((t or "").lstrip().startswith("【") for t in texts)
 
 
 def _parse_json_out(out: str) -> dict:
@@ -346,13 +379,27 @@ def _generate_inner(message_id: int) -> list[dict]:
     # 相手がいるか」に変更。build_queueは常にその相手の一番古い未対応(=直前受信が無いためcategory
     # はurgent/batchになりrallyにはならない)を選ぶため、旧条件では合体がほぼ発動しなかった。
     thread_text = msg["text"]
+    _texts = [msg.get("text") or ""]
+    _oldest_ts = _newest_ts = msg.get("ts") or 0
     try:
         # v175: 10分窓のラリー連結→「その相手の未対応ぜんぶ」(直近10通まで)に変更。
         # 受信カードの表示・下書きが読む文・完了時のクローズを同じ集合に統一する
         # (旧: 表示1通/AIは10分窓/クローズも10分窓、と三者バラバラで再出現ループの一因)。
         cluster = db.open_for_contact(msg["contact"])[-10:]
         if len(cluster) > 1 and any(x["id"] == message_id for x in cluster):
-            thread_text = "\n".join((x.get("text") or "") for x in cluster)
+            # v189: 各受信に経過時間ラベルを付ける(実機バグ: 2日前の「買える？」に
+            # いま移動中かのような返しが出た。AIは時刻を知らされていなかった)
+            _now = time.time()
+            thread_text = "\n".join(f"{_age_label(x.get('ts'), _now)}{x.get('text') or ''}"
+                                    for x in cluster)
+            _texts = [(x.get("text") or "") for x in cluster]
+            _tss = [x.get("ts") or 0 for x in cluster if x.get("ts")]
+            if _tss:
+                _oldest_ts, _newest_ts = min(_tss), max(_tss)
+        else:
+            _now = time.time()
+            if _age_label(msg.get("ts"), _now):
+                thread_text = f"{_age_label(msg.get('ts'), _now)}{thread_text}"
     except Exception:
         pass
 
@@ -489,14 +536,34 @@ def _generate_inner(message_id: int) -> list[dict]:
         mode_prompt += ("\n【同僚・チームモード】これは仕事仲間への連絡。営業トーン・接客の定型句は禁止。"
                         "用件に即した短い実務返信にする。" + _tone +
                         " 時間・席・人数などの調整は断定せず『〜で大丈夫？』と確認で返す。")
+    # v189: 時制ガード。受信から時間が経っている時はリアルタイム前提の返しを禁じる
+    _now2 = time.time()
+    if _newest_ts and (_now2 - _newest_ts) > 6 * 3600:
+        mode_prompt += ("\n【時間の経過に注意】上の受信は届いてから時間が経っている((◯時間前)(◯日前)の印)。"
+                        "「今どこ」「今から」「もうすぐ着く？」のようなリアルタイム前提の文に、"
+                        "いま進行中であるかのように答えない。遅れて読んだ前提で軽く仕切り直す"
+                        "(必要なら短い遅レス詫び・済んだはずの事柄は結果を聞く)。"
+                        "古い話題を今まさに起きている話として蒸し返さない。")
+    # v189: グループ発言モード。全部が自分宛てとは限らない(実機バグ: グループ内の
+    # 第三者宛ての気遣い・質問に自分が答える的外れな案が出た)
+    if _is_group_thread(contact["code"], _texts):
+        mode_prompt += ("\n【グループトーク】この受信はグループ内の発言で、全部があなた宛てとは限らない"
+                        "(相手が第三者に話しかけている文が混ざる)。"
+                        "\n- あなた宛ての呼びかけ・質問と確信できる部分にだけ短く応える。"
+                        "\n- あなた宛てと確信できる文が無ければ、話題への軽い相槌1文だけにする"
+                        "(第三者宛ての質問・気遣いに自分が答えない)。"
+                        "\n- 【】内はグループ名の印で本文ではない。")
     # 直近のやり取り(対応済みの受信＋自分が実際に送った返信)を文脈として渡す
     try:
         dlg = db.recent_dialogue(contact["code"], limit=8)
     except Exception:
         dlg = []
     if dlg:
-        lines = "\n".join(f"{d['who']}「{(d['text'] or '')[:60]}」" for d in dlg)
-        user_prompt += ("\n\nこの相手との直近のやり取り(文脈の参考。話題の続き・温度感を合わせる):\n" + lines)
+        # v189: 過去のやり取りにも経過ラベル(古い話題を「今の話」と誤認させない)
+        lines = "\n".join(f"{d['who']}{_age_label(d.get('ts'), _now2)}「{(d['text'] or '')[:60]}」"
+                          for d in dlg)
+        user_prompt += ("\n\nこの相手との直近のやり取り(文脈の参考。話題の続き・温度感を合わせる。"
+                        "時間が経った話題は蒸し返さない):\n" + lines)
     if mode_prompt:
         user_prompt = ("★最優先の特別指示(下の全情報より優先。この方針で書く):" + mode_prompt
                        + "\n\n---\n\n" + user_prompt)

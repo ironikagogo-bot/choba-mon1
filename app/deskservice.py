@@ -96,8 +96,26 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False, src_ts: fl
                 threading.Thread(target=lambda: drafts.generate(mid), daemon=True).start()
         except Exception:
             pass
-    if cat == "urgent" and not _unknown:
-        title = f"帳場｜即対応 — {contact}"
+    # v190(#12): 店内(staff)は通知無音(キューには残る)。
+    _kind_n = (db.get_contact(contact) or {}).get("kind") or "customer"
+    if cat == "urgent" and not _unknown and _kind_n == "staff":
+        log("通知しない(店内の連絡は無音)")
+    # v190(d-3): 同一相手への緊急通知は15分に1回(ラリー内昇格と併せて枠を守る)
+    _dedup_ok = True
+    if cat == "urgent" and not _unknown and _kind_n != "staff":
+        try:
+            from . import linebot as _lb0
+            _last = float(_lb0._meta_get(f"upush_{contact}") or 0)
+            _dedup_ok = (time.time() - _last) >= 900
+            if _dedup_ok:
+                _lb0._meta_set(f"upush_{contact}", str(time.time()))
+            else:
+                log("通知しない(15分以内に通知済み)")
+        except Exception:
+            _dedup_ok = True
+    if cat == "urgent" and not _unknown and _kind_n != "staff" and _dedup_ok:
+        # v190(#2): 匿名化。ロック画面に客名・用件を載せない(覗き見は毎晩の環境条件)
+        title = "帳場｜1件届いています"
         # v123: LINEチャットにも1通(Web Push購読が無くても届く経路。月間上限つき)
         def _lp():
             try:
@@ -110,16 +128,16 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False, src_ts: fl
             def work():
                 ds = drafts.generate(mid)
                 log(f"下書き{len(ds)}案を生成")
-                n = push.notify(title, f"{reason}：下書きあり・タップして確認",
+                n = push.notify(title, "下書きあり・タップして確認",
                                 url="/", tag=f"msg-{mid}")
                 log(f"スマホへ通知送出({n}端末)")
             threading.Thread(target=work, daemon=True).start()
         else:
             # 通知本文に原文は載せない(覗き見対策)
-            push.notify_async(title, f"{reason}：タップして確認", url="/", tag=f"msg-{mid}")
+            push.notify_async(title, "タップして確認", url="/", tag=f"msg-{mid}")
     elif cat == "rally":
         log("通知しない(ラリー継続中)")
-    else:
+    elif cat == "batch":
         log("通知しない(まとめ箱へ)")
     return mid, cat, reason
 
@@ -291,7 +309,8 @@ class DeskService:
             # 帳場くん自身の押し通知文がリーダー経由で再取り込みされ、「未登録の相手:
             # Michiの帳場・急ぎの気配(急ぎの気配)」という意味不明カードが生まれていた(2026-08-08実例)
             _BOT_SIGS = ("メニューの📨返信から", "から急ぎの気配", "今月の緊急通知が上限",
-                         "ひも付けが完了しました", "わたしの帳場くんにする")
+                         "ひも付けが完了しました", "わたしの帳場くんにする",
+                         "1件届いています")   # v190: 匿名通知文言(同時更新必須=a-4)
             if ("帳場" in contact) or any(sig in (message or "") for sig in _BOT_SIGS):
                 # v168: 接続テスト(ループチェック)の折り返し検出。ダッシュボードのテストは
                 # 本人のLINEへ「🔧接続テスト {id}」をpushし、それがリーダー経由でここへ

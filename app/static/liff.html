@@ -215,6 +215,8 @@ body.dark .orole.navy{background:rgba(120,150,210,.13);color:#AFC3E8;border-bott
 .actbar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1px solid var(--border);
   padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);display:flex;gap:8px;z-index:20;
   max-width:560px;margin:0 auto}
+.actbar .xleft{flex:0 0 auto;margin-right:14px;color:var(--sub)}
+.actbar .xleft.armed{border-color:var(--red);color:var(--red);font-weight:800}
 .actbar button{flex:1;border:1px solid var(--border);background:var(--panel);border-radius:10px;
   padding:11px 4px;font-size:12px;color:var(--sub);cursor:pointer;font-weight:700}
 .skel{border-radius:10px;background:linear-gradient(90deg,#EFEAE0 25%,#F7F3E9 50%,#EFEAE0 75%);
@@ -987,8 +989,8 @@ const PENDING_FIRES = [];   // v175: 完走画面の前に飛行中POSTを待つ
 function fire(path, body) {   // 楽観更新: 待たずに裏でPOST(失敗は赤バーに積む)
   const p = api(path, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body) })
-    .then(r => { if (r && r.error) { FAILQ.push({ path, body }); _failbar(); } })
-    .catch(() => { FAILQ.push({ path, body }); _failbar(); });
+    .then(r => { if (r && r.error) { FAILQ.push({ path, body }); _failbar(); } return r; })   // v190: act_id等を返す
+    .catch(() => { FAILQ.push({ path, body }); _failbar(); return null; });
   PENDING_FIRES.push(p);
   return p;
 }
@@ -1022,10 +1024,18 @@ function drawHome(d) {
     <span style="color:var(--sub);font-weight:400">${ago}</span>
     <span class="chev" style="margin-left:auto">›</span></div>
   <div class="tiles">
-    <div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち${(d.queue_msgs || 0) > d.queue ? `(全${d.queue_msgs}通)` : ""} ›</span></div>
+    ${(d.queue === 0 && (d.deferred_contacts || 0) > 0)
+      ? `<div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.deferred_contacts}</b><span>あとでの返信 ›</span></div>`
+      : `<div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち ›</span></div>`}
     <div class="tile ${(d.neta_blink || 0) > 0 && ((store.get("neta_seen") || {}).d || 0) < (d.neta_latest_ts || 0) ? "tile-new" : ""}" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ${(d.neta_hot || 0) > 0 ? " 🔥" : ""} ›</span></div>
     <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
   </div>
+  ${(d.oldest_sa_min || 0) >= 60 ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
+     onclick="nav('#inbox')">⏳<div class="txt"><b>お待たせ中の方がいます</b>(${d.oldest_sa_min >= 120 ? Math.floor(d.oldest_sa_min / 60) + "時間" : d.oldest_sa_min + "分"})</div>
+     <span class="chev">›</span></div>`
+    : (d.unlinked_urgent || 0) > 0 ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
+     onclick="nav('#inbox')">🆕<div class="txt"><b>はじめての方から連絡 ${d.unlinked_urgent}件</b></div>
+     <span class="chev">›</span></div>` : ""}
   ${d.fixup ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
      onclick="nav('#fixup')">🪄<div class="txt"><b>あと${d.fixup}人、お名前の確認だけ</b>
      — 1人10秒。⚡ぜんぶおまかせなら1タップで終わります</div><span class="chev">›</span></div>` : ""}
@@ -1038,9 +1048,8 @@ function drawHome(d) {
      ご無沙汰の${W("太客", "大切な人")} <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
      <span class="chev">›</span></div>` : ""}
   <div class="hsec">📬 きょうの仕事</div>
-  <button class="navcard" onclick="nav('#inbox')">📨<div><b>いまの返信</b>
-    <div class="desc">急ぎ${d.urgent}件・未登録${d.unlinked}件${(d.queue_msgs || 0) > d.queue ? `・全${d.queue_msgs}通` : ""}</div></div>
-    ${d.queue ? `<span class="n">${d.queue}</span>` : `<span class="chev">›</span>`}</button>
+  <button class="navcard" onclick="nav('#inbox')">📨<div><b>▸ いまの返信</b></div>
+    <span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#ann')">📣<div><b>${W("配信をつくる", "まとめて連絡")}</b>
     <div class="desc">${W("出勤・イベント・ご無沙汰の挨拶を一斉に", "近況・お誘い・ご無沙汰の挨拶を一斉に")}</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#orei')">${W("🙏", "🍽")}<div><b>${W("お席の記録とお礼", "会った記録とお礼")}</b>
@@ -1912,13 +1921,45 @@ async function vImport() {
 }
 
 // ============ 📨 返信(配達ループ・プリフェッチで待ちゼロ) ============
-const rep = { items: null, i: 0 };
+// v190: トリアージ最終仕様P0 — あとで区画/カーソル同夜化/350msロック/アンドゥ3層/完走画面
+const rep = { items: null, later: [], i: 0, mode: "open", recent: [] };
+// --- 350ms入力ロック(裁定直後の二度押しが次の人・トーストに着弾する事故の防止) ---
+let _repLock = 0;
+const repLocked = () => Date.now() < _repLock;
+const repLock = () => { _repLock = Date.now() + 350; };
+// --- カーソル(同夜有効。失効=min(最終操作+6h, 次の朝5時JST+1h)) ---
+function curSave() {
+  try {
+    const it = rep.items[rep.i];
+    if (rep.mode === "open" && it) localStorage.setItem("cb_rep_cursor",
+      JSON.stringify({ mid: it.mid, ts: Date.now() / 1000 }));
+    else if (rep.mode === "open") localStorage.removeItem("cb_rep_cursor");
+  } catch (e) {}
+}
+function curLoad() {
+  try {
+    const c = JSON.parse(localStorage.getItem("cb_rep_cursor") || "null");
+    if (!c) return null;
+    const ts = c.ts, now = Date.now() / 1000;
+    const d = new Date((ts + 9 * 3600) * 1000);                    // JSTで5時境界を計算
+    const day0 = Math.floor((ts + 9 * 3600) / 86400) * 86400 - 9 * 3600;
+    let next5 = day0 + 5 * 3600;                                    // その日のJST5:00
+    if (ts >= next5) next5 += 86400;                                // 操作が5時以降なら翌日の5:00
+    const expire = Math.min(ts + 6 * 3600, next5 + 3600);
+    if (now > expire) { localStorage.removeItem("cb_rep_cursor"); return { expired: true }; }
+    return c;
+  } catch (e) { return null; }
+}
 async function vInbox(pri) {
   setHead("📨 いまの返信", "", true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/inbox"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
-  rep.items = d.items; rep.i = 0; rep.koi_patterns = d.koi_patterns || [];
+  // v190: openとあとでを区画に分離。nは「いま返す人数」のみ(あとでは母数に入れない)
+  rep.items = (d.items || []).filter(x => !x.deferred);
+  rep.later = (d.items || []).filter(x => x.deferred);
+  rep.recent = d.recent_acted || [];
+  rep.i = 0; rep.mode = "open"; rep.koi_patterns = d.koi_patterns || [];
   // v155: 🔥通知の「この人の返信をひらく」から来た場合、その相手を先頭に繰り上げる。
   // rep.iジャンプ方式は手前の急ぎを飛ばして「対応済み」と誤認させるので不可(検証済みの設計判断)
   if (pri) {
@@ -1926,7 +1967,26 @@ async function vInbox(pri) {
     if (k > 0) rep.items.unshift(rep.items.splice(k, 1)[0]);
     if (k >= 0) toast(`🔥 ${disp(pri)}を先頭にしました`);
     else toast(`${disp(pri)}は対応済みです`);
+  } else {
+    // v190: 黙って「つづきから」(同夜のカーソル)。失効時のみ1行知らせる
+    const c = curLoad();
+    if (c && c.expired) toast(W("昨夜のつづきは終了しました", "前回のつづきは終了しました"));
+    else if (c && c.mid) {
+      const k = rep.items.findIndex(x => x.mid === c.mid || (x.mids || []).includes(c.mid));
+      if (k > 0) rep.i = k;
+    }
   }
+  if (!rep.items.length && rep.later.length && !(rep.recent || []).length) {
+    // v190(3-5): open=0・今夜の対応もまだ・あとで残あり → 完走画面を出さず「あとで」を直接開始
+    startLater();
+    return;
+  }
+  rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
+  drawRep();
+}
+function startLater() {
+  if (!rep.later.length) { drawRep(); return; }
+  rep.mode = "later"; rep.items = rep.later; rep.later = []; rep.i = 0;
   rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
   drawRep();
 }
@@ -1938,10 +1998,83 @@ function repAdvance(stampText) {
   if (cur) delete draftCache["m" + cur.mid];
   bust("home");
   rep.i += 1;
+  repLock();   // v190: 350ms入力ロック(視覚は即遷移・入力だけ無視)
+  curSave();
   const nx = rep.items.slice(rep.i).filter(x => !x.unlinked).slice(0, 2);
   nx.forEach(x => prefetchReply(x.mid));
   drawRep();
 }
+// --- v190: アンドゥ(中段トースト・全面タップ・8秒・表示後350ms無効) ---
+let _uT = null, _uShown = 0, _uActP = null, _uIdx = null;
+function undoToast(html, actPromise, idx) {
+  const t = $("#utoast");
+  t.innerHTML = html + `<small>ここをタップで戻せます(8秒)</small>`;
+  t.style.display = "block"; _uShown = Date.now(); _uActP = actPromise; _uIdx = idx;
+  clearTimeout(_uT); _uT = setTimeout(() => { t.style.display = "none"; _uActP = null; }, 8000);
+}
+async function undoNow(actP, restoreIdx) {
+  let actId = null;
+  try { const r = await actP; actId = r && r.act_id; } catch (e) {}
+  if (!actId) { toast("戻せませんでした(通信)"); return false; }
+  try {
+    const r2 = await api("/api/liff/reply/undo", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
+    if (r2.error) { toast(r2.error); return false; }
+  } catch (e) { toast("戻せませんでした(通信)"); return false; }
+  bust("home");
+  if (restoreIdx != null && rep.items) { rep.i = Math.max(0, restoreIdx); curSave(); drawRep(); }
+  else vInbox();
+  toast("↩︎ 戻しました");
+  return true;
+}
+function bindUndoToast() {
+  const t = document.createElement("div");
+  t.id = "utoast";
+  t.style.cssText = "position:fixed;left:16px;right:16px;top:42%;z-index:60;display:none;" +
+    "background:var(--navy);color:#fff;border-radius:13px;padding:13px 14px;font-size:13.5px;" +
+    "font-weight:700;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.35);cursor:pointer";
+  t.addEventListener("click", () => {
+    if (Date.now() - _uShown < 350 || repLocked()) return;   // 二度押しの2打目を吸わない
+    t.style.display = "none"; clearTimeout(_uT);
+    if (_uActP) undoNow(_uActP, _uIdx);
+    _uActP = null;
+  });
+  document.body.appendChild(t);
+  const s = document.createElement("style");
+  s.textContent = "#utoast small{display:block;font-weight:400;opacity:.7;font-size:10.5px;margin-top:3px}";
+  document.head.appendChild(s);
+}
+bindUndoToast();
+// --- v190: 今夜の対応(裁定履歴)シート ---
+function repHistory() {
+  const ACT_J = { done: "✓", replied: "📤", deferred: "↷", skipped: "✕", stamped: "✓" };
+  const rows = (rep.recent || []).map(a =>
+    `<div style="display:flex;gap:8px;padding:9px 2px;border-bottom:1px solid var(--border);align-items:baseline">
+      <span>${ACT_J[a.action] || "✓"}${esc(disp(a.name))}</span>
+      <span style="margin-left:auto;font-size:11.5px;color:var(--sub)">${esc(a.tm)}</span>
+      ${a.sent ? `<span style="font-size:11px;color:var(--sub)">送信済み</span>`
+        : `<a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
+             onclick="repHistUndo(${a.act_id});return false">↩︎戻す</a>`}</div>`).join("");
+  const sh = document.createElement("div");
+  sh.id = "histsheet";
+  sh.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:65%;overflow-y:auto;z-index:55;" +
+    "background:var(--panel);border-radius:18px 18px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.3);padding:14px";
+  sh.innerHTML = `<b style="font-size:14px">${W("今夜の対応", "今日の対応")}(上限30件)</b>
+    ${rows || `<div class="note" style="margin-top:8px">まだ対応がありません</div>`}
+    <div style="background:var(--cream);border-radius:10px;text-align:center;padding:12px;font-weight:700;
+      margin-top:10px;cursor:pointer" onclick="document.getElementById('histsheet').remove()">閉じる</div>`;
+  document.getElementById("histsheet")?.remove();
+  document.body.appendChild(sh);
+}
+window.repHistUndo = async actId => {
+  document.getElementById("histsheet")?.remove();
+  try {
+    const r = await api("/api/liff/reply/undo", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
+    if (r.error) return toast(r.error);
+  } catch (e) { return toast("戻せませんでした(通信)"); }
+  bust("home"); toast("↩︎ 戻しました"); vInbox();
+};
 async function drawRep() {
   const n = rep.items.length;
   if (rep.i >= n) {
@@ -1958,19 +2091,48 @@ async function drawRep() {
     bust("home");
     let fresh = null;
     try { fresh = await api("/api/liff/inbox"); } catch (e) {}
-    if (fresh && (fresh.items || []).length) {
-      rep.items = fresh.items; rep.i = 0; rep.koi_patterns = fresh.koi_patterns || rep.koi_patterns;
+    // v190(#1): 偽新着ループ修正 — あとで(deferred)だけのカードを「新しい受信」と誤認しない
+    const freshOpen = ((fresh && fresh.items) || []).filter(x => !x.deferred);
+    const freshLater = ((fresh && fresh.items) || []).filter(x => x.deferred);
+    rep.recent = (fresh && fresh.recent_acted) || rep.recent || [];
+    if (rep.mode === "open" && freshOpen.length) {
+      rep.items = freshOpen; rep.later = freshLater; rep.i = 0;
+      rep.koi_patterns = (fresh && fresh.koi_patterns) || rep.koi_patterns;
       toast("📨 対応中に新しい受信がありました。つづけます");
       rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
       return drawRep();
     }
-    $("#view").innerHTML = `<div class="empty" style="font-size:16px">
-      📨 返信待ちはここまで！おつかれさま👏</div>
-      <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
+    // v190(3-5): 完走画面(平常時2行)。人数=今夜の裁定のユニーク相手数(actedログ単一ソース)
+    try { localStorage.removeItem("cb_rep_cursor"); } catch (e) {}
+    rep.later = freshLater; rep.mode = "open"; rep.items = [];
+    const actedN = new Set((rep.recent || []).map(a => a.name)).size;
+    const laterN = freshLater.length;
+    if (!actedN && !laterN) {
+      $("#view").innerHTML = `<div class="empty" style="font-size:16px">
+        ${W("今夜は返信待ちがありません", "いまは返信待ちがありません")}</div>
+        <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
+      return;
+    }
+    $("#view").innerHTML = `<div style="text-align:center;padding:38px 8px 8px">
+      <div style="font-size:19px;font-weight:800">✨ おつかれさま👏 ${W("今夜", "今日")}: ${actedN}人に対応</div>
+      <div style="font-size:13.5px;color:var(--sub);margin-top:10px">
+        ${laterN ? `あとで ${laterN}人 <a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
+          onclick="startLater();return false">▸いまやる</a> ・ ` : ""}
+        <a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
+          onclick="repHistory();return false">▸${W("今夜", "今日")}の対応を見る</a></div>
+      <button class="btn ghost" style="margin-top:22px" onclick="nav('#home')">ホームへ</button></div>`;
     return;
   }
   const it = rep.items[rep.i];
-  setHead(`📨 返信`, `${rep.i + 1}/${n}件`, true);
+  setHead(`📨 ${rep.mode === "later" ? "あとで" : "返信"}`, `${rep.i + 1}/${n}`, true);
+  // v190(B-2): カーソルより前方に新しい急ぎが湧いた時は1行で知らせる(順送りは止めない)
+  let aheadUrg = "";
+  if (rep.mode === "open" && rep.i > 0) {
+    const k = rep.items.findIndex((x, j) => j < rep.i && x.urgent);
+    if (k >= 0) aheadUrg = `<div style="background:rgba(192,64,44,.08);border:1px solid rgba(192,64,44,.35);
+      border-radius:10px;padding:8px 11px;font-size:12.5px;font-weight:700;color:var(--red);margin:0 0 8px;cursor:pointer"
+      onclick="repJumpUrgent(${k})">🔥 新しい急ぎ1件 ▸先にやる</div>`;
+  }
   // v120: いつ来たか(きょう 9:33(19分前) 形式)
   let whenFull = "";
   if (it.ts) {
@@ -1993,12 +2155,14 @@ async function drawRep() {
     <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">
       ${it.urgent ? `<span class="rtag rt-urgent">🔥 急ぎ</span>` : ""}
       <span class="rtag ${tag.c}">${tag.t}</span>
+      ${it.kind === "staff" ? `<span class="rtag rt-chat">${W("🏠 店内", "🏠 社内")}</span>` : it.kind === "peer" ? `<span class="rtag rt-chat">${W("🏮 同業", "🤝 仲間")}</span>` : ""}
       ${(it.count || 1) > 1 ? `<span class="rtag rt-chat">📬 ${it.count}通ぶん</span>` : ""}
       <span style="font-size:12.5px;color:var(--sub)">${stat}${it.unlinked ? "" : " ▸カード"}</span></div></div>`;
-  let mid = `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>` + bar + `
+  let mid = aheadUrg + `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>` + bar + `
     <div class="msgcard">「${esc(it.text)}${it.truncated ? "…" : ""}」
     ${it.truncated ? `<div><a href="#" style="font-size:12px" onclick="repFull(${it.mid});return false">📄 全文を見る</a></div>` : ""}
-    <div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(it.reason)}</div></div>`;
+    <div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(it.reason)}</div>
+    ${it.grp ? `<div style="font-size:11px;color:var(--gold);margin-top:4px">👥 グループの発言 — すべてがあなた宛てとは限りません(下書きはあなた宛てのぶんにだけ応えます)</div>` : ""}</div>`;
   if (it.unlinked) {
     // v120: 初客=ランク直押しの1タップ登録。業界の人は2段階
     // v145: 既存カードの候補があれば最上段に提案(グループ着信の表記ゆれ→重複カード防止)
@@ -2020,24 +2184,25 @@ async function drawRep() {
           <button class="chip" onclick="repClsRank('A')">A</button>
           <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
           <button class="chip" style="border-style:dashed"
-            onclick="repAct('deferred','↷ 仕分けも返信もあとで(まとめ箱へ)')">↷ あとで(仕分けごと)</button>
+            onclick="repAct('deferred')">↷ あとで(仕分けごと)</button>
         </div>
         <div style="height:1px;background:var(--border);margin:12px 0"></div>
         <div class="chips">
           <button class="chip" onclick="repInd()">👥 ${W("業界の人", "仕事の人")}</button>
           <button class="chip" onclick="repCls('priv')">🔒 私用(取り込まない)</button>
         </div></div>
-      <div class="actbar"><button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
-        <button onclick="repAct('skipped','✕ 返さない')">✕ 返さない</button></div>`;
+      <div class="actbar"><button id="xbtn2" class="xleft" onclick="repX(this)">✕ 返さない</button>
+        <button onclick="repAct('deferred')">↷ あとで</button></div>`;
     $("#view").classList.add("hasbar");
     return;
   }
   $("#view").innerHTML = mid + `<div id="drafts"><div class="skel"></div><div class="skel"></div></div>
     <div class="actbar">
-      <button onclick="repAct('done','✓ 記録しました')">✓ 対応した</button>
+      <button id="xbtn2" class="xleft" onclick="repX(this)">✕ 返さない</button>
+      <button style="background:var(--navy);color:#fff;border-color:var(--navy)"
+        onclick="repAct('done')">✓ 対応した</button>
       <button onclick="repWrite()">✎ 自分で書く</button>
-      <button onclick="repAct('deferred','↷ あとで(まとめ箱)')">↷ あとで</button>
-      <button onclick="repAct('skipped','✕ 返さない')">✕ 返さない</button></div>`;
+      <button onclick="repAct('deferred')">↷ あとで</button></div>`;
   $("#view").classList.add("hasbar");
   const cur = it.mid;
   const r = await prefetchReply(cur);
@@ -2053,6 +2218,13 @@ async function drawRep() {
       || `<div class="note">下書きを作れませんでした。<button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin:0 6px"
            onclick="repRegen(${cur})">🔁 もう一度つくる</button> 下のボタンで記録だけもできます。</div>`);
 }
+window.repJumpUrgent = k => {   // v190: 前方に湧いた急ぎを現在位置へ繰り上げて先に処理(裁定後は元の流れへ)
+  if (repLocked()) return;
+  const [x] = rep.items.splice(k, 1);
+  rep.i -= 1;                      // 除去ぶんのずれを補正
+  rep.items.splice(rep.i, 0, x);   // 現在位置に差し込む=次の描画で急ぎが出る
+  drawRep();
+};
 window.repRegen = async mid => {
   toast("作り直しています…");
   delete draftCache["m" + mid];
@@ -2174,8 +2346,43 @@ window.repStill = j => {
 window.repMark = j => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "", mids: it.mids });
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
-window.repAct = (action, stampText) => { const it = rep.items[rep.i];
-  fire("/api/liff/reply/act", { mid: it.mid, action, text: "", mids: it.mids }); repAdvance(stampText); };
+const ACT_TOAST = { done: "を対応済みに", deferred: "をあとでに", skipped: "を返さないに", stamped: "を対応済みに" };
+window.repX = btn => {   // v190: ✕2段式(1タップ目で文言変化・3秒自動復帰・他要素タップで即復帰)
+  if (repLocked()) return;
+  if (!btn.classList.contains("armed")) {
+    btn.classList.add("armed"); btn.textContent = "✕ 返さない?";
+    clearTimeout(window._xT); window._xT = setTimeout(() => repXReset(), 3000);
+    return;
+  }
+  repXReset(); repAct("skipped");
+};
+function repXReset() { clearTimeout(window._xT);
+  const b = document.getElementById("xbtn2");
+  if (b) { b.classList.remove("armed"); b.textContent = "✕ 返さない"; } }
+document.addEventListener("click", e => {
+  const b = document.getElementById("xbtn2");
+  if (b && b.classList.contains("armed") && !b.contains(e.target)) repXReset();
+}, true);
+window.repAct = (action, stampText) => {
+  if (repLocked()) return;
+  const it = rep.items[rep.i], idx = rep.i;
+  if (!it) return;
+  // v190: あとで消化中の↷=後ろに回すだけ(サーバ状態は変えない)
+  if (rep.mode === "later" && action === "deferred") {
+    rep.items.push(rep.items.splice(rep.i, 1)[0]);
+    repLock(); drawRep();
+    toast(`↷ ${disp(it.name)}をあとまわしにしました`);
+    return;
+  }
+  // v190(#20): 未送信の下書きがある状態の✓は文言を変える(送ったつもり防止)
+  const hasDraft = action === "done" && !it._sent && !!document.querySelector("#drafts .draft");
+  const p = fire("/api/liff/reply/act", { mid: it.mid, action, text: "", mids: it.mids });
+  repAdvance();   // 視覚は即遷移(記録トーストは中段のアンドゥトーストが兼ねる)
+  const label = hasDraft
+    ? `✓${esc(disp(it.name))} 対応済みに(下書きは送っていません)↩︎`
+    : `${{done:"✓",deferred:"↷",skipped:"✕",stamped:"✓"}[action] || "✓"}${esc(disp(it.name))}${ACT_TOAST[action] || "を記録に"} ↩︎戻す`;
+  undoToast(label, p, idx);
+};
 // v153: 登録系は楽観更新禁止(改善#1後半)。保存を待ち、失敗したら画面を進めない。
 // 圏外でタップ→成功トースト→実は未保存、という「昨日やったのに」の残存経路を塞ぐ
 async function clsSave(body) {

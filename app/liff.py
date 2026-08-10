@@ -220,6 +220,12 @@ def liff_home(request: Request):
         sent_n = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=?", (week,)).fetchone()[0]
         verb = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND IFNULL(edited,0)=0",
                          (week,)).fetchone()[0]
+        # v190: あとでの相手数(タイルラベル切替・完走画面用。単位は人)
+        try:
+            deferred_contacts = c.execute(
+                "SELECT COUNT(DISTINCT contact) FROM messages WHERE status='deferred'").fetchone()[0]
+        except Exception:
+            deferred_contacts = 0
     try:
         est = linebot.estranged()
     except Exception:
@@ -246,10 +252,22 @@ def liff_home(request: Request):
         dups_n = len(crm.find_duplicates())   # v184: 同じ人かも(5分キャッシュ)
     except Exception:
         dups_n = 0
+    # v190: 琥珀バー用(匿名データのみ。名前・ランク語は返さない)
+    try:
+        _now = time.time()
+        _sa_ages = [int((_now - (x.get("ts") or _now)) / 60) for x in q
+                    if x.get("rank") in ("S", "A") and not x.get("unlinked")
+                    and (x.get("kind") or "customer") == "customer"]
+        oldest_sa_min = max(_sa_ages) if _sa_ages else 0
+        unlinked_urgent = sum(1 for x in q if x.get("unlinked") and x.get("urgent"))
+    except Exception:
+        oldest_sa_min, unlinked_urgent = 0, 0
     return {
         "fixup": fixup_n,
         "reader": reader,
         "ok": True,
+        "deferred_contacts": deferred_contacts,   # v190: あとでの相手数(人)
+        "oldest_sa_min": oldest_sa_min, "unlinked_urgent": unlinked_urgent,
         "queue": len(q), "urgent": urgent_n, "unlinked": unlinked_n,
         # v175: 人数と通数を分けて返す(本人指摘「何通溜まっているか把握されていない」)
         "queue_msgs": sum(int(x.get("count") or 1) for x in q),
@@ -1687,6 +1705,24 @@ def liff_import_status(request: Request):
     return {"ok": True, "jobs": rows}
 
 
+
+def _tmark(ts) -> str:
+    """v190: 受信時刻の前置ラベル。同日JST=〔HH:MM〕/1日前=〔きのう〕/それ以前=〔N日前〕。"""
+    try:
+        ts = float(ts or 0)
+        if not ts:
+            return ""
+        now = time.time()
+        d_now = int((now + 9 * 3600) // 86400)
+        d_msg = int((ts + 9 * 3600) // 86400)
+        if d_now == d_msg:
+            return time.strftime("〔%H:%M〕", time.gmtime(ts + 9 * 3600))
+        n = d_now - d_msg
+        return "〔きのう〕" if n == 1 else f"〔{n}日前〕"
+    except Exception:
+        return ""
+
+
 # ============ 📨 返信 (Phase 3 → v99で前倒し) ============
 
 @router.get("/api/liff/inbox")
@@ -1721,7 +1757,7 @@ def liff_inbox(request: Request):
         if opens or defs:
             allm = sorted(opens + defs, key=lambda m: m.get("ts") or 0)
             mids = [m["id"] for m in allm]
-            full = "\n".join((m.get("text") or "") for m in allm)
+            full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in allm)
         else:
             mids = it.get("mids") or [it["mid"]]
             full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
@@ -1739,6 +1775,7 @@ def liff_inbox(request: Request):
         _a = _crm.get_attrs(it["contact"]) or {}
         out.append({"mid": it["mid"], "contact": it["contact"],
                     "name": linebot._yobina(it["contact"]),
+                    "kind": it.get("kind") or "customer",   # v189: 種別バッジ用
                     "rank": it.get("rank") or "B", "urgent": bool(it.get("urgent")),
                     "unlinked": bool(it.get("unlinked")), "reason": it.get("reason") or "",
                     "ts": (max(m.get("ts") or 0 for m in (opens + defs)) if (opens or defs) else it.get("ts")),
@@ -1751,6 +1788,9 @@ def liff_inbox(request: Request):
                     # v186(P0): 送信前ガード用(内部語は画面に出さない。koi=発火条件、ok=本人が○済みのID)
                     "koi": int(it.get("koi") or 0),
                     "koi_ok": (koi_guard.ok_ids(it["contact"]) if it.get("koi") else []),
+                    # v189: グループ発言(【グループ名】印)。UIで「全部があなた宛てとは限らない」注記
+                    "grp": 1 if any((m.get("text") or "").lstrip().startswith("【")
+                                    for m in (opens + defs)) else 0,
                     "truncated": len(full) > 600})
     # v177: deferredのみの相手(openゼロ)は末尾に「まとめ箱」カードとして追加
     try:
@@ -1759,10 +1799,9 @@ def liff_inbox(request: Request):
             if not ct:
                 continue
             c = db.get_contact(ct) or {}
-            if (c.get("kind") or "customer") == "staff":
-                continue
+            # v189: staff除外をやめる(本流キューと同じく店内の↷あとで分も見えるように)
             mids = [m["id"] for m in msgs]
-            full = "\n".join((m.get("text") or "") for m in msgs)
+            full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in msgs)
             _a = _crm2.get_attrs(ct) or {}
             out.append({"mid": mids[0], "contact": ct,
                         "name": linebot._yobina(ct),
@@ -1776,6 +1815,9 @@ def liff_inbox(request: Request):
                         "sword": _a.get("LINE検索確定語") or "",
                         "cands": [],
                         "deferred": len(mids),
+                        "kind": c.get("kind") or "customer",   # v190(#10): 属性補修
+                        "grp": 1 if any((m.get("text") or "").lstrip().startswith("【")
+                                        for m in msgs) else 0,
                         "koi": int(c.get("flag_koi") or 0),   # v186
                         "koi_ok": (koi_guard.ok_ids(ct) if c.get("flag_koi") else []),
                         "truncated": len(full) > 600})
@@ -1786,7 +1828,27 @@ def liff_inbox(request: Request):
         kp = koi_guard.patterns() if any(x.get("koi") for x in out) else []
     except Exception:
         kp = []
-    return {"ok": True, "items": out, "koi_patterns": kp}
+    # v190(#19): 今夜の裁定履歴(同夜=直近の朝5時JST以降・上限30・act_id付き)。undo済みは除く
+    recent = []
+    try:
+        now = time.time()
+        jst = now + 9 * 3600
+        day0 = (jst // 86400) * 86400
+        night_start = (day0 + 5 * 3600) - 9 * 3600          # きょうのJST5:00(epoch)
+        if jst % 86400 < 5 * 3600:
+            night_start -= 86400                             # まだ朝5時前なら昨日の5:00から
+        with db.conn() as c:
+            for r in c.execute("SELECT act_id, contact, action, sent_reply_id, acted_ts "
+                               "FROM acted_log WHERE undone=0 AND acted_ts>=? "
+                               "ORDER BY act_id DESC LIMIT 30", (night_start,)):
+                recent.append({"act_id": r["act_id"],
+                               "name": linebot._yobina(r["contact"]),
+                               "action": r["action"],
+                               "sent": bool(r["sent_reply_id"]),
+                               "tm": time.strftime("%H:%M", time.gmtime(r["acted_ts"] + 9 * 3600))})
+    except Exception as e:
+        print(f"[recent acted] {e}", flush=True)
+    return {"ok": True, "items": out, "koi_patterns": kp, "recent_acted": recent}
 
 
 @router.post("/api/liff/koiguard/ok")
@@ -1868,14 +1930,95 @@ async def liff_reply_act(request: Request):
         mids = [int(x) for x in mids] if isinstance(mids, list) else None
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
+    # v190: actedログ(トリアージ最終仕様#7)。act前スナップショット→差分を記録し、
+    # undo(act_id指定)で status/学習/仮イベント の副作用を一括で巻き戻せるようにする
+    _msg0 = db.get_message(mid)
+    _ct = (_msg0 or {}).get("contact") or ""
+    try:
+        with db.conn() as c:
+            _before = {r2["id"]: r2["status"] for r2 in c.execute(
+                "SELECT id, status FROM messages WHERE contact=?", (_ct,))}
+            _sr0 = c.execute("SELECT IFNULL(MAX(id),0) FROM sent_replies").fetchone()[0]
+            _ev0 = c.execute("SELECT IFNULL(MAX(id),0) FROM events").fetchone()[0]
+    except Exception:
+        _before, _sr0, _ev0 = {}, 0, 0
     from .main import act as _act, Action as _Action
     try:
         r = _act(mid, _Action(action=action, text=text, mids=mids))
     except Exception as e:
         code = getattr(e, "status_code", 500)
         return JSONResponse({"error": str(getattr(e, "detail", e))}, status_code=code)
+    act_id = None
+    try:
+        from . import linebot
+        linebot.ensure()
+        with db.conn() as c:
+            changed = []
+            for r2 in c.execute("SELECT id, status FROM messages WHERE contact=?", (_ct,)):
+                if r2["id"] in _before and _before[r2["id"]] != r2["status"]:
+                    changed.append([r2["id"], _before[r2["id"]]])
+            srid, stext = None, ""
+            _sr = c.execute("SELECT id, text FROM sent_replies WHERE id>? AND contact=? "
+                            "ORDER BY id DESC LIMIT 1", (_sr0, _ct)).fetchone()
+            if _sr:
+                srid, stext = _sr["id"], _sr["text"] or ""
+            _ev = c.execute("SELECT id FROM events WHERE id>? AND contact=? AND status='tentative' "
+                            "ORDER BY id DESC LIMIT 1", (_ev0, _ct)).fetchone()
+            evid = _ev["id"] if _ev else None
+            if changed:
+                cur = c.execute("INSERT INTO acted_log(contact,action,changed,sent_reply_id,"
+                                "sent_text,event_id,acted_ts) VALUES(?,?,?,?,?,?,?)",
+                                (_ct, action, json.dumps(changed), srid, stext, evid, time.time()))
+                act_id = cur.lastrowid
+    except Exception as e:
+        print(f"[acted log] {e}", flush=True)
     db.track("liff_reply_act")
-    return r
+    return {**r, "act_id": act_id}
+
+
+@router.post("/api/liff/reply/undo")
+async def liff_reply_undo(request: Request):
+    """v190: act_id指定のアンドゥ。status復帰+文体学習の取り消し+仮イベント削除を一括。"""
+    if not _authed(request):
+        return _deny()
+    try:
+        act_id = int((await request.json()).get("act_id"))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    from . import linebot
+    linebot.ensure()
+    with db.conn() as c:
+        row = c.execute("SELECT * FROM acted_log WHERE act_id=? AND undone=0", (act_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "戻せる記録が見つかりません"}, status_code=404)
+    row = dict(row)
+    try:
+        with db.conn() as c:
+            for m, prev in json.loads(row["changed"] or "[]"):
+                c.execute("UPDATE messages SET status=? WHERE id=?", (prev, int(m)))
+            if row.get("sent_reply_id"):
+                c.execute("DELETE FROM sent_replies WHERE id=?", (row["sent_reply_id"],))
+            if row.get("event_id"):
+                c.execute("DELETE FROM events WHERE id=? AND status='tentative'", (row["event_id"],))
+            c.execute("UPDATE acted_log SET undone=1 WHERE act_id=?", (act_id,))
+        # 文体プロファイルに入った実例も取り消す(相手別+全体。同文を1つだけ除去)
+        st = (row.get("sent_text") or "").strip()
+        if st:
+            for key in (row["contact"], "_global"):
+                try:
+                    p = db.get_profile(key) or {}
+                    fld = "my_samples_to_them" if key != "_global" else "samples"
+                    lst = list(p.get(fld) or [])
+                    if st in lst:
+                        lst.remove(st)
+                        p[fld] = lst
+                        db.save_profile(key, p)
+                except Exception:
+                    pass
+    except Exception as e:
+        return JSONResponse({"error": f"戻せませんでした({type(e).__name__})"}, status_code=500)
+    db.track("liff_reply_undo")
+    return {"ok": True}
 
 
 @router.post("/api/liff/classify")

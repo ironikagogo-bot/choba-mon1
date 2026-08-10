@@ -28,8 +28,13 @@ def classify(contact_code: str, text: str, now: float | None = None) -> tuple[st
     now = now or time.time()
 
     # 1) ラリー: 同一相手から RALLY_WINDOW_MIN 分以内の連続受信
+    # v190(#11): ラリー中でも用件キーワードが来たらurgentへ昇格する(「今から行っていい?」が
+    # 雑談ラリーの続きに埋もれて鳴らない穴)。連投での枠焼失はdeskservice側の15分デデュープが防ぐ
     last = db.last_message_ts(contact_code)
     if last is not None and (now - last) <= config.RALLY_WINDOW_MIN * 60:
+        for pat, reason in URGENT_PATTERNS:
+            if re.search(pat, text):
+                return "urgent", reason
         return "rally", f"{config.RALLY_WINDOW_MIN}分以内の連続受信"
 
     # 2) 用件キーワード(強シグナル=即決・AI呼ばない)
