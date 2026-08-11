@@ -188,6 +188,12 @@ def liff_home(request: Request):
     q = linebot.build_queue()
     urgent_n = sum(1 for x in q if x.get("urgent"))
     unlinked_n = sum(1 for x in q if x.get("unlinked"))
+    # v196: ホーム受信タイルの内訳(本人裁定「緊急何件、店内何件、後で何件に分けるべき」)。
+    # 緊急=urgent(店内は無音方針のため除外) / 店内=staff全部 / ふつう=残り
+    staff_n = sum(1 for x in q if (x.get("kind") or "customer") == "staff")
+    hot_urgent_n = sum(1 for x in q if x.get("urgent")
+                       and (x.get("kind") or "customer") != "staff")
+    normal_n = len(q) - staff_n - hot_urgent_n
     try:
         _nitems = news.list_items()
         # v183: タイルの数字=話題数(同じ興味/同じ会社の複数記事は1と数える)。3日で自動失効
@@ -269,6 +275,8 @@ def liff_home(request: Request):
         "deferred_contacts": deferred_contacts,   # v190: あとでの相手数(人)
         "oldest_sa_min": oldest_sa_min, "unlinked_urgent": unlinked_urgent,
         "queue": len(q), "urgent": urgent_n, "unlinked": unlinked_n,
+        # v196: 受信タイルの内訳(緊急=非店内urgent / 店内 / ふつう=残り。あとでは deferred_contacts)
+        "hot_urgent_n": hot_urgent_n, "staff_n": staff_n, "normal_n": normal_n,
         # v175: 人数と通数を分けて返す(本人指摘「何通溜まっているか把握されていない」)
         "queue_msgs": sum(int(x.get("count") or 1) for x in q),
         "deferred": deferred_n,   # v177: ↷あとで分(まとめ箱)の通数
@@ -1796,7 +1804,8 @@ def liff_inbox(request: Request):
                 _grp_total = len(allm0)
             defs = [m for m in defs if any(m["id"] == x["id"] for x in allm)]
             mids = [m["id"] for m in allm]
-            full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in allm)
+            full = "\n".join(f"{_tmark(m.get('ts'))}{(m.get('text') or '').replace('【?', '【', 1)}"
+                             for m in allm)   # v199: 疑い印【?…】の?は表示で落とす
         else:
             mids = it.get("mids") or [it["mid"]]
             full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
@@ -1849,7 +1858,8 @@ def liff_inbox(request: Request):
             _gt = _n0 if len(msgs) < _n0 else 0
             # v189: staff除外をやめる(本流キューと同じく店内の↷あとで分も見えるように)
             mids = [m["id"] for m in msgs]
-            full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in msgs)
+            full = "\n".join(f"{_tmark(m.get('ts'))}{(m.get('text') or '').replace('【?', '【', 1)}"
+                             for m in msgs)   # v199: 疑い印の?は表示で落とす
             _a = _crm2.get_attrs(ct) or {}
             out.append({"mid": mids[0], "contact": ct,
                         "name": linebot._yobina(ct),

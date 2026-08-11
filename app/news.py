@@ -30,7 +30,6 @@ import requests
 from . import config, db
 
 _MAX_COMPANY = 10        # 会社ネタの新規上限/日(コスト・ノイズ抑制)
-_MAX_KW = 8              # 興味ネタの新規上限/日(v183: 会社と別枠。会社に食い潰されない)
 _MAX_PER_CONTACT = 2     # 1顧客1日あたり
 _FRESH_DAYS = 3          # 何日前までの記事を「新しい」とみなすか
 _EXPIRE_DAYS = 3         # ネタの自動失効(古い「今日のネタ」を送らせない。紙面tier=7日はv184)
@@ -67,6 +66,14 @@ def ensure():
                 c.execute(f"ALTER TABLE news_items ADD COLUMN {ddl}")
             except Exception:
                 pass
+        # v202: v197でRSS×興味検索を廃止したが、廃止前に作られた在庫が失効(3日)まで
+        # タイル件数に残り続けていた(本人指摘「今日のネタがまだ最初の画面にある」)。
+        # 旧興味ネタ(contact空・kwあり・行事以外)を一括掃除する(会社ネタ・行事ネタは残す)
+        try:
+            c.execute("DELETE FROM news_items WHERE contact='' AND IFNULL(kw,'')!='' "
+                      "AND kw NOT LIKE '行事:%'")
+        except Exception:
+            pass
 
 
 def _meta_get(k: str) -> str:
@@ -143,20 +150,37 @@ _SYN = {
 }
 # キュレート済みクエリ(精度の本丸)。汎用語は素の検索だと無関係ヒットが多いため
 # クエリ側で絞る。ここに載る語は require_in_title を外す(クエリで十分絞れている)。
-_KW_QUERY = {
-    "ゴルフ": "ゴルフ (優勝 OR ツアー) when:2d",
-    "相撲": "大相撲 when:2d",
-    "野球": "プロ野球 when:1d",
-    "サッカー": "Jリーグ OR サッカー日本代表 when:2d",
-    "競馬": "競馬 (G1 OR 重賞) when:2d",
-    "テニス": "テニス 優勝 when:2d",
-    "ワイン": "ワイン (ヴィンテージ OR 品評会 OR 醸造) when:3d",
-    "日本酒": "日本酒 (鑑評会 OR 新酒 OR 酒蔵) when:3d",
-    "シャンパン": "シャンパン when:3d",
-    "サウナ": "サウナ when:3d",
-    "クルマ": "新型車 発表 when:3d",
-    "寿司": "寿司 when:3d",
-}
+# v197(本人裁定 2026-08-11): RSS×興味キーワード検索は廃止(見出しだけでは文脈がなく、
+# キーワード文字一致は精度の天井が低い=「全く使えない」実機評価)。代替は行事カレンダー型。
+# 日付は一次情報照合済み(2026年・帳場_v191監査レポート§6。大相撲=日本相撲協会/JRA/NPB/輸入元)。
+# 日本シリーズのみ確信度中(公式ページ取得エラー・複数報道一致)のため期間表現を広めに取る。
+_EVENTS = [
+    {"id": "sumo01", "label": "大相撲一月場所", "start": "2026-01-11", "end": "2026-01-25",
+     "kws": ["相撲", "大相撲"], "place": "両国国技館"},
+    {"id": "sumo03", "label": "大相撲三月場所", "start": "2026-03-08", "end": "2026-03-22",
+     "kws": ["相撲", "大相撲"], "place": "大阪"},
+    {"id": "sumo05", "label": "大相撲五月場所", "start": "2026-05-10", "end": "2026-05-24",
+     "kws": ["相撲", "大相撲"], "place": "両国国技館"},
+    {"id": "sumo07", "label": "大相撲七月場所", "start": "2026-07-12", "end": "2026-07-26",
+     "kws": ["相撲", "大相撲"], "place": "名古屋"},
+    {"id": "sumo09", "label": "大相撲九月場所", "start": "2026-09-13", "end": "2026-09-27",
+     "kws": ["相撲", "大相撲"], "place": "両国国技館"},
+    {"id": "sumo11", "label": "大相撲十一月場所", "start": "2026-11-08", "end": "2026-11-22",
+     "kws": ["相撲", "大相撲"], "place": "福岡"},
+    {"id": "npb_open", "label": "プロ野球開幕", "start": "2026-03-27", "end": "2026-03-27",
+     "kws": ["野球", "プロ野球"], "place": ""},
+    {"id": "nihon_series", "label": "日本シリーズ", "start": "2026-10-24", "end": "2026-11-01",
+     "kws": ["野球", "プロ野球"], "place": ""},
+    {"id": "derby", "label": "日本ダービー", "start": "2026-05-31", "end": "2026-05-31",
+     "kws": ["競馬"], "place": "東京競馬場"},
+    {"id": "arima", "label": "有馬記念", "start": "2026-12-27", "end": "2026-12-27",
+     "kws": ["競馬"], "place": "中山競馬場"},
+    {"id": "beaujolais", "label": "ボジョレー・ヌーヴォー解禁", "start": "2026-11-19", "end": "2026-11-19",
+     "kws": ["ワイン", "ボジョレー", "シャンパン"], "place": ""},
+    {"id": "hakone", "label": "箱根駅伝", "start": "2027-01-02", "end": "2027-01-03",
+     "kws": ["駅伝", "マラソン", "ランニング"], "place": ""},
+]
+_EVENT_LEAD_DAYS = 5   # 何日前から出すか
 
 
 def _canon(tok: str) -> str:
@@ -394,30 +418,6 @@ def _make_opener(contact_code: str, company: str, note: str, title: str) -> str:
         return ""
 
 
-def _kw_opener(kw: str, title: str) -> str:
-    """キーワードニュース→今夜の一言。見出しの範囲だけ・断定しない。"""
-    if not config.ANTHROPIC_API_KEY:
-        return ""
-    try:
-        r = requests.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={"x-api-key": config.ANTHROPIC_API_KEY,
-                     "anthropic-version": "2023-06-01",
-                     "content-type": "application/json"},
-            json={"model": config.ANTHROPIC_MODEL, "max_tokens": 200,
-                  "messages": [{"role": "user", "content":
-                      ((f"「{kw}」が好きな知り合いにLINEで送る、ニュースきっかけの軽い一言を1つ作る。\n"
-                        if config.MODE == "general" else
-                        f"銀座のホステスが「{kw}」好きのお客様とのLINEや会話で使う一言ネタを1つ作る。\n")
-                       + _style_hint()
-                       + f"今日のニュース見出し: {title}\n" + _OPENER_RULES)}]},
-            timeout=30)
-        r.raise_for_status()
-        return "".join(b.get("text", "") for b in r.json().get("content", [])).strip()[:200]
-    except Exception:
-        return ""
-
-
 _REFRESH_LOCK = threading.Lock()
 
 
@@ -484,20 +484,17 @@ def refresh(force: bool = False) -> dict:
                                opener, h, now, caution))
                 per += 1
                 added += 1
-        # v125→v183: 興味キーワード(趣味・お酒・食べ物)。実在見出しのみ・1キーワード1件/日
-        kw_added, kw_failed = 0, 0
+        # v197(本人裁定): RSS×興味キーワード検索は廃止 → 行事カレンダー(ネットワーク不要・決定論)
+        kw_added = 0
         try:
-            kw_added, kw_failed = _refresh_keywords(now, budget, deadline)
+            kw_added = _refresh_events(now)
         except Exception as e:
-            print(f"[news kw] {e}", flush=True)
-            kw_failed += 1
-        # 全社失敗(ネットワーク断など)の日はマークせず次周回で再挑戦。一部でも取れたら完了扱い
-        # v191その2(#17): 会社ネタ0件の構成ではkwフェーズの成否も見る。従来は rows が空だと
-        # ネット全滅日でも当日完了マークが立ち、その日のネタ供給ゼロが確定していた。
-        # 「1件も取れず、かつ失敗があった日」はマークせず次周回で再挑戦。
+            print(f"[news events] {e}", flush=True)
+        # 全社失敗(ネットワーク断など)の日はマークせず次周回で再挑戦。一部でも取れたら完了扱い。
+        # (v191#17のkwフェーズ判定は、kw廃止に伴い会社フェーズのみの判定に戻る。
+        #  行事フェーズは通信しないため失敗判定に含めない)
         _company_ok = (not rows) or (failed < len(rows))
-        _all_zero_with_fail = ((added + kw_added) == 0 and (failed + kw_failed) > 0)
-        if _company_ok and not _all_zero_with_fail:
+        if _company_ok:
             _meta_set("last_day", jst_day)
         # v183: 観測点(実クエリ消費とかかった秒数)。v184の設計判断の根拠データ
         try:
@@ -511,85 +508,64 @@ def refresh(force: bool = False) -> dict:
         _REFRESH_LOCK.release()
 
 
-def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -> tuple:
-    """v183: 興味インデックスから検索。群語(3人以上)は毎日、その他は日替わりローテで週内一巡
-    (旧v125の「該当者数トップ5固定」は他の興味が永久に検索されない飢餓バグ)。
-    v191その2(#17): 戻りは (added, failed)。失敗数を完了判定(last_day)に使う。"""
-    budget = budget if budget is not None else dict(_BUDGETS)
-    deadline = deadline or (now + _DEADLINE_S)
+def _refresh_events(now: float) -> int:
+    """v197: 行事カレンダーからネタを起こす(通信なし・決定論)。
+    開催 _EVENT_LEAD_DAYS 日前〜最終日のあいだ、興味の合う相手が1人でもいれば1件作る。
+    tier='event'(ホームの🔥・点滅対象=v183裁定「点滅は紙面+行事のみ」)。
+    dismiss/使用済みのクールダウン(kw_state)を尊重=消したものを翌日また出さない。"""
+    import datetime as _dt
     idx = _interest_index()
-    group = sorted([cn for cn, e in idx.items() if len(e["who"]) >= _GROUP_MIN_HOT])
-    rest = []
-    for cn in sorted(idx):
-        if cn in group:
-            continue
-        who = idx[cn]["who"]
-        if len(who) >= 2:
-            rest.append(cn)
-        elif len(who) == 1 and _solo_ok(next(iter(who))):
-            # v183裁定: 1人だけの興味は「ランクA以上 or 1ヶ月以内来店」の相手なら検索する
-            rest.append(cn)
-    # 日替わりローテ(kw_cursor)。群語は毎日必ず・その他は数日で全興味を巡回
-    picks = [(cn, "group") for cn in group[:_BUDGETS["group"]]]
-    if rest:
-        cur = int(_meta_get("kw_cursor") or 0) % len(rest)
-        take = min(len(rest), _BUDGETS["cursor"])
-        picks += [(rest[(cur + i) % len(rest)], "cursor") for i in range(take)]
-        _meta_set("kw_cursor", str((cur + take) % len(rest)))
+    jst = _dt.datetime.fromtimestamp(now + 9 * 3600, _dt.timezone.utc)
+    today = jst.date()
     added = 0
-    openers = 0
-    kw_failed = 0   # v191その2(#17): 取得失敗数(完了判定用)
-    for cn, phase in picks:
-        if time.time() > deadline:
-            break
-        if _kw_cooled(cn, now):
-            continue
-        # 前日分が未使用・未dismissのまま残っている興味は当日の追い足しをしない(同文連発とノイズ抑制)
-        with db.conn() as c:
-            if c.execute("SELECT 1 FROM news_items WHERE kw=? AND dismissed=0 AND IFNULL(used_ts,0)=0 "
-                         "AND created_ts>=?", (cn, now - _EXPIRE_DAYS * 86400)).fetchone():
-                continue
-        e = idx[cn]
-        if cn in _KW_QUERY:
-            q, rit = _KW_QUERY[cn], ""
-        else:
-            ctx = {"好きなお酒": " 酒", "好きな食べ物": " グルメ"}.get(e["field"], "")
-            q, rit = f"{cn}{ctx} when:2d", cn
+    for ev in _EVENTS:
         try:
-            items = _fetch_budgeted(budget, phase, q, require_in_title=rit)
+            d0 = _dt.date.fromisoformat(ev["start"])
+            d1 = _dt.date.fromisoformat(ev["end"])
         except Exception:
-            kw_failed += 1   # v191その2(#17)
             continue
-        if items is None:
+        if not (d0 - _dt.timedelta(days=_EVENT_LEAD_DAYS) <= today <= d1):
             continue
-        for it in items[:4]:
-            if it["ts"] and (now - it["ts"]) > _FRESH_DAYS * 86400:
-                continue
-            if _neg(it["title"]):
-                continue   # 興味ネタにネガ見出しは無価値=破棄(会社ネタと違い見落とし防止の意味がない)
-            h = hashlib.sha1(("kw:" + cn + "|" + it["title"]).encode("utf-8")).hexdigest()
-            with db.conn() as c:
-                if c.execute("SELECT 1 FROM news_items WHERE hash=?", (h,)).fetchone():
-                    continue
-                # 会社流と同一見出しの重複ガード(当日)
-                if c.execute("SELECT 1 FROM news_items WHERE title=? AND created_ts>=?",
-                             (it["title"], now - 86400)).fetchone():
-                    continue
-            opener = ""
-            if openers < _MAX_KW:
-                opener = _kw_opener(cn, it["title"])
-                openers += 1
-            who = dict(sorted(e["who"].items())[:8])
-            with db.conn() as c:
-                c.execute("INSERT OR IGNORE INTO news_items"
-                          "(contact,company,title,link,opener,hash,created_ts,kw,who,tier) "
-                          "VALUES('','',?,?,?,?,?,?,?,?)",
-                          (it["title"], it["link"], opener, h, now, cn,
-                           _json.dumps(who, ensure_ascii=False),
-                           "group" if len(e["who"]) >= _GROUP_MIN_HOT else ""))
-            added += 1
-            break
-    return added, kw_failed
+        evkey = f"行事:{ev['id']}"
+        # dismiss/mark_used は kw を生のまま kw_state に書くため、判定も生キーで対称にする
+        if _kw_cooled(evkey, now):
+            continue   # dismiss(7日)・使用済み(3日)は再掲しない
+        # 興味の合う相手(canon一致)。誰もいなければ作らない(ノイズを足さない)
+        who = {}
+        for kw in ev["kws"]:
+            e = idx.get(_canon(kw))
+            if e:
+                who.update(e["who"])
+        if not who:
+            continue
+        with db.conn() as c:
+            if c.execute("SELECT 1 FROM news_items WHERE kw=? AND dismissed=0 "
+                         "AND created_ts>=?", (evkey, now - _EXPIRE_DAYS * 86400)).fetchone():
+                continue   # 生きている同行事ネタがあれば追い足さない
+        wd = "月火水木金土日"[d0.weekday()]
+        place = f"({ev['place']})" if ev.get("place") else ""
+        if today < d0:
+            days = (d0 - today).days
+            when = "あす" if days == 1 else f"{d0.month}/{d0.day}({wd})から"
+            title = f"{when} {ev['label']}{place}"
+            opener = (f"{when}{ev['label']}ですね" if d0 == d1
+                      else f"{when}{ev['label']}が始まりますね")
+        elif today == d0 == d1:
+            title = f"きょう {ev['label']}{place}"
+            opener = f"きょうは{ev['label']}ですね"
+        else:
+            title = f"開催中 {ev['label']}{place}({d1.month}/{d1.day}まで)"
+            opener = f"{ev['label']}、始まりましたね"
+        h = hashlib.sha1((evkey + "|" + str(today)).encode("utf-8")).hexdigest()
+        who8 = dict(sorted(who.items())[:8])
+        with db.conn() as c:
+            c.execute("INSERT OR IGNORE INTO news_items"
+                      "(contact,company,title,link,opener,hash,created_ts,kw,who,tier) "
+                      "VALUES('','',?,?,?,?,?,?,?,'event')",
+                      (title, "", opener, h, now, evkey,
+                       _json.dumps(who8, ensure_ascii=False)))
+        added += 1
+    return added
 
 
 def list_items(limit: int = 20) -> list:

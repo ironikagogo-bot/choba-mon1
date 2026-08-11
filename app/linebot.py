@@ -348,6 +348,8 @@ _SYS_LINE_RE = re.compile(
     r"|メッセージの送信を取り消しました|がアルバム[^\n]{0,20}(作成|追加)しました"
     r"|がノートを(作成|更新)しました|がグループに(参加|招待)しました|が(退出|退会)しました)")
 _GRP_MARK_RE = re.compile(r"^\s*【[^】]{1,30}】")
+# v199: 【?名前】=グループの「疑い印」(sub_text推定)。👥タグは出すが宛先フィルタでは隠さない
+_GRP_GUESS_RE = re.compile(r"^\s*【\?[^】]{0,29}】")
 
 
 def _self_names():
@@ -373,6 +375,11 @@ def group_visible(text, contact, self_names=None) -> bool:
     含む行だけ見せる。名前が未学習の間は消しすぎない(システム行だけ隠す)。
     宛先判定の精度は要実測(裁定時に本人了承済み)。"""
     t = (text or "").strip()
+    if _GRP_GUESS_RE.match(t):
+        # v199: 疑い印はタグ専用。誤検知で1対1のDMを隠す事故の方が重いため、
+        # システム行だけ隠して宛先(名指し)フィルタは適用しない
+        t2 = _GRP_MARK_RE.sub("", t).strip()
+        return not _SYS_LINE_RE.search(t2)
     if not (_GRP_MARK_RE.match(t) or is_group_code(contact)):
         return True
     t2 = _GRP_MARK_RE.sub("", t).strip()

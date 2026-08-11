@@ -293,9 +293,21 @@ class DeskService:
             # ヒューリスティック解析を使わず確定情報として採用(グループ3形式すべて根治)
             _sender = (sender or "").strip()
             _group = (group or "").strip()
+            # v199: group欄が空でも、sub_text(Androidのグループ通知でグループ名が入ることがある)
+            # から「グループらしさ」を推定する。確定情報ではないため 【?名前】 の疑い印にする:
+            # 画面には👥タグと注記が出るが、「自分宛てだけ」フィルタでは隠さない(誤検知でDMを
+            # 消す事故の方が重い)。実測で精度が確認できたら確定印に昇格する。
+            _gguess = ""
+            if _sender and not _group:
+                _st = (sub_text or "").strip()
+                if (_st and _st != _sender and _st.upper() not in ("LINE", "LINE LITE")
+                        and 1 <= len(_st) <= 30 and _st != (title or "").strip()):
+                    _gguess = _st
+                    self.log(f"グループの疑い(sub_textより): {_st!r}")
             if _sender:
                 parsed = {"contact": _sender,
-                          "message": (f"【{_group}】" + rtext) if _group else rtext}
+                          "message": (f"【{_group}】" + rtext) if _group
+                          else (f"【?{_gguess}】" + rtext) if _gguess else rtext}
                 # 通話系はここでも除外
                 from .notify_ingest import is_call_notice, _CALL_TITLE
                 if _CALL_TITLE.search(rtitle) or is_call_notice(rtext):

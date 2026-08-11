@@ -313,6 +313,39 @@ body.dark .stickyfix{background:linear-gradient(165deg,var(--navy-hi),var(--navy
 .lfoot{display:flex;gap:7px;margin-top:10px}
 .lfoot button{flex:1;border:1px solid var(--border);background:var(--panel);border-radius:11px;
   min-height:44px;font-size:13px;font-weight:700;color:var(--ink)}
+
+/* ===== v203: ホーム上部「ヒーロー1枚」(案2採用・Claude Design経由・2026-08-11) =====
+   タイル2段グリッド廃止(裁定)。受信の内訳と入口「▸いまの返信」を1枚のカードに統合。
+   ・ネタ/記念日=ある日だけ現れるチップ行(消える要素をグリッドのマスにしない)
+   ・静かな夜=静かな1枚(タップで受信へ、は同じ)
+   ・規約: 赤=急ぎ専用。紺地上では--redが沈むため明度のみ上げた同系 #F0907B(意味は不変) */
+.hero{width:100%;text-align:left;font-family:inherit;display:block;background:var(--navy);color:#F0ECE2;
+  border:none;border-radius:16px;padding:17px 16px;margin-bottom:10px;cursor:pointer;min-height:44px;
+  transition:transform .08s,opacity .08s}
+.hero:active{transform:scale(.98);opacity:.85}
+body.dark .hero{background:linear-gradient(160deg,#22304F,#1B2A44);box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.hero .top{display:flex;align-items:baseline;gap:10px}
+.hero .n{font-size:32px;font-weight:800;color:#fff;font-variant-numeric:tabular-nums;line-height:1.15}
+.hero .n .u{font-size:14px;color:#CBD3E3;font-weight:700;margin-left:2px}
+.hero .go{margin-left:auto;font-size:13.5px;font-weight:800;color:#E9CE7E;white-space:nowrap}
+.hero .sub{display:flex;gap:12px;margin-top:8px;font-size:12.5px;color:#CBD3E3;font-weight:700;flex-wrap:wrap;
+  font-variant-numeric:tabular-nums}
+.hero .sub .hot{color:#F0907B}
+.hero .sub .dim{opacity:.45}
+.hero.calm{background:var(--panel);color:var(--ink);border:1px solid transparent;box-shadow:var(--shadow-soft)}
+body.dark .hero.calm{background:var(--panel);border-color:var(--border);
+  box-shadow:inset 0 1px 0 var(--panel-hi),0 2px 12px rgba(0,0,0,.30)}
+.hero .calmline{font-size:14px;color:var(--sub);font-weight:700}
+.hero .calmsub{font-size:11.5px;color:var(--sub);opacity:.7;margin-top:4px}
+.chiprow{display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap}
+.chiprow .c{background:var(--panel);border:1px solid transparent;border-radius:99px;padding:10px 15px;
+  font-size:12.5px;font-weight:700;color:var(--ink);min-height:44px;display:inline-flex;align-items:center;
+  cursor:pointer;box-shadow:var(--shadow-soft);font-family:inherit;transition:transform .08s,opacity .08s}
+.chiprow .c:active{transform:scale(.96);opacity:.8}
+body.dark .chiprow .c{border-color:var(--border);box-shadow:none}
+.chiprow .c em{font-style:normal;color:var(--gold);margin-left:4px;font-variant-numeric:tabular-nums}
+.c-new{animation:netapulse 2.4s ease-in-out infinite}
+@media (prefers-reduced-motion: reduce){.c-new{animation:none;outline:2px solid var(--gold)}}
 </style>
 </head>
 <body>
@@ -657,7 +690,7 @@ function drawSeibi() {
   const n = seibi.items.length;
   if (seibi.i >= n) {
     bust("home"); if (seibi.code) store.del("card_" + seibi.code);
-    $("#view").innerHTML = `<div class="empty" style="font-size:16px">✨ ${seibi.scope === "review" ? "見直し" : "確認"}おわり！おつかれさま👏</div>
+    $("#view").innerHTML = `<div class="empty" style="font-size:16px">${seibi.scope === "review" ? "見直し" : "確認"}する項目は残っていません。</div>
       <button class="btn ghost" onclick="nav('${seibi.code ? "#card/" + encodeURIComponent(seibi.code) : "#home"}')">${seibi.code ? "カードへ" : "ホームへ"}</button>`;
     return;
   }
@@ -1065,6 +1098,10 @@ function drawHome(d) {
        : rd && rd.battery ? `<div class="note">リーダー電池 ${esc(rd.battery)}%</div>` : "");
   const est = (d.estranged || []);
   const rate = d.sent_week ? Math.round(d.verbatim_week / d.sent_week * 100) + "%" : "―";
+  // v203: ヒーロー1枚用の集計
+  const nHot = d.hot_urgent_n || 0, nNorm = d.normal_n || 0, nStaff = d.staff_n || 0,
+    nLater = d.deferred_contacts || 0, nTotal = nHot + nNorm + nStaff;
+  const netaNew = (d.neta_blink || 0) > 0 && ((store.get("neta_seen") || {}).d || 0) < (d.neta_latest_ts || 0);
   $("#view").innerHTML = `
   <div onclick="nav('#reader')" style="cursor:pointer;display:flex;align-items:center;gap:8px;
     font-size:13px;font-weight:700;margin:0 2px 10px;
@@ -1072,13 +1109,19 @@ function drawHome(d) {
     ${rdOk ? '📡 受信係 稼働中' : '📡 受信係 要確認'}
     <span style="color:var(--sub);font-weight:400">${ago}</span>
     <span class="chev" style="margin-left:auto">›</span></div>
-  <div class="tiles">
-    ${(d.queue === 0 && (d.deferred_contacts || 0) > 0)
-      ? `<div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.deferred_contacts}</b><span>あとでの返信 ›</span></div>`
-      : `<div class="tile" style="cursor:pointer" onclick="nav('#inbox')"><b>${d.queue}</b><span>返信待ち ›</span></div>`}
-    <div class="tile ${(d.neta_blink || 0) > 0 && ((store.get("neta_seen") || {}).d || 0) < (d.neta_latest_ts || 0) ? "tile-new" : ""}" style="cursor:pointer" onclick="nav('#news')"><b>${d.neta}</b><span>今日のネタ${(d.neta_hot || 0) > 0 ? " 🔥" : ""} ›</span></div>
-    <div class="tile" style="cursor:pointer" onclick="nav('#anni')"><b>${d.anni}</b><span>記念日 ›</span></div>
-  </div>
+  <!-- v203: 案2「ヒーロー1枚」(2026-08-11裁定・タイルグリッド廃止)。受信内訳+入口を1枚に統合。
+       タップ=いまの返信(受信への入口は引き続き1本のまま、カードが入口を兼ねる)。
+       静かな夜は静かな1枚。ネタ・記念日は「ある日だけ現れるチップ行」=消える要素をグリッドのマスにしない -->
+  ${nTotal > 0 ? `<button class="hero" onclick="nav('#inbox')">
+    <div class="top"><span class="n">${nTotal}<span class="u">人 待っています</span></span>
+      <span class="go">▸ いまの返信</span></div>
+    <div class="sub">${nHot ? `<span class="hot">🔥急ぎ${nHot}</span>` : ""}${nNorm ? `<span>📥ふつう${nNorm}</span>` : ""}${nStaff ? `<span>${W("🏠店内", "🏠社内")}${nStaff}</span>` : ""}<span class="${nLater ? "" : "dim"}">🌙あとで${nLater}</span></div></button>`
+  : `<button class="hero calm" onclick="nav('#inbox')">
+    <div class="calmline">現時点で急ぎの連絡も返信待ちもありません。</div>
+    <div class="calmsub">🌙あとで${nLater} ・ 受信係 ${rdOk ? "稼働中" : "要確認"}</div></button>`}
+  ${(d.neta || 0) > 0 || (d.anni || 0) > 0 ? `<div class="chiprow">
+    ${(d.neta || 0) > 0 ? `<button class="c ${netaNew ? "c-new" : ""}" onclick="nav('#news')">📰 今日のネタ<em>${d.neta}</em>${(d.neta_hot || 0) > 0 ? " 🔥" : ""} ›</button>` : ""}
+    ${(d.anni || 0) > 0 ? `<button class="c" onclick="nav('#anni')">🎂 記念日<em>${d.anni}</em> ›</button>` : ""}</div>` : ""}
   ${(d.oldest_sa_min || 0) >= 60 ? `<div class="banner" style="border-color:var(--gold);cursor:pointer"
      onclick="nav('#inbox')">⏳<div class="txt"><b>お待たせ中の方がいます</b>(${d.oldest_sa_min >= 120 ? Math.floor(d.oldest_sa_min / 60) + "時間" : d.oldest_sa_min + "分"})</div>
      <span class="chev">›</span></div>`
@@ -1097,8 +1140,7 @@ function drawHome(d) {
      ご無沙汰の${W("太客", "大切な人")} <b>${est.length}人</b>(最長 <span class="plink" data-plink="${encodeURIComponent(est[0].code)}">${esc(disp(est[0].name))}</span> ${est[0].gap}日)</div>
      <span class="chev">›</span></div>` : ""}
   <div class="hsec">📬 きょうの仕事</div>
-  <button class="navcard" onclick="nav('#inbox')">📨<div><b>▸ いまの返信</b></div>
-    <span class="chev">›</span></button>
+  <!-- v203: ▸いまの返信のnavcardは削除(ヒーローが入口を兼ねる) -->
   <button class="navcard" onclick="nav('#ann')">📣<div><b>${W("配信をつくる", "まとめて連絡")}</b>
     <div class="desc">${W("出勤・イベント・ご無沙汰の挨拶を一斉に", "近況・お誘い・ご無沙汰の挨拶を一斉に")}</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#orei')">${W("🙏", "🍽")}<div><b>${W("お席の記録とお礼", "会った記録とお礼")}</b>
@@ -2071,11 +2113,9 @@ function _listAct(k, action, label) {
   if (rep.i === k) rep.i = -1;
   bust("home");
   drawRep();
-  // v194: 「◯◯を対応済みにしました」→「◯◯には対応済みです」(本人裁定・短く自然に)
-  snack(label || (action === "done"
-    ? `✓ ${esc(disp(it.name))}には対応済みです`
-    : `${{ deferred: "↷", skipped: "✕" }[action] || "✓"} ${esc(disp(it.name))}を${
-      { deferred: "「あとで」に", skipped: "「返さない」に" }[action] || "記録に"}しました`), p);
+  // v201(本人裁定「もっと簡略に」): 黒帯は「記号+名前+2〜4字」の1行に統一
+  snack(label || `${{ deferred: "↷", skipped: "✕", done: "✓" }[action] || "✓"} ${esc(disp(it.name))} ${
+    { deferred: "あとで", skipped: "返さない", done: "対応済み" }[action] || "記録"}`, p);
 }
 window.listAct = (k, action) => { if (repLocked()) return; _listAct(k, action); };
 window.listUndoLocal = k => {   // 楽観行の取り消し(act往復前でもpromise経由で戻せる)
@@ -2115,7 +2155,7 @@ window.repAct = action => {   // 展開中カードの下ボタン(✓対応し�
   // v190(#20)継承: 未送信の下書きが見えている✓は文言を変える(送ったつもり防止)
   const hasDraft = action === "done" && !!document.querySelector("#drafts .draft");
   _listAct(k, action, hasDraft
-    ? `✓ ${esc(disp(it.name))}には対応済みです(下書きは送っていません)` : null);
+    ? `✓ ${esc(disp(it.name))} 対応済み・下書き未送信` : null);
 };
 
 // --- 行・区画の描画 ---
@@ -2139,6 +2179,7 @@ function lrowHtml(p, k) {
       <span class="lmain" onclick="listOpen(${k})">
         <span class="l1"><span class="nm">${esc(disp(p.name))}</span>
           ${p.unlinked ? "" : `<span class="rk">${esc(p.rank)}</span>`}
+          ${p.grp ? `<span class="rk" style="background:var(--cream);color:var(--sub)">👥グループ</span>` : ""}
           ${(p.count || 1) > 1 ? `<span class="rk" style="background:var(--cream);color:var(--sub)">📬${p.count}</span>` : ""}
           <span class="tm">${esc(tmS)}</span></span>
         <span class="l2">${why}<span class="ex">${esc(_exStrip(p.text))}</span></span>
@@ -2256,9 +2297,10 @@ function drawRep() {
     + norm.map(x => lrowHtml(x.p, x.k)).join("");
   if (!openN) {
     const actedN = Math.max(rep.acted_n || 0, 0) + locDone.length + locSkip.length;
-    h += `<div class="empty" style="padding:30px 10px;font-size:15px">受信はぜんぶ${W("さばきました", "さばきました")}✨
+    // v198(本人裁定): 状態メッセージは祝い調をやめて現状を淡々と述べる線に統一
+    h += `<div class="empty" style="padding:30px 10px;font-size:15px">現時点で急ぎの連絡も返信待ちもありません。
       ${actedN ? `<br><span style="font-size:12.5px;color:var(--sub)">${W("今夜", "今日")}: ${actedN}人に対応</span>` : ""}
-      ${later.length ? `<br><span style="font-size:12.5px;color:var(--sub)">下の🌙は${W("今夜", "今日")}のうちにどうぞ</span>` : ""}</div>`;
+      ${later.length ? `<br><span style="font-size:12.5px;color:var(--sub)">🌙 あとでが${later.length}人残っています</span>` : ""}</div>`;
   }
   const fold = (key, tt, n, html) => !n ? "" :
     `<div class="lsec" onclick="rep.f_${key}=!rep.f_${key};drawRep()">
@@ -2384,7 +2426,7 @@ window.repSend = async j => {
   if (!(await koiGate(it, text))) return;   // v186: 黄旗で「直す」を選んだら送らない
   const res = await sendViaLine(text, it.contact, it.sname, it.sword || "");   // v176: 確定語優先
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
-    repAdvance(`✓ ${disp(it.name)}に返信${edited ? "(手直し)" : ""}・文体を学習`); }
+    repAdvance(`✓ ${disp(it.name)} 返信済み`); }
   else if (res === "copied") {
     d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="repMark(${j})">✓ 貼り付けて送った</button>
       <button class="btn ghost" style="flex:0 0 84px" onclick="repStill(${j})">まだ</button>`;
@@ -2411,7 +2453,7 @@ window.repStill = j => {
 };
 window.repMark = j => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "", mids: it.mids });
-  repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
+  repAdvance(`✓ ${disp(it.name)} 返信済み`); };
 // v153: 登録系は楽観更新禁止(改善#1後半)。保存を待ち、失敗したら画面を進めない。
 // 圏外でタップ→成功トースト→実は未保存、という「昨日やったのに」の残存経路を塞ぐ
 async function clsSave(body) {
@@ -2484,7 +2526,7 @@ window.repSendMine = async () => {
   if (!(await koiGate(it, text))) return;   // v186: 送信前ガード(手書きも同じ)
   const res = await sendViaLine(text, it.contact, it.sname, it.sword || "");   // v176: 確定語優先
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
-    repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); }
+    repAdvance(`✓ ${disp(it.name)} 返信済み`); }
   else if (res === "copied") {
     $("#mywrite .row").innerHTML = `<button class="btn primary" onclick="repMarkMine()">✓ 貼り付けて送った</button>`;
     $("#mywrite").dataset.text = text;
@@ -2500,7 +2542,7 @@ window.repSendMine = async () => {
 };
 window.repMarkMine = () => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "", mids: it.mids });
-  repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
+  repAdvance(`✓ ${disp(it.name)} 返信済み`); };
 window.repClsRank = async rank => {
   const it = rep.items[rep.i];
   if (!await clsSave({ contact: it.contact, kind: "work", rank })) return;
@@ -2643,7 +2685,7 @@ async function drawAnnRun() {
   const n = ann.q.length;
   if (ann.i >= n) {
     store.del("annq"); bust("home");
-    $("#view").innerHTML = `<div class="empty" style="font-size:16px">📣 配達おわり！${ann.sent}人に送りました👏</div>
+    $("#view").innerHTML = `<div class="empty" style="font-size:16px">配達する相手は残っていません。${ann.sent}人に送りました。</div>
       <button class="btn ghost" onclick="Object.assign(ann,{step:'purpose',q:[],i:0,sent:0});nav('#home')">ホームへ</button>`;
     setHead("📣 配信", "完了", true); return;
   }
@@ -2981,7 +3023,7 @@ function newsCard(x, j) {
         </div></div>`;
 }
 async function vNews() {
-  setHead("📰 今日のネタ", W("お客様の会社と興味の話題", "相手の会社と興味の話題"), true);
+  setHead("📰 今日のネタ", W("お客様の会社と行事の話題", "相手の会社と行事の話題"), true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/news"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
@@ -3091,7 +3133,7 @@ function drawFixup() {
   const n = fx.items.length;
   if (fx.i >= n) {
     bust("home"); bust("contacts");
-    $("#view").innerHTML = `<div class="empty" style="font-size:16px">✨ 仕分け完了！カードが全部使える状態です</div>
+    $("#view").innerHTML = `<div class="empty" style="font-size:16px">未確定のカードはありません。</div>
       <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
     setHead("🚨 カードの仕分け", "完了", true); return;
   }
