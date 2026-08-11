@@ -192,6 +192,7 @@ FEATURE_LABELS = {
     "alias_remove": "紐付け解除", "kind_change": "種別変更", "contact_edit": "カード編集",
     "contact_delete": "連絡先削除", "transfer": "移籍", "wipe": "データ消去",
     "news_refresh": "ネタ帳の更新",
+    "liff_copy_send": "コピーで送信(返信)",
 }
 
 
@@ -232,7 +233,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v203"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v204"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -429,8 +430,29 @@ def usage_stats(token: str = ""):
             verbatim = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND ts<? AND edited=0", (t0, t1)).fetchone()[0]
             edited = c.execute("SELECT COUNT(*) FROM sent_replies WHERE ts>=? AND ts<? AND edited=1", (t0, t1)).fetchone()[0]
             skipped = c.execute("SELECT COUNT(*) FROM messages WHERE ts>=? AND ts<? AND status='skipped' AND IFNULL(swept,0)=0", (t0, t1)).fetchone()[0]
+            # v204: ✓対応した(=LINEで直接返した等・本文なし)は sent_replies に乗らず
+            # ダッシュボードの返信数から見えなかった(本人報告 2026-08-11)。acted_log から日次で数える
+            try:
+                done_n = c.execute("SELECT COUNT(*) FROM acted_log WHERE action='done' "
+                                   "AND undone=0 AND acted_ts>=? AND acted_ts<?", (t0, t1)).fetchone()[0]
+            except Exception:
+                done_n = 0
+            # v204: 「返信した回数」(裁定ベース)。1回の返信でラリー数通が閉じるため、
+            # メッセージ通数(status=replied)とも送信記録(sent_replies)とも別の軸で数える
+            try:
+                replied_acts = c.execute("SELECT COUNT(*) FROM acted_log WHERE action='replied' "
+                                         "AND undone=0 AND acted_ts>=? AND acted_ts<?", (t0, t1)).fetchone()[0]
+            except Exception:
+                replied_acts = 0
+            # v204: 返信のコピー操作(客観イベント)。copies > 送信記録 なら「✓押し忘れ」の疑い
+            try:
+                copies_n = c.execute("SELECT COUNT(*) FROM feature_events WHERE name='liff_copy_send' "
+                                     "AND ts>=? AND ts<?", (t0, t1)).fetchone()[0]
+            except Exception:
+                copies_n = 0
             days.append({"date": d.isoformat(), "received": received, "drafted": drafted,
-                         "sent_verbatim": verbatim, "sent_edited": edited, "skipped": skipped})
+                         "sent_verbatim": verbatim, "sent_edited": edited, "skipped": skipped,
+                         "done": done_n, "copies": copies_n, "replied_acts": replied_acts})
 
         # v191(#18): トリアージ計測(P1着工判断の実測データ。全て件数・分のみ=本文なし)
         triage_stats = {}
@@ -559,8 +581,16 @@ def usage_stats(token: str = ""):
             "SELECT name, COUNT(*) FROM feature_events WHERE ts>=? GROUP BY name", (_t1,))}
         features_win = {k: {"label": v, "c7": _used7.get(k, 0), "c1": _used1.get(k, 0)}
                         for k, v in FEATURE_LABELS.items()}
+        # v204: txt取り込みの実績(linebot_talksは1人1行・再取り込みは上書き=人数がそのまま出る)
+        txt_imported = {"contacts": 0, "last_ts": None}
+        try:
+            _r = c.execute("SELECT COUNT(*), MAX(ts) FROM linebot_talks").fetchone()
+            txt_imported = {"contacts": _r[0] or 0, "last_ts": _r[1]}
+        except Exception:
+            pass
     return JSONResponse({
         "ok": True, "now": time.time(), "last_ingest_ts": last_ts,
+        "txt_imported": txt_imported,
         "contacts_total": n_contacts, "contacts_by_kind": kinds,
         "learning_examples": n_examples, "days": days,
         "triage": triage_stats,

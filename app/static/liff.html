@@ -1067,6 +1067,11 @@ window.retryFails = async () => {
   _failbar();
   if (ok) toast(`✓ ${ok}件 保存し直しました`);
 }
+// v204: 軽量イベント計測(コピー送信など)。失敗しても静かに諦める(FAILQに積まない)
+function trackEv(ev) {
+  try { api("/api/liff/track", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ev }) }).catch(() => {}); } catch (e) {}
+}
 const PENDING_FIRES = [];   // v175: 完走画面の前に飛行中POSTを待つ(件数の食い違い防止)
 function fire(path, body) {   // 楽観更新: 待たずに裏でPOST(失敗は赤バーに積む)
   const p = api(path, { method: "POST", headers: { "Content-Type": "application/json" },
@@ -2428,6 +2433,7 @@ window.repSend = async j => {
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)} 返信済み`); }
   else if (res === "copied") {
+    trackEv("copy_send");
     d.querySelector(".row").innerHTML = `<button class="btn primary" onclick="repMark(${j})">✓ 貼り付けて送った</button>
       <button class="btn ghost" style="flex:0 0 84px" onclick="repStill(${j})">まだ</button>`;
     d.querySelector(".row").insertAdjacentHTML("afterend",
@@ -2528,6 +2534,7 @@ window.repSendMine = async () => {
   if (res === "sent") { fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text, mids: it.mids });
     repAdvance(`✓ ${disp(it.name)} 返信済み`); }
   else if (res === "copied") {
+    trackEv("copy_send");
     $("#mywrite .row").innerHTML = `<button class="btn primary" onclick="repMarkMine()">✓ 貼り付けて送った</button>`;
     $("#mywrite").dataset.text = text;
     $("#mywrite .row").insertAdjacentHTML("afterend",

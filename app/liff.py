@@ -2008,6 +2008,24 @@ async def liff_reply_drafts(request: Request):
                 if not config.ANTHROPIC_API_KEY else "")}   # v150: 技術用語を出さない(詳細はログ)
 
 
+@router.post("/api/liff/track")
+async def liff_track(request: Request):
+    """v204: 機能イベントの記録(名前と時刻のみ・本文なし)。許可リスト外は無視。
+    用途: 返信のコピー操作を客観計測し、送信記録(sent_replies)との差分で
+    「✓押し忘れ」をダッシュボードに見えるようにする。"""
+    if not _authed(request):
+        return _deny()
+    try:
+        body = await request.json()
+        ev = str(body.get("ev") or "")
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if ev not in ("copy_send",):
+        return JSONResponse({"error": "unknown ev"}, status_code=400)
+    db.track("liff_" + ev)
+    return {"ok": True}
+
+
 @router.post("/api/liff/reply/act")
 async def liff_reply_act(request: Request):
     """対応の記録。既存 /api/messages/{mid}/act と同じ意味論(スレッド一括クローズ・
