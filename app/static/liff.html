@@ -287,10 +287,15 @@ body.dark .stickyfix{background:linear-gradient(165deg,var(--navy-hi),var(--navy
 .ltop .why{font-size:11px;font-weight:800;color:var(--red);white-space:nowrap;flex:0 0 auto}
 .ltop .why.b{color:#8a6a1f}
 .ltop .ex{flex:1;font-size:12.5px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-.lbtns{display:flex;flex:0 0 auto;gap:5px;align-items:center;padding-right:8px}
-/* v192: ↷✕の視認性(丸枠アイコン。赤は🔥急ぎ専用の規約を守り単色のまま) */
-.lbtns button{width:38px;height:38px;border:1.5px solid var(--border);border-radius:50%;background:var(--panel);
-  font-size:15px;color:var(--ink);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.lbtns{display:flex;flex:0 0 auto;gap:5px;align-items:flex-start;padding-right:8px}
+/* v195: 丸枠アイコン+極小ラベル(本人裁定: 記号だけでは意味を覚えていられない。
+   赤は🔥急ぎ専用の規約を守り単色のまま)。ラベルごと1タップ域 */
+.lbtns .lab{display:flex;flex-direction:column;align-items:center;gap:1px;cursor:pointer;
+  min-width:44px;padding:2px 0}
+.lbtns button{width:36px;height:36px;border:1.5px solid var(--border);border-radius:50%;background:var(--panel);
+  font-size:14px;color:var(--ink);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center;
+  pointer-events:none}
+.lbtns small{font-size:9px;color:var(--sub);font-weight:700;line-height:1.2;pointer-events:none}
 .lbody{border-top:1px solid var(--border);padding:11px 12px;background:var(--panel)}
 .lsub{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:13px;min-height:44px;
   background:var(--panel);border:1px solid var(--border);border-radius:13px;margin-bottom:7px;opacity:.6}
@@ -2066,8 +2071,11 @@ function _listAct(k, action, label) {
   if (rep.i === k) rep.i = -1;
   bust("home");
   drawRep();
-  snack(label || `${{ deferred: "↷", skipped: "✕", done: "✓" }[action] || "✓"} ${esc(disp(it.name))}を${
-    { deferred: "「あとで」に", skipped: "「返さない」に", done: "対応済みに" }[action] || "記録に"}しました`, p);
+  // v194: 「◯◯を対応済みにしました」→「◯◯には対応済みです」(本人裁定・短く自然に)
+  snack(label || (action === "done"
+    ? `✓ ${esc(disp(it.name))}には対応済みです`
+    : `${{ deferred: "↷", skipped: "✕" }[action] || "✓"} ${esc(disp(it.name))}を${
+      { deferred: "「あとで」に", skipped: "「返さない」に" }[action] || "記録に"}しました`), p);
 }
 window.listAct = (k, action) => { if (repLocked()) return; _listAct(k, action); };
 window.listUndoLocal = k => {   // 楽観行の取り消し(act往復前でもpromise経由で戻せる)
@@ -2107,7 +2115,7 @@ window.repAct = action => {   // 展開中カードの下ボタン(✓対応し�
   // v190(#20)継承: 未送信の下書きが見えている✓は文言を変える(送ったつもり防止)
   const hasDraft = action === "done" && !!document.querySelector("#drafts .draft");
   _listAct(k, action, hasDraft
-    ? `✓ ${esc(disp(it.name))}を対応済みに(下書きは送っていません)` : null);
+    ? `✓ ${esc(disp(it.name))}には対応済みです(下書きは送っていません)` : null);
 };
 
 // --- 行・区画の描画 ---
@@ -2136,8 +2144,8 @@ function lrowHtml(p, k) {
         <span class="l2">${why}<span class="ex">${esc(_exStrip(p.text))}</span></span>
       </span>
       <span class="lbtns">
-        ${later ? "" : `<button title="あとで" onclick="listAct(${k},'deferred')">↷</button>`}
-        <button title="返さない" onclick="listAct(${k},'skipped')">✕</button>
+        ${later ? "" : `<span class="lab" onclick="listAct(${k},'deferred')"><button tabindex="-1">↷</button><small>あとで</small></span>`}
+        <span class="lab" onclick="listAct(${k},'skipped')"><button tabindex="-1">✕</button><small>返さない</small></span>
       </span>
     </div>${open ? lbodyHtml(p, k) : ""}</div>`;
 }
@@ -2262,12 +2270,13 @@ function drawRep() {
       `<span class="undo" onclick="listUndoLocal(${x.k})">↩︎ 戻す</span>`)).join("")
     + recSkip.map(a => lsubHtml(a.name, a.tm,
       `<span class="undo" onclick="repHistUndo(${a.act_id})">↩︎ 戻す</span>`)).join(""));
+  // v195(本人裁定): ✓の行の「戻す」は廃止=見るだけの記録(間違えて✓してもLINEで返せば現実は
+  // 正しくなる)。✕の行の↩︎だけ残す(誤タップで黙って消えた人をキューへ呼び戻す唯一の道)。
+  // 直後の取り消しは全操作とも下の黒帯(4秒)が担当
   h += fold("done", `✓ ${W("今夜の対応", "今日の対応")}`, locDone.length + recDone.length,
-    locDone.map(x => lsubHtml(x.p.name, "たったいま",
-      `<span class="undo" onclick="listUndoLocal(${x.k})">↩︎ 戻す</span>`)).join("")
+    locDone.map(x => lsubHtml(x.p.name, "たったいま", "")).join("")
     + recDone.map(a => lsubHtml(a.name, a.tm, a.sent
-      ? `<span class="st" style="margin-left:auto">送信済み</span>`
-      : `<span class="undo" onclick="repHistUndo(${a.act_id})">↩︎ 戻す</span>`)).join(""));
+      ? `<span class="st" style="margin-left:auto">送信済み</span>` : "")).join(""));
   if (openN) h += `<div class="note" style="text-align:center;margin:14px 0 4px">
     タップで開いて返信 / ↷✕は1タップ / まちがえたら下の黒帯か各区画の↩︎</div>`;
   $("#view").innerHTML = h;
