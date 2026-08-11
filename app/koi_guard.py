@@ -108,10 +108,27 @@ def hits(text: str, skip=()) -> list:
     return out
 
 
-_SENT_SPLIT = _re.compile(r"(?<=[。！？!?\n])")
+# v191その2(#18): 句読点を打たず絵文字・スペースで区切る文体(実運用のLINEに多い)だと
+# 全文が1文扱いになり、1語ヒットで全文消滅→固定文差し替えになっていた。
+# 絵文字の連なりの直後・連続スペースの直後も文境界として扱い、部分除去を機能させる。
+_SENT_SPLIT = _re.compile(
+    r"(?<=[。！？!?\n])"
+    r"|(?<=[\U0001F000-\U0001FAFF☀-➿⬀-⯿❤️])"
+    r"(?![\U0001F000-\U0001FAFF☀-➿⬀-⯿❤️])"
+    r"|(?<=\s\s)(?!\s)")
 
-_FALLBACK = {"mizu": "今日話せて元気出た😊 それより最近ちゃんと寝てる？",
-             "general": "話せてよかった😊 最近ちゃんと休めてる？"}
+# v191その2(#18): 全文消滅時の代替文。単一固定だと3案とも同一文=同文連投でbot発覚リスク
+# だったため複数案ローテーション(guard_drafts側で案ごとに別の文を割り当てる)。
+_FALLBACKS = {
+    "mizu": ["今日話せて元気出た😊 それより最近ちゃんと寝てる？",
+             "そう言ってもらえるのは素直にうれしいな☺️ 今週もおつかれさま",
+             "ありがと😌 それより今日なにかいいことあった？"],
+    "general": ["話せてよかった😊 最近ちゃんと休めてる？",
+                "そう言ってもらえてうれしいです☺️ 今週もおつかれさま",
+                "ありがとうございます😌 今日なにかいいことありましたか？"],
+}
+# 後方互換(旧参照が残っても動くように先頭案を残す)
+_FALLBACK = {k: v[0] for k, v in _FALLBACKS.items()}
 
 
 def clean_text(text: str, code: str = "") -> str:
@@ -129,13 +146,14 @@ def clean_text(text: str, code: str = "") -> str:
 def guard_drafts(code: str, drafts: list) -> list:
     """flag_koi ONの相手への下書き一式に生成側ガードを適用。失敗しても本流を止めない。"""
     from . import config
-    fb = _FALLBACK.get(config.MODE, _FALLBACK["mizu"])
-    out = []
+    fbs = _FALLBACKS.get(config.MODE, _FALLBACKS["mizu"])
+    out, _fi = [], 0
     for d in drafts or []:
         try:
             t2 = clean_text(d.get("text") or "", code)
             if not t2:
-                t2 = fb
+                t2 = fbs[_fi % len(fbs)]   # v191その2(#18): 案ごとに別文(3案同一文の防止)
+                _fi += 1
             out.append({**d, "text": t2})
         except Exception:
             out.append(d)

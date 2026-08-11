@@ -354,7 +354,22 @@ def _fixup_items():
         # 会話から本名が抽出できていない時だけ、LINE表示名(=code)自体が本名らしい形かを
         # 見て候補を出す(あくまで候補=仕分け画面で人が確認・タップ確定する。自動確定はしない)。
         _hn_guess = "" if _hn else (code if crm.looks_like_real_name(code) else "")
+        # v192その3(案1): 「誰の話か」をカード先頭で思い出せるよう直近の受信1行を添える。
+        # グループ由来は自分宛てフィルタを通った行を優先(他人の発言で誤想起させない)
+        _lt = ""
+        try:
+            with db.conn() as c:
+                _rows = c.execute("SELECT text FROM messages WHERE contact=? "
+                                  "ORDER BY ts DESC LIMIT 8", (code,)).fetchall()
+            for _r in _rows:
+                _t = (_r["text"] or "").strip()
+                if _t and linebot.group_visible(_t, code):
+                    _lt = linebot._GRP_MARK_RE.sub("", _t).strip().replace("\n", " ")[:60]
+                    break
+        except Exception:
+            pass
         out.append({"code": code, "name": linebot._yobina(code, a),
+                    "last_text": _lt,
                     "rank": ct.get("rank") or "B", "missing": missing,
                     "suggest": {"呼び名": fx.get("呼び名") or a.get("呼び名") or "",
                                 "本名": _hn, "本名候補": _hn_guess,
@@ -407,7 +422,11 @@ async def liff_fixup_bulk_ep(request: Request):
                 c.execute("UPDATE contacts SET kind=?, stand=? WHERE code=?", (kind, stand, code))
                 c.execute("UPDATE linebot_facts SET status='confirmed' WHERE contact=? "
                           "AND k IN ('呼び名','本名','誕生日','🔖種別・立場') AND status='pending'", (code,))
-            linebot.quarantine_release_async(code)   # v187: ⚡おまかせ確定でも検疫解放
+            # v191その2(#8): ⚡おまかせはAIの種別予想の一括採用であって本人の種別確定ではない。
+            # 客なら検疫解放(適用)するが、非顧客予想での解放=保留事実の不可逆破棄はしない
+            # (検疫のまま維持。破棄は個別の種別確定タップのみ)。
+            if kind == "customer":
+                linebot.quarantine_release_async(code)   # v187: ⚡おまかせ確定でも検疫解放(客)
             n += 1
         except Exception as e:
             print(f"[fixup bulk] {code}: {e}", flush=True)
@@ -459,6 +478,14 @@ async def liff_fixup_save(request: Request):
         # 抽出候補は確認済み扱いに(チャット🔎整備で二度聞きしない)
         c.execute("UPDATE linebot_facts SET status='confirmed' WHERE contact=? "
                   "AND k IN ('呼び名','本名','誕生日','🔖種別・立場') AND status='pending'", (code,))
+        # v191その2(#8): 🔖の値を本人確定の内容に上書き(AI予想値のまま確定になる矛盾を残さない)
+        try:
+            _st_map = {"up": "senior", "even": "equal", "down": "junior"}
+            c.execute("UPDATE linebot_facts SET v=? WHERE contact=? AND k=?",
+                      (linebot._rel_value(kind, _st_map.get(stand, "equal")), code,
+                       linebot._REL_KEY))
+        except Exception as _e:
+            print(f"[fixup rel] {_e}", flush=True)
     if belong:
         crm.add_def("所属"); crm.set_attr(code, "所属", belong)
     linebot.quarantine_release_async(code)   # v187: 種別確定→検疫解放(客=適用/非客=破棄)
@@ -1707,14 +1734,16 @@ def liff_import_status(request: Request):
 
 
 def _tmark(ts) -> str:
-    """v190: 受信時刻の前置ラベル。同日JST=〔HH:MM〕/1日前=〔きのう〕/それ以前=〔N日前〕。"""
+    """v190: 受信時刻の前置ラベル。同夜=〔HH:MM〕/1日前=〔きのう〕/それ以前=〔N日前〕。
+    v191その2(#16): 「同じ夜」の境界を仕様(B-4/B-5)と同じ朝5時JSTに統一。JST0時基準だと
+    深夜0:30に今夜の受信へ〔きのう〕が付き、カーソル失効・裁定履歴の夜境界とズレていた。"""
     try:
         ts = float(ts or 0)
         if not ts:
             return ""
         now = time.time()
-        d_now = int((now + 9 * 3600) // 86400)
-        d_msg = int((ts + 9 * 3600) // 86400)
+        d_now = int((now + 9 * 3600 - 5 * 3600) // 86400)
+        d_msg = int((ts + 9 * 3600 - 5 * 3600) // 86400)
         if d_now == d_msg:
             return time.strftime("〔%H:%M〕", time.gmtime(ts + 9 * 3600))
         n = d_now - d_msg
@@ -1754,14 +1783,25 @@ def liff_inbox(request: Request):
         except Exception:
             pass
         defs = _def_by_contact.pop(it["contact"], [])
+        _grp_total = 0
         if opens or defs:
-            allm = sorted(opens + defs, key=lambda m: m.get("ts") or 0)
+            allm0 = sorted(opens + defs, key=lambda m: m.get("ts") or 0)
+            # v192: グループ発言は「自分宛てだけ」を会話記録に出す(本人裁定 2026-08-11)。
+            # 隠したぶんは grp_total で件数だけ知らせる(黙って消したと誤解させない)
+            allm = [m for m in allm0
+                    if linebot.group_visible(m.get("text"), it["contact"])]
+            if not allm:
+                allm = allm0[-1:]   # 全滅時は最新1通だけ残す(空カード防止の保険)
+            if len(allm) < len(allm0):
+                _grp_total = len(allm0)
+            defs = [m for m in defs if any(m["id"] == x["id"] for x in allm)]
             mids = [m["id"] for m in allm]
             full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in allm)
         else:
             mids = it.get("mids") or [it["mid"]]
             full = (db.get_message(it["mid"]) or {}).get("text") or it.get("text") or ""
         it["_deferred_n"] = len(defs)
+        it["_grp_total"] = _grp_total
         from . import crm as _crm
         # v145: 未登録相手は既存カードの候補を添える(表記ゆれ・グループ着信の紐付け動線)
         cands = []
@@ -1785,6 +1825,8 @@ def liff_inbox(request: Request):
                     "sword": _a.get("LINE検索確定語") or "",   # v176: 学習済み検索語(コピー優先)
                     "cands": cands,
                     "deferred": int(it.get("_deferred_n") or 0),  # v177: ↷あとで分の件数
+                    "pin": int(it.get("pin") or 0),   # v192: 🔥ピン留め
+                    "grp_total": int(it.get("_grp_total") or 0),   # v192: グループ非表示前の総通数(>0=間引きあり)
                     # v186(P0): 送信前ガード用(内部語は画面に出さない。koi=発火条件、ok=本人が○済みのID)
                     "koi": int(it.get("koi") or 0),
                     "koi_ok": (koi_guard.ok_ids(it["contact"]) if it.get("koi") else []),
@@ -1799,6 +1841,12 @@ def liff_inbox(request: Request):
             if not ct:
                 continue
             c = db.get_contact(ct) or {}
+            # v192: グループ発言は「自分宛てだけ」(全滅したらカード自体を出さない)
+            _n0 = len(msgs)
+            msgs = [m for m in msgs if linebot.group_visible(m.get("text"), ct)]
+            if not msgs:
+                continue
+            _gt = _n0 if len(msgs) < _n0 else 0
             # v189: staff除外をやめる(本流キューと同じく店内の↷あとで分も見えるように)
             mids = [m["id"] for m in msgs]
             full = "\n".join(f"{_tmark(m.get('ts'))}{m.get('text') or ''}" for m in msgs)
@@ -1816,10 +1864,17 @@ def liff_inbox(request: Request):
                         "cands": [],
                         "deferred": len(mids),
                         "kind": c.get("kind") or "customer",   # v190(#10): 属性補修
+                        "pin": int(c.get("flag_hot") or 0),   # v192: 🔥ピン留め
+                        "grp_total": _gt,   # v192: グループ間引きあり(>0)
                         "grp": 1 if any((m.get("text") or "").lstrip().startswith("【")
                                         for m in msgs) else 0,
-                        "koi": int(c.get("flag_koi") or 0),   # v186
-                        "koi_ok": (koi_guard.ok_ids(ct) if c.get("flag_koi") else []),
+                        # v191その2(#11): 本流キュー(build_queue)と同じくcustomer限定(v187§10)。
+                        # koi客を店内へ統合→↷あとで、で非客カードに客UI(koiガード)が誤爆していた
+                        "koi": (int(c.get("flag_koi") or 0)
+                                if (c.get("kind") or "customer") == "customer" else 0),
+                        "koi_ok": (koi_guard.ok_ids(ct)
+                                   if (c.get("flag_koi")
+                                       and (c.get("kind") or "customer") == "customer") else []),
                         "truncated": len(full) > 600})
     except Exception as e:
         print(f"[inbox deferred cards] {e}", flush=True)
@@ -1830,6 +1885,7 @@ def liff_inbox(request: Request):
         kp = []
     # v190(#19): 今夜の裁定履歴(同夜=直近の朝5時JST以降・上限30・act_id付き)。undo済みは除く
     recent = []
+    acted_n = 0   # v191その2(#20): 完走画面「今夜N人」用(LIMITなし・同名別人も正しく別計上)
     try:
         now = time.time()
         jst = now + 9 * 3600
@@ -1846,9 +1902,36 @@ def liff_inbox(request: Request):
                                "action": r["action"],
                                "sent": bool(r["sent_reply_id"]),
                                "tm": time.strftime("%H:%M", time.gmtime(r["acted_ts"] + 9 * 3600))})
+            # v191その2(#20): 履歴のLIMIT 30(仕様B-5)とは別に、完走画面の人数は正確な
+            # COUNT(DISTINCT contact)で返す(30人打ち止め・呼び名Set合算の両方を解消)
+            acted_n = c.execute("SELECT COUNT(DISTINCT contact) FROM acted_log "
+                                "WHERE undone=0 AND acted_ts>=?", (night_start,)).fetchone()[0] or 0
     except Exception as e:
         print(f"[recent acted] {e}", flush=True)
-    return {"ok": True, "items": out, "koi_patterns": kp, "recent_acted": recent}
+    return {"ok": True, "items": out, "koi_patterns": kp, "recent_acted": recent,
+            "acted_n": acted_n}
+
+
+@router.post("/api/liff/hotpin")
+async def liff_hotpin(request: Request):
+    """v192: 🔥ピン留めトグル。ピン留めした相手は内容を問わず「いま返す」区画に出る。"""
+    if not _authed(request):
+        return _deny()
+    from . import crm
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        on = 1 if body.get("on") else 0
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not code:
+        return JSONResponse({"error": "no code"}, status_code=400)
+    try:
+        crm.update_contact(code, {"flag_hot": on})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    db.track("liff_hotpin")
+    return {"ok": True, "pin": on}
 
 
 @router.post("/api/liff/koiguard/ok")
@@ -1908,7 +1991,10 @@ async def liff_reply_drafts(request: Request):
     return {"ok": True, "drafts": [{"text": g.get("text", "")} for g in gen if g.get("text")][:3],
             "card_keys": crm.card_used_keys(m.get("contact") or ""),
             "gen_note": drafts.last_err(mid) or (
-                "いま自動の下書きがお休み中(設定待ち)。下の文は定型です — お店の担当さんに『帳場くんのAI設定』と伝えてください"
+                # v191その2(一般A2): 一般モードに「お店の担当さん」を出さない
+                ("いま自動の下書きがお休み中(設定待ち)。下の文は定型です — サポート担当に『帳場くんのAI設定』と伝えてください"
+                 if config.MODE == "general" else
+                 "いま自動の下書きがお休み中(設定待ち)。下の文は定型です — お店の担当さんに『帳場くんのAI設定』と伝えてください")
                 if not config.ANTHROPIC_API_KEY else "")}   # v150: 技術用語を出さない(詳細はログ)
 
 
@@ -1948,28 +2034,13 @@ async def liff_reply_act(request: Request):
     except Exception as e:
         code = getattr(e, "status_code", 500)
         return JSONResponse({"error": str(getattr(e, "detail", e))}, status_code=code)
+    # v191その2(#12): 裁定記録(acted_log+sent_replies.message_id紐付け)は linebot.record_act に
+    # 共通化(チャット経由 _finish_message と同一実装。同一概念を二系統にしない規約)。
     act_id = None
     try:
         from . import linebot
         linebot.ensure()
-        with db.conn() as c:
-            changed = []
-            for r2 in c.execute("SELECT id, status FROM messages WHERE contact=?", (_ct,)):
-                if r2["id"] in _before and _before[r2["id"]] != r2["status"]:
-                    changed.append([r2["id"], _before[r2["id"]]])
-            srid, stext = None, ""
-            _sr = c.execute("SELECT id, text FROM sent_replies WHERE id>? AND contact=? "
-                            "ORDER BY id DESC LIMIT 1", (_sr0, _ct)).fetchone()
-            if _sr:
-                srid, stext = _sr["id"], _sr["text"] or ""
-            _ev = c.execute("SELECT id FROM events WHERE id>? AND contact=? AND status='tentative' "
-                            "ORDER BY id DESC LIMIT 1", (_ev0, _ct)).fetchone()
-            evid = _ev["id"] if _ev else None
-            if changed:
-                cur = c.execute("INSERT INTO acted_log(contact,action,changed,sent_reply_id,"
-                                "sent_text,event_id,acted_ts) VALUES(?,?,?,?,?,?,?)",
-                                (_ct, action, json.dumps(changed), srid, stext, evid, time.time()))
-                act_id = cur.lastrowid
+        act_id = linebot.record_act(mid, _ct, action, _before, _sr0, _ev0)
     except Exception as e:
         print(f"[acted log] {e}", flush=True)
     db.track("liff_reply_act")
@@ -1994,7 +2065,20 @@ async def liff_reply_undo(request: Request):
     row = dict(row)
     try:
         with db.conn() as c:
+            # v191その2(#6): 逆順undoの整合ガード。同一相手で「この裁定より後の未undo裁定」に
+            # 含まれるmidは巻き戻さない(↷→返信→↷のundoで返信済みがopen復活し、sent_replyが
+            # 残ったまま二重送信を誘発する事故の防止)。後の裁定をundoすれば通常どおり戻る。
+            _later_mids = set()
+            try:
+                for r2 in c.execute("SELECT changed FROM acted_log WHERE contact=? AND act_id>? "
+                                    "AND undone=0", (row["contact"], act_id)):
+                    for m2, _p in json.loads(r2["changed"] or "[]"):
+                        _later_mids.add(int(m2))
+            except Exception:
+                _later_mids = set()
             for m, prev in json.loads(row["changed"] or "[]"):
+                if int(m) in _later_mids:
+                    continue
                 c.execute("UPDATE messages SET status=? WHERE id=?", (prev, int(m)))
             if row.get("sent_reply_id"):
                 c.execute("DELETE FROM sent_replies WHERE id=?", (row["sent_reply_id"],))

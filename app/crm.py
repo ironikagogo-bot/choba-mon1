@@ -56,7 +56,7 @@ def ensure():
     with db.conn() as c:
         c.executescript(_SCHEMA)
         # 顧客に呼び方(nickname)・距離感(register)列を後付け(既にあれば無視)
-        for ddl in ("nickname TEXT DEFAULT ''", "register TEXT DEFAULT ''", "real_name TEXT DEFAULT ''", "phone TEXT DEFAULT ''", "note_pos TEXT DEFAULT ''", "note_neg TEXT DEFAULT ''", "linked INTEGER DEFAULT 1", "kind TEXT DEFAULT 'customer'", "stand TEXT DEFAULT ''", "kids_bday TEXT DEFAULT ''", "founding TEXT DEFAULT ''", "flag_ero INTEGER DEFAULT 0", "flag_koi INTEGER DEFAULT 0", "company TEXT DEFAULT ''", "company_url TEXT DEFAULT ''", "company_note TEXT DEFAULT ''"):
+        for ddl in ("nickname TEXT DEFAULT ''", "register TEXT DEFAULT ''", "real_name TEXT DEFAULT ''", "phone TEXT DEFAULT ''", "note_pos TEXT DEFAULT ''", "note_neg TEXT DEFAULT ''", "linked INTEGER DEFAULT 1", "kind TEXT DEFAULT 'customer'", "stand TEXT DEFAULT ''", "kids_bday TEXT DEFAULT ''", "founding TEXT DEFAULT ''", "flag_ero INTEGER DEFAULT 0", "flag_koi INTEGER DEFAULT 0", "company TEXT DEFAULT ''", "company_url TEXT DEFAULT ''", "company_note TEXT DEFAULT ''", "flag_hot INTEGER DEFAULT 0"):
             try:
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {ddl}")
             except Exception:
@@ -625,7 +625,7 @@ def search_contacts(q: str = "", attr_key: str = "", attr_val: str = "", kinds=N
 
 
 # ---------- 顧客の基本項目更新(編集フォーム用) ----------
-_ALLOWED = {"rank", "nickname", "register", "note", "tags", "cycle_days", "real_name", "phone", "note_pos", "note_neg", "stand", "kids_bday", "founding", "birthday", "flag_ero", "flag_koi", "company", "company_url", "company_note"}
+_ALLOWED = {"rank", "nickname", "register", "note", "tags", "cycle_days", "real_name", "phone", "note_pos", "note_neg", "stand", "kids_bday", "founding", "birthday", "flag_ero", "flag_koi", "flag_hot", "company", "company_url", "company_note"}
 
 def update_contact(code: str, fields: dict) -> dict:
     ensure()
@@ -741,7 +741,8 @@ def rename_contact(old: str, new: str) -> dict:
                           ("sent_replies", "contact"), ("events", "contact"),
                           ("linebot_facts", "contact"), ("linebot_talks", "contact"),
                           ("linebot_persona", "contact"), ("news_items", "contact"),
-                          ("enrich_suggestions", "contact")):
+                          ("enrich_suggestions", "contact"),
+                          ("acted_log", "contact")):   # v191その2(#10): 裁定履歴・undoの名義追随
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
@@ -776,11 +777,21 @@ def merge_contact(keep: str, absorb: str) -> dict:
     a = db.get_contact(absorb)
     if not k:
         return {"ok": False, "error": "残す側のカードが見つかりません"}
+    # v191その2(#7): keepの種別が本人確定済みかをmerge前に判定しておく(統合後はabsorb由来の
+    # pending🔖が混ざるため判定が変わってしまう)
+    _keep_rel_ok = True
+    try:
+        from . import linebot as _lb
+        _lb.ensure()
+        _keep_rel_ok = _lb.rel_confirmed(keep)
+    except Exception:
+        _keep_rel_ok = True
     with db.conn() as c:
         # データの移動(受信・実例・実績・属性・お席)
         for tbl, col in (("messages", "contact"), ("sent_replies", "contact"),
                           ("events", "contact"), ("contact_aliases", "contact"),
-                          ("sittings", "main_contact"), ("sitting_members", "contact")):
+                          ("sittings", "main_contact"), ("sitting_members", "contact"),
+                          ("acted_log", "contact")):   # v191その2(#10): 裁定履歴・undoの名義追随
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (keep, absorb))
             except Exception:
@@ -795,6 +806,14 @@ def merge_contact(keep: str, absorb: str) -> dict:
         for tbl in ("linebot_facts", "news_items", "enrich_suggestions"):
             try:
                 c.execute(f"UPDATE {tbl} SET contact=? WHERE contact=?", (keep, absorb))
+            except Exception:
+                pass
+        # v191その2(#7): keepが確定済みならabsorb由来のpending🔖を持ち込まない
+        # (確定済みS客が統合の副作用で「未確定」化し仕分けキューへ再登場する事故の防止)
+        if _keep_rel_ok:
+            try:
+                c.execute("DELETE FROM linebot_facts WHERE contact=? AND k=? AND status='pending'",
+                          (keep, "🔖種別・立場"))
             except Exception:
                 pass
         try:
@@ -819,8 +838,12 @@ def merge_contact(keep: str, absorb: str) -> dict:
             _ro = {"S": 0, "A": 1, "B": 2}
             if a and _ro.get(a.get("rank") or "B", 3) < _ro.get(k.get("rank") or "B", 3):
                 c.execute("UPDATE contacts SET rank=? WHERE code=?", (a["rank"], keep))
-            for fl in ("flag_ero", "flag_koi"):
-                if a and int(a.get(fl) or 0) and not int(k.get(fl) or 0):
+            # v191その2(#11): フラグOR継承はkeepが顧客(customer)の時だけ(v187§10)。
+            # koi客を店内カードへ統合すると非客にkoi=1が継承され客UIが誤爆していた
+            # v192: flag_hot(🔥ピン留め)も同条件でOR継承
+            for fl in ("flag_ero", "flag_koi", "flag_hot"):
+                if ((k.get("kind") or "customer") == "customer"
+                        and a and int(a.get(fl) or 0) and not int(k.get(fl) or 0)):
                     c.execute(f"UPDATE contacts SET {fl}=? WHERE code=?", (a[fl], keep))
         except Exception:
             pass
@@ -847,6 +870,29 @@ def merge_contact(keep: str, absorb: str) -> dict:
         c.execute("DELETE FROM pending_links WHERE line_name=?", (absorb,))
     # absorbの名前は紐付けとして残す(その表示名からの受信が keep に入り続ける)
     add_alias(absorb, keep)
+    # v191その2(#7): 検疫メタ(quarantine_{absorb})を迷子にしない。keep側へ統合移行し、
+    # keepの種別が確定済みならその場で解放(客=適用/非客=破棄)。従来はabsorbのカード消滅後も
+    # 保留事実(機微データ)が linebot_meta に永久残留していた。
+    try:
+        import json as _json
+        from . import linebot as _lb2
+        _lb2.ensure()
+        _raw_a = _lb2._meta_get(f"quarantine_{absorb}")
+        # v191その3: _meta_getはキー不在で""を返す(Noneではない)。旧判定は常に真で、
+        # absorbに検疫が無くても毎mergeで空マーカーquarantine_{keep}='[]'が作られ
+        # 後段分析予約が無条件に立っていた。マーカーがある時だけ移行する。
+        if _raw_a:
+            with db.conn() as c:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{absorb}",))
+            try:
+                _fa = _json.loads(_raw_a) if _raw_a else []
+            except Exception:
+                _fa = []
+            _lb2.quarantine_add(keep, _fa)
+            if _keep_rel_ok:
+                _lb2.quarantine_release_async(keep)
+    except Exception as _e:
+        print(f"[merge quarantine] {_e}", flush=True)
     return {"ok": True, "kept": keep, "absorbed": absorb}
 
 

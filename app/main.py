@@ -232,7 +232,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v190"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v193"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
@@ -432,6 +432,43 @@ def usage_stats(token: str = ""):
             days.append({"date": d.isoformat(), "received": received, "drafted": drafted,
                          "sent_verbatim": verbatim, "sent_edited": edited, "skipped": skipped})
 
+        # v191(#18): トリアージ計測(P1着工判断の実測データ。全て件数・分のみ=本文なし)
+        triage_stats = {}
+        try:
+            wk = time.time() - 7 * 86400
+            _notified = [dict(r) for r in c.execute(
+                "SELECT id, contact, notified_ts FROM messages "
+                "WHERE notified_ts IS NOT NULL AND notified_ts>=?", (wk,))]
+            _resp = []
+            for m in _notified:
+                r2 = c.execute("SELECT MIN(ts) FROM sent_replies WHERE message_id=?",
+                               (m["id"],)).fetchone()[0]
+                if r2 and r2 >= m["notified_ts"]:
+                    _resp.append((r2 - m["notified_ts"]) / 60)
+            _resp.sort()
+            _now2 = time.time()
+            _sa_open = [r[0] for r in c.execute(
+                "SELECT m.ts FROM messages m JOIN contacts ct ON ct.code=m.contact "
+                "WHERE m.status='open' AND ct.rank IN ('S','A') "
+                "AND IFNULL(ct.kind,'customer')='customer'")]
+            _defrows = [r[0] for r in c.execute(
+                "SELECT MIN(IFNULL(deferred_ts, ts)) FROM messages "
+                "WHERE status='deferred' GROUP BY contact")]
+            _skip7 = c.execute("SELECT COUNT(*) FROM messages WHERE status='skipped' "
+                               "AND IFNULL(acted_ts, ts)>=?", (wk,)).fetchone()[0]
+            triage_stats = {
+                "urgent_notified_7d": len(_notified),
+                "notify_reply_median_min": (round(_resp[len(_resp) // 2], 1) if _resp else None),
+                "notify_replied_within60m": (round(sum(1 for x in _resp if x <= 60) / len(_resp) * 100)
+                                             if _resp else None),
+                "sa_neglect_max_min": (int((_now2 - min(_sa_open)) / 60) if _sa_open else 0),
+                "deferred_contacts": len(_defrows),
+                "deferred_oldest_days": (round((_now2 - min(_defrows)) / 86400, 1) if _defrows else 0),
+                "skipped_7d": _skip7,
+            }
+        except Exception as _e:
+            print(f"[stats triage] {_e}", flush=True)
+
         # ---- 行動分析(本文なし・開発用) ----
         t14 = time.time() - 14 * 86400
         # 時間帯ヒスト(0-23時): 受信/返信
@@ -526,6 +563,7 @@ def usage_stats(token: str = ""):
         "ok": True, "now": time.time(), "last_ingest_ts": last_ts,
         "contacts_total": n_contacts, "contacts_by_kind": kinds,
         "learning_examples": n_examples, "days": days,
+        "triage": triage_stats,
         "hourly": hourly, "actions": actions, "neglected_over_24h": neglected,
         "latency": latency, "by_rank": by_rank, "by_category": by_cat,
         "modes": modes, "avg_edit_ratio": round(avg_edit, 1) if avg_edit is not None else None,
@@ -941,12 +979,23 @@ def act(mid: int, body: Action):
         raise HTTPException(404)
     if body.action not in ("replied", "stamped", "deferred", "skipped", "done"):
         raise HTTPException(400, "bad action")
+    # v191その2(#13): 裁定済み(replied/skipped/stamped)midへの再act(2端末・再送・二重タップ)では
+    # 副作用(仮イベント・文体学習)を繰り返さない。open/↷あとで(deferred)の消化は通常どおり。
+    _prev_open = (msg.get("status") or "open") in ("open", "deferred")
     # v75: 「対応済み」= LINEで直接返した/口頭で済んだ。返信として数えるが、
     # 押した時刻は本当の返信時刻ではないので応答時間の統計には入れない(acted_ts無し)。
     if body.action == "done":
         db.set_status(mid, "replied", no_ts=True)
     else:
         db.set_status(mid, body.action)
+    # v191(#18): ↷あとでの時刻を記録(滞留日数の計測用。mids含め一括)
+    if body.action == "deferred":
+        try:
+            with db.conn() as c:
+                for _m in set([mid] + [int(x) for x in (body.mids or [])]):
+                    c.execute("UPDATE messages SET deferred_ts=? WHERE id=?", (time.time(), _m))
+        except Exception:
+            pass
     # ラリー連投対策(v175で全面改修): 旧実装は「10分以内で連続するチェーン」しか道連れに
     # しなかったため、隙間の空いた五月雨受信が open のまま残り、返信のたびに過去の1通が
     # 「新しい受信」として再出現するループになっていた(本人報告 2026-08-09)。
@@ -983,7 +1032,7 @@ def act(mid: int, body: Action):
         except Exception:
             pass
     # 返信したら、実際に送った最終文(編集込み)を文体プロファイルに還元=使うほど賢くなる
-    if body.action == "replied" and (body.text or "").strip():
+    if body.action == "replied" and (body.text or "").strip() and _prev_open:   # v191その2(#13)
         try:
             from .style_profile import learn_from_sent
             # そのまま送れたか自動判定: 生成済み下書きのどれかと一致=そのまま(0)/不一致=編集(1)/下書き無し(クイック等)=0
@@ -1000,7 +1049,7 @@ def act(mid: int, body: Action):
     # 返信したら実績を自動記録(入力ゼロ原則): 来店系→visit、同伴系→dohan
     # ※店内・業務(黒服/ママ)は営業対象外なので実績を記録しない
     _kind = (db.get_contact(msg["contact"]) or {}).get("kind", "customer")
-    if body.action in ("replied", "done") and _kind != "staff":
+    if body.action in ("replied", "done") and _kind != "staff" and _prev_open:   # v191その2(#13)
         _r = msg["reason"] or ""
         if ("来店" in _r) or ("席" in _r):
             db.add_event(msg["contact"], "visit", f"{msg['contact']} 来店(仮)", "tentative")

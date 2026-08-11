@@ -215,10 +215,12 @@ body.dark .orole.navy{background:rgba(120,150,210,.13);color:#AFC3E8;border-bott
 .actbar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1px solid var(--border);
   padding:10px 14px calc(env(safe-area-inset-bottom) + 10px);display:flex;gap:8px;z-index:20;
   max-width:560px;margin:0 auto}
-.actbar .xleft{flex:0 0 auto;margin-right:14px;color:var(--sub)}
+/* v191(#23): 「✕ 返さない?」(armed)基準の固定幅=arm時に他ボタンがレイアウトシフトしない */
+.actbar .xleft{flex:0 0 auto;min-width:80px;text-align:center;margin-right:8px;color:var(--sub)}
 .actbar .xleft.armed{border-color:var(--red);color:var(--red);font-weight:800}
+/* v191(#22): 主要アクションのタップ域44px(規約) */
 .actbar button{flex:1;border:1px solid var(--border);background:var(--panel);border-radius:10px;
-  padding:11px 4px;font-size:12px;color:var(--sub);cursor:pointer;font-weight:700}
+  padding:11px 3px;font-size:12px;color:var(--sub);cursor:pointer;font-weight:700;min-height:44px}
 .skel{border-radius:10px;background:linear-gradient(90deg,#EFEAE0 25%,#F7F3E9 50%,#EFEAE0 75%);
   background-size:200% 100%;animation:sk 1.2s infinite;height:72px;margin-bottom:10px}
 @keyframes sk{from{background-position:200% 0}to{background-position:-200% 0}}
@@ -267,6 +269,45 @@ body.dark .btn.ghost{background:transparent}
 body.dark .banner{box-shadow:none}
 body.dark .stickyfix{background:linear-gradient(165deg,var(--navy-hi),var(--navy-lo))}
 
+/* ---- v192: 一覧主役トリアージ ---- */
+.lsec{display:flex;align-items:baseline;gap:7px;margin:14px 2px 7px;cursor:pointer;user-select:none}
+.lsec .tt{font-size:13px;font-weight:800}
+.lsec .ct{font-size:12px;color:var(--sub)}
+.lsec .arr{margin-left:auto;font-size:11px;color:var(--sub);padding:6px}
+.lrow{background:var(--panel);border:1px solid var(--border);border-radius:13px;margin-bottom:7px;overflow:hidden}
+.lrow.urg{border-left:4px solid var(--red)}
+.lrow.pinb{border-left:4px solid var(--gold)}
+.ltop{display:flex;align-items:center;padding:8px 2px 8px 12px;min-height:52px}
+.ltop .lmain{flex:1;min-width:0;cursor:pointer}
+.ltop .l1{display:flex;align-items:baseline;gap:7px}
+.ltop .nm{font-weight:800;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ltop .rk{font-size:10.5px;font-weight:800;border-radius:6px;padding:1px 5px;background:rgba(201,164,76,.18);color:#8a6a1f;flex:0 0 auto}
+.ltop .tm{margin-left:auto;font-size:11px;color:var(--sub);padding-right:2px;flex:0 0 auto}
+.ltop .l2{display:flex;align-items:baseline;gap:7px;margin-top:2px;min-width:0}
+.ltop .why{font-size:11px;font-weight:800;color:var(--red);white-space:nowrap;flex:0 0 auto}
+.ltop .why.b{color:#8a6a1f}
+.ltop .ex{flex:1;font-size:12.5px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.lbtns{display:flex;flex:0 0 auto;gap:5px;align-items:center;padding-right:8px}
+/* v192: ↷✕の視認性(丸枠アイコン。赤は🔥急ぎ専用の規約を守り単色のまま) */
+.lbtns button{width:38px;height:38px;border:1.5px solid var(--border);border-radius:50%;background:var(--panel);
+  font-size:15px;color:var(--ink);cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.lbody{border-top:1px solid var(--border);padding:11px 12px;background:var(--panel)}
+.lsub{display:flex;align-items:center;gap:8px;padding:5px 12px;font-size:13px;min-height:44px;
+  background:var(--panel);border:1px solid var(--border);border-radius:13px;margin-bottom:7px;opacity:.6}
+.lsub .nm{font-weight:700}
+.lsub .st{font-size:11px;color:var(--sub)}
+.lsub .undo{margin-left:auto;color:var(--gold);font-weight:700;font-size:12.5px;cursor:pointer;padding:12px 0 12px 12px}
+/* v192その5: 済み表示=下の黒帯・4秒(本人裁定 2026-08-11「下の方がよく6秒は長い」。
+   琥珀上部案から変更)。本文を隠さない・紺(UI色)と混ぜない・OS通知に近い型で学習コストなし */
+#snack{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom) + 14px);
+  background:#2B2823;color:#F0ECE2;border-radius:12px;
+  padding:0 14px;font-size:13px;font-weight:700;display:none;z-index:60;align-items:center;gap:10px;
+  min-height:46px;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+#snack u{margin-left:auto;color:#E9CE7E;font-weight:800;text-decoration:none;cursor:pointer;
+  padding:13px 0 13px 13px;white-space:nowrap}
+.lfoot{display:flex;gap:7px;margin-top:10px}
+.lfoot button{flex:1;border:1px solid var(--border);background:var(--panel);border-radius:11px;
+  min-height:44px;font-size:13px;font-weight:700;color:var(--ink)}
 </style>
 </head>
 <body>
@@ -570,6 +611,8 @@ function route() {
   const [_, name, arg] = h.match(/^#(\w+)\/?(.*)$/) || [0, "home", ""];
   dirty = false;
   $("#view").classList.remove("hasbar");
+  document.getElementById("histsheet")?.remove();   // v191(#5): 画面遷移後も残留し下部バーを覆っていた
+  window.scrollTo(0, 0);   // v192その4: 画面遷移は必ず先頭から(前画面のスクロール位置を持ち込まない)
   if (name === "list") return vList();
   if (name === "card" && arg) return vCard(decodeURIComponent(arg));
   if (name === "edit" && arg) return vEdit(decodeURIComponent(arg));
@@ -626,7 +669,7 @@ function drawSeibi() {
     "種別・立場": "下書きの口調が決まる一番大事な項目です",
     "進行中の話": "続きに触れると効く未完了の件",
     "NG話題": "下書きが絶対に触れない話題",
-    "担当": "この客の担当キャスト。自分なら「自分」",
+    "担当": W("この客の担当キャスト。自分なら「自分」", "この人の主担当。自分なら「自分」"),   // v191(A11)
   };
   const hintKey = Object.keys(HINT).find(k => f.k.includes(k));
   const hint = hintKey ? `<div class="note" style="margin:2px 0 0">💡 ${HINT[hintKey]}</div>` : "";
@@ -716,14 +759,14 @@ window.seibiOk = async () => {
   if (!ok) return;
   toast(doneText);
   store.del("card_" + f.contact); bust("home");   // v150: 途中離脱でも件数表示を古くしない
-  seibi.i += 1; drawSeibi();
+  seibi.i += 1; window.scrollTo(0, 0); drawSeibi();   // v192その4: 次の1件は先頭から
 };
 window.seibiAct = async action => {
   const f = seibi.items[seibi.i];
   if (!await factAct({ id: f.id, action })) return;
   store.del("card_" + f.contact); bust("home");   // v150: 途中離脱でも件数表示を古くしない
   toast(action === "del" ? `「${f.k}」を消しました` : "あとで確認に回しました");
-  seibi.i += 1; drawSeibi();
+  seibi.i += 1; window.scrollTo(0, 0); drawSeibi();   // v192その4: 次の1件は先頭から
 };
 
 // ---- サクサク基盤v103: localStorage永続キャッシュ=画面を0msで描いて裏で更新 ----
@@ -761,8 +804,9 @@ function prefetchReply(mid) {
 }
 function prefetchAnn(code, tone, template) {
   const k = "a" + code;
-  const PLAB = { shukkin: "出勤のお知らせ", event: "イベントの案内", season: "季節のご挨拶",
-    gobusata: "ご無沙汰の相手への軽い挨拶", free: "" };
+  // v191(B2): 生成に渡すpurposeもモード追従(表示ラベルANN_PURPOSESはW済みなのに生成指示だけ夜職だった)
+  const PLAB = { shukkin: W("出勤のお知らせ", "近況のお知らせ"), event: W("イベントの案内", "お誘い・イベントの案内"),
+    season: "季節のご挨拶", gobusata: "ご無沙汰の相手への軽い挨拶", free: "" };
   if (!draftCache[k]) draftCache[k] =
     api("/api/liff/ann/draft", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, tone, template: ann.detail || "",
@@ -1268,7 +1312,8 @@ function drawCard(code, d) {
   const news = (d.news || []).map(x =>
     `<div class="hist">📰 ${esc(x.title)}${x.opener ? `<div class="quote">→ ${esc(x.opener)}</div>` : ""}</div>`).join("");
   const hist = []
-    .concat((d.history.seki || []).map(x => ({ ts: x.ts, t: "🍾 お席(" + esc(x.kind || "来店") + ")" })))
+    .concat((d.history.seki || []).map(x => { const sk = x.kind || "来店";   // v191(A3): 一般モード表示変換
+      return { ts: x.ts, t: W("🍾 お席(", "🍽 会った記録(") + esc(W(sk, { "来店": "会食", "店外": "外で" }[sk] || sk)) + ")" }; }))
     .concat((d.history.received || []).map(x => ({ ts: x.ts, t: "📩 " + esc((x.text || "").slice(0, 34)) })))
     .concat((d.history.sent || []).map(x => ({ ts: x.ts, t: "📤 " + esc((x.text || "").slice(0, 34)) })))
     .sort((a, b) => b.ts - a.ts).slice(0, 8)
@@ -1291,11 +1336,12 @@ function drawCard(code, d) {
     ${d.flag_ero == 1 ? `<div class="kv"><div class="k">下ネタ</div><div class="v">いなし</div></div>` : ""}
     ${d.note ? `<div class="kv"><div class="k">メモ</div><div class="v">${esc(d.note)}</div></div>` : ""}
     ${d.birthday ? `<div class="kv"><div class="k">誕生日</div><div class="v">🎂 ${esc(d.birthday)}</div></div>` : ""}
-    ${d.attrs["担当"] ? `<div class="kv"><div class="k">担当</div><div class="v">${
+    ${d.attrs["担当"] ? `<div class="kv"><div class="k">${W("担当", "主担当")}</div><div class="v">${
       isSelfTanto(d.attrs["担当"])
       ? esc(d.attrs["担当"])
       : `<span style="color:var(--red);font-weight:700">⚠️ ${esc(d.attrs["担当"])}</span>
-         <div class="quote">担当は別の子。立ち居振る舞いに注意(下書きも控えめトーン)</div>
+         <div class="quote">${W("担当は別の子。立ち居振る舞いに注意(下書きも控えめトーン)",
+           "主担当は別の人。距離感に注意(下書きも控えめトーン)")}</div>
          <div style="margin-top:4px"><button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
            onclick="tantoSelf('${cq}')">👤 これは自分です</button></div>`
     }</div></div>` : ""}
@@ -1569,7 +1615,7 @@ window.dupPick = async (cq) => {
 window.cardWipe = async cq => {
   const code = decodeURIComponent(cq);
   const ok = await askDanger(`「${disp(code)}」を完全消去`,
-    "カード・受信・送信・トーク・ペルソナ・お席の記録まで、すべて消えます。");
+    `カード・受信・送信・トーク・ペルソナ・${W("お席の記録", "会った記録")}まで、すべて消えます。`);
   if (!ok) return toast("やめました");
   try {
     const r = await api("/api/liff/contact_delete", { method: "POST",
@@ -1675,12 +1721,15 @@ async function vEdit(code) {
     .join("") + `</div>`;
   const bigKeys = ["進行中の話", "NG話題", "関係性メモ", "家族", "趣味・関心", "記念日", "資産・事業"];
   const REQ = ["呼び名"];   // 本名は分からないこと多い=任意
+  // v191(A7): 属性キーはDBキーなので改名不可。表示ラベルだけ一般モード変換
+  const ATTR_LAB = k => ({ "担当": W("担当", "主担当"),
+    "お気に入りキャスト": W("お気に入りキャスト", "お気に入りの人") }[k] || k);
   const attrField = k => {
     // v173: 本人指摘「LINE検索名はこの時点で分かっているはず」。空ならカード作成元の
     // 登録名(=LINE表示名)を初期値に入れておく(保存すると確定。変えたければ上書きするだけ)
     const v = d.attrs[k] || (k === "LINE検索名" ? (d.gname ? d.pname : d.code) : "");
     const req = REQ.includes(k);
-    let h = `<label class="f">${esc(k)}${req ? ' <span style="color:var(--red)">*必須</span>' : ""}</label>`;
+    let h = `<label class="f">${esc(ATTR_LAB(k))}${req ? ' <span style="color:var(--red)">*必須</span>' : ""}</label>`;
     h += bigKeys.includes(k)
       ? `<textarea class="f" data-attr="${esc(k)}">${esc(v)}</textarea>`
       : `<input class="f" data-attr="${esc(k)}" value="${esc(v)}" ${req ? 'data-req="1"' : ""}>`;
@@ -1692,7 +1741,8 @@ async function vEdit(code) {
     if (k === "担当")
       h += `<button type="button" class="chip" style="margin-top:6px"
         onclick="const i=document.querySelector('[data-attr=担当]');i.value='自分';i.dispatchEvent(new Event('input',{bubbles:true}))">自分が担当</button>
-        <span class="note" style="display:inline">担当が別の子なら名前を。下書きが控えめトーンになります</span>`;
+        <span class="note" style="display:inline">${W("担当が別の子なら名前を。下書きが控えめトーンになります",
+          "主担当が別の人なら名前を。下書きが控えめトーンになります")}</span>`;
     return h;
   };
   $("#view").innerHTML = `
@@ -1706,9 +1756,11 @@ async function vEdit(code) {
   </div>
   <div class="card">
     <label class="f">ランク</label>${chip("rank", [["S", W("S(太客)", "S(大切な人)")], ["A", "A"], ["B", "B"]], d.rank)}
-    <label class="f">種別</label>${chip("kind", [["customer", "顧客"], ["staff", "店内"], ["peer", "同業"], ["private", "私用"]], d.kind)}
+    <label class="f">種別</label>${chip("kind", [["customer", W("顧客", "仕事の相手")], ["staff", W("店内", "社内・チーム")],
+      ["peer", W("同業", "仕事仲間・社外")], ["private", "私用"]], d.kind)}
     <div id="sgBox" style="display:${d.kind === "staff" ? "block" : "none"}">
-      <label class="f">店内の区分</label>${chip("staffgender", [["女", "店内(女)"], ["男", "店内(男)"]], (d.attrs["店内区分"] || ""))}</div>
+      <label class="f">${W("店内の区分", "社内の区分")}</label>${chip("staffgender",
+        [["女", W("店内(女)", "女性")], ["男", W("店内(男)", "男性")]], (d.attrs["店内区分"] || ""))}</div>
     <label class="f">立場</label>${chip("stand", [["up", "目上"], ["even", "対等"], ["down", "目下"]], d.stand || "even")}
     <label class="f">下ネタ対応</label>${chip("flagero", [["0", "なし"], ["1", "いなし(受け流す)"], ["2", "ノリOK"]], String(d.flag_ero || 0))}
     <label class="f">ガチ恋の線引き</label>${chip("flagkoi", [["0", "OFF"], ["1", "線引きON(長文案も出す)"]], String(d.flag_koi || 0))}
@@ -1725,7 +1777,7 @@ async function vEdit(code) {
     <div class="chips" id="mgBox"><button class="chip" onclick="mergePick('${encodeURIComponent(code)}')">統合先を選ぶ</button></div>
   </details>
   <details class="card" style="margin-top:10px"><summary style="color:var(--red)">🗑 このカードを完全消去</summary>
-    <div class="note" style="margin:6px 0">${esc(disp(d.name))}のカード・受信・送信・トーク原文・ペルソナ・お席の記録まで
+    <div class="note" style="margin:6px 0">${esc(disp(d.name))}のカード・受信・送信・トーク原文・ペルソナ・${W("お席の記録", "会った記録")}まで
     <b>すべて消します。取り消せません。</b>また同じ表示名から受信があれば、未登録として新しく現れます
     (受信自体を止めたい相手は、消去ではなく仕分けで🔒私用にしてください)。</div>
     <button class="chip" style="color:var(--red)" onclick="cardWipe('${encodeURIComponent(code)}')">🗑 完全消去する…</button>
@@ -1922,97 +1974,65 @@ async function vImport() {
 
 // ============ 📨 返信(配達ループ・プリフェッチで待ちゼロ) ============
 // v190: トリアージ最終仕様P0 — あとで区画/カーソル同夜化/350msロック/アンドゥ3層/完走画面
-const rep = { items: null, later: [], i: 0, mode: "open", recent: [] };
-// --- 350ms入力ロック(裁定直後の二度押しが次の人・トーストに着弾する事故の防止) ---
+// ============ v192: トリアージ一覧(順送り機械を廃止して「一覧が主役」に) ============
+// 本人裁定(2026-08-11): 案A採用。選別マシン=「🔥いま返す」は 用件(urgent)/ランクS/📌ピン留め。
+// 儀式ゼロ: 中段トースト・完走画面・✕2段・カーソル復帰を全廃。タップ最少がLIFFの基本哲学。
+// 取り消しは下の黒帯(6秒)と各区画の「↩︎戻す」に一本化(acted_log/undoのサーバ基盤はv190のまま)。
+const rep = { items: null, recent: [], acted_n: 0, i: -1, koi_patterns: [] };
 let _repLock = 0;
 const repLocked = () => Date.now() < _repLock;
 const repLock = () => { _repLock = Date.now() + 350; };
-// --- カーソル(同夜有効。失効=min(最終操作+6h, 次の朝5時JST+1h)) ---
-function curSave() {
-  try {
-    const it = rep.items[rep.i];
-    if (rep.mode === "open" && it) localStorage.setItem("cb_rep_cursor",
-      JSON.stringify({ mid: it.mid, ts: Date.now() / 1000 }));
-    else if (rep.mode === "open") localStorage.removeItem("cb_rep_cursor");
-  } catch (e) {}
-}
-function curLoad() {
-  try {
-    const c = JSON.parse(localStorage.getItem("cb_rep_cursor") || "null");
-    if (!c) return null;
-    const ts = c.ts, now = Date.now() / 1000;
-    const d = new Date((ts + 9 * 3600) * 1000);                    // JSTで5時境界を計算
-    const day0 = Math.floor((ts + 9 * 3600) / 86400) * 86400 - 9 * 3600;
-    let next5 = day0 + 5 * 3600;                                    // その日のJST5:00
-    if (ts >= next5) next5 += 86400;                                // 操作が5時以降なら翌日の5:00
-    const expire = Math.min(ts + 6 * 3600, next5 + 3600);
-    if (now > expire) { localStorage.removeItem("cb_rep_cursor"); return { expired: true }; }
-    return c;
-  } catch (e) { return null; }
-}
+// 区画判定: あとで行き=全通↷のみ(open+deferred混在=↷済み相手からの新着は本流に残す。v191#1と同義)
+const repIsLater = x => !!x.deferred && (x.count || 1) <= x.deferred;
+const repIsHot = x => !!x.urgent || (x.rank === "S" && !x.unlinked) || !!x.pin;
+
 async function vInbox(pri) {
-  setHead("📨 いまの返信", "", true);
+  setHead("📨 受信", "", true);
+  $("#view").classList.remove("hasbar");
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/inbox"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
-  // v190: openとあとでを区画に分離。nは「いま返す人数」のみ(あとでは母数に入れない)
-  rep.items = (d.items || []).filter(x => !x.deferred);
-  rep.later = (d.items || []).filter(x => x.deferred);
+  try { localStorage.removeItem("cb_rep_cursor"); } catch (e) {}   // v192: カーソル廃止の掃除
+  rep.items = d.items || [];
   rep.recent = d.recent_acted || [];
-  rep.i = 0; rep.mode = "open"; rep.koi_patterns = d.koi_patterns || [];
-  // v155: 🔥通知の「この人の返信をひらく」から来た場合、その相手を先頭に繰り上げる。
-  // rep.iジャンプ方式は手前の急ぎを飛ばして「対応済み」と誤認させるので不可(検証済みの設計判断)
-  if (pri) {
+  rep.acted_n = d.acted_n || 0;
+  rep.koi_patterns = d.koi_patterns || [];
+  rep.i = -1;
+  if (pri) {   // 🔥通知の「この人の返信をひらく」: その行を開いて位置まで送る
     const k = rep.items.findIndex(x => x.contact === pri);
-    if (k > 0) rep.items.unshift(rep.items.splice(k, 1)[0]);
-    if (k >= 0) toast(`🔥 ${disp(pri)}を先頭にしました`);
-    else toast(`${disp(pri)}は対応済みです`);
-  } else {
-    // v190: 黙って「つづきから」(同夜のカーソル)。失効時のみ1行知らせる
-    const c = curLoad();
-    if (c && c.expired) toast(W("昨夜のつづきは終了しました", "前回のつづきは終了しました"));
-    else if (c && c.mid) {
-      const k = rep.items.findIndex(x => x.mid === c.mid || (x.mids || []).includes(c.mid));
-      if (k > 0) rep.i = k;
-    }
+    if (k >= 0) rep.i = k; else toast(`${disp(pri)}は対応済みです`);
   }
-  if (!rep.items.length && rep.later.length && !(rep.recent || []).length) {
-    // v190(3-5): open=0・今夜の対応もまだ・あとで残あり → 完走画面を出さず「あとで」を直接開始
-    startLater();
-    return;
+  // 先読み: 🔥区画の先頭2人だけ(展開した瞬間に下書きが出るように)
+  rep.items.filter(x => !x.unlinked && !repIsLater(x) && repIsHot(x)).slice(0, 2)
+    .forEach(x => prefetchReply(x.mid));
+  drawRep();
+  if (rep.i >= 0) setTimeout(() => {
+    document.getElementById("lr" + rep.i)?.scrollIntoView({ block: "center" }); }, 60);
+}
+
+// --- 黒帯スナックバー(唯一のアンドゥ導線。6秒・画面を塞がない) ---
+let _sT = null, _sShown = 0, _sActP = null;
+function snack(text, actPromise) {
+  let el = document.getElementById("snack");
+  if (!el) {
+    el = document.createElement("div"); el.id = "snack";
+    el.addEventListener("click", e => {
+      if (!e.target || e.target.tagName !== "U") return;
+      if (Date.now() - _sShown < 350) return;   // 二度押しの2打目を吸わない
+      el.style.display = "none"; clearTimeout(_sT);
+      if (_sActP) undoNow(_sActP);
+      _sActP = null;
+    });
+    document.body.appendChild(el);
   }
-  rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
-  drawRep();
+  el.innerHTML = `<span>${text}</span>` + (actPromise ? `<u>↩︎ 戻す</u>` : "");
+  el.style.display = "flex"; _sShown = Date.now(); _sActP = actPromise || null;
+  clearTimeout(_sT);
+  _sT = setTimeout(() => { el.style.display = "none"; _sActP = null; }, 4000);   // v192その5: 6秒→4秒(本人裁定)
 }
-function startLater() {
-  if (!rep.later.length) { drawRep(); return; }
-  rep.mode = "later"; rep.items = rep.later; rep.later = []; rep.i = 0;
-  rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
-  drawRep();
-}
-function repAdvance(stampText) {
-  if (stampText) toast(stampText);
-  // v175: 済んだ相手の下書きキャッシュを破棄(再出現時に古い下書きが即出る問題)+
-  // ホーム件数キャッシュを都度無効化(途中で‹離脱しても件数が古いまま残らない)
-  const cur = rep.items[rep.i];
-  if (cur) delete draftCache["m" + cur.mid];
-  bust("home");
-  rep.i += 1;
-  repLock();   // v190: 350ms入力ロック(視覚は即遷移・入力だけ無視)
-  curSave();
-  const nx = rep.items.slice(rep.i).filter(x => !x.unlinked).slice(0, 2);
-  nx.forEach(x => prefetchReply(x.mid));
-  drawRep();
-}
-// --- v190: アンドゥ(中段トースト・全面タップ・8秒・表示後350ms無効) ---
-let _uT = null, _uShown = 0, _uActP = null, _uIdx = null;
-function undoToast(html, actPromise, idx) {
-  const t = $("#utoast");
-  t.innerHTML = html + `<small>ここをタップで戻せます(8秒)</small>`;
-  t.style.display = "block"; _uShown = Date.now(); _uActP = actPromise; _uIdx = idx;
-  clearTimeout(_uT); _uT = setTimeout(() => { t.style.display = "none"; _uActP = null; }, 8000);
-}
-async function undoNow(actP, restoreIdx) {
+function snackHide() { const el = document.getElementById("snack");
+  if (el) el.style.display = "none"; clearTimeout(_sT); _sActP = null; }
+async function undoNow(actP) {
   let actId = null;
   try { const r = await actP; actId = r && r.act_id; } catch (e) {}
   if (!actId) { toast("戻せませんでした(通信)"); return false; }
@@ -2020,54 +2040,11 @@ async function undoNow(actP, restoreIdx) {
     const r2 = await api("/api/liff/reply/undo", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
     if (r2.error) { toast(r2.error); return false; }
-  } catch (e) { toast("戻せませんでした(通信)"); return false; }
-  bust("home");
-  if (restoreIdx != null && rep.items) { rep.i = Math.max(0, restoreIdx); curSave(); drawRep(); }
-  else vInbox();
-  toast("↩︎ 戻しました");
+  } catch (e) { return toast("戻せませんでした(通信)"), false; }
+  bust("home"); toast("↩︎ 戻しました"); vInbox();
   return true;
 }
-function bindUndoToast() {
-  const t = document.createElement("div");
-  t.id = "utoast";
-  t.style.cssText = "position:fixed;left:16px;right:16px;top:42%;z-index:60;display:none;" +
-    "background:var(--navy);color:#fff;border-radius:13px;padding:13px 14px;font-size:13.5px;" +
-    "font-weight:700;text-align:center;box-shadow:0 8px 30px rgba(0,0,0,.35);cursor:pointer";
-  t.addEventListener("click", () => {
-    if (Date.now() - _uShown < 350 || repLocked()) return;   // 二度押しの2打目を吸わない
-    t.style.display = "none"; clearTimeout(_uT);
-    if (_uActP) undoNow(_uActP, _uIdx);
-    _uActP = null;
-  });
-  document.body.appendChild(t);
-  const s = document.createElement("style");
-  s.textContent = "#utoast small{display:block;font-weight:400;opacity:.7;font-size:10.5px;margin-top:3px}";
-  document.head.appendChild(s);
-}
-bindUndoToast();
-// --- v190: 今夜の対応(裁定履歴)シート ---
-function repHistory() {
-  const ACT_J = { done: "✓", replied: "📤", deferred: "↷", skipped: "✕", stamped: "✓" };
-  const rows = (rep.recent || []).map(a =>
-    `<div style="display:flex;gap:8px;padding:9px 2px;border-bottom:1px solid var(--border);align-items:baseline">
-      <span>${ACT_J[a.action] || "✓"}${esc(disp(a.name))}</span>
-      <span style="margin-left:auto;font-size:11.5px;color:var(--sub)">${esc(a.tm)}</span>
-      ${a.sent ? `<span style="font-size:11px;color:var(--sub)">送信済み</span>`
-        : `<a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
-             onclick="repHistUndo(${a.act_id});return false">↩︎戻す</a>`}</div>`).join("");
-  const sh = document.createElement("div");
-  sh.id = "histsheet";
-  sh.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:65%;overflow-y:auto;z-index:55;" +
-    "background:var(--panel);border-radius:18px 18px 0 0;box-shadow:0 -10px 40px rgba(0,0,0,.3);padding:14px";
-  sh.innerHTML = `<b style="font-size:14px">${W("今夜の対応", "今日の対応")}(上限30件)</b>
-    ${rows || `<div class="note" style="margin-top:8px">まだ対応がありません</div>`}
-    <div style="background:var(--cream);border-radius:10px;text-align:center;padding:12px;font-weight:700;
-      margin-top:10px;cursor:pointer" onclick="document.getElementById('histsheet').remove()">閉じる</div>`;
-  document.getElementById("histsheet")?.remove();
-  document.body.appendChild(sh);
-}
-window.repHistUndo = async actId => {
-  document.getElementById("histsheet")?.remove();
+window.repHistUndo = async actId => {   // 区画行の「↩︎戻す」(サーバ確定済みの裁定の取り消し)
   try {
     const r = await api("/api/liff/reply/undo", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
@@ -2075,156 +2052,228 @@ window.repHistUndo = async actId => {
   } catch (e) { return toast("戻せませんでした(通信)"); }
   bust("home"); toast("↩︎ 戻しました"); vInbox();
 };
-async function drawRep() {
-  const n = rep.items.length;
-  if (rep.i >= n) {
-    // v175: 完走画面の作り直し。(1)下のボタンバーを確実に消す(「ホームへ」と「✓対応した」が
-    // 同居して意味不明だった・本人指摘) (2)飛行中の対応POSTを待ってから件数を確定
-    // (3)サーバに残り(対応中の新着など)が無いか確認し、あればその場で続ける
-    $("#view").classList.remove("hasbar");
-    // v175: 直前の「✓対応した」トーストがボタンと同じ見た目で完了画面に残り、
-    // 「ホームへ」との違いが分からなくなっていた(本人指摘)。完了画面では即消す。
-    try { const _t = $("#toast"); _t.classList.remove("show"); clearTimeout(_t._h); } catch (e) {}
-    setHead("📨 いまの返信", "完了", true);
-    $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
-    try { await Promise.allSettled(PENDING_FIRES.splice(0)); } catch (e) {}
-    bust("home");
-    let fresh = null;
-    try { fresh = await api("/api/liff/inbox"); } catch (e) {}
-    // v190(#1): 偽新着ループ修正 — あとで(deferred)だけのカードを「新しい受信」と誤認しない
-    const freshOpen = ((fresh && fresh.items) || []).filter(x => !x.deferred);
-    const freshLater = ((fresh && fresh.items) || []).filter(x => x.deferred);
-    rep.recent = (fresh && fresh.recent_acted) || rep.recent || [];
-    if (rep.mode === "open" && freshOpen.length) {
-      rep.items = freshOpen; rep.later = freshLater; rep.i = 0;
-      rep.koi_patterns = (fresh && fresh.koi_patterns) || rep.koi_patterns;
-      toast("📨 対応中に新しい受信がありました。つづけます");
-      rep.items.filter(x => !x.unlinked).slice(0, 2).forEach(x => prefetchReply(x.mid));
-      return drawRep();
-    }
-    // v190(3-5): 完走画面(平常時2行)。人数=今夜の裁定のユニーク相手数(actedログ単一ソース)
-    try { localStorage.removeItem("cb_rep_cursor"); } catch (e) {}
-    rep.later = freshLater; rep.mode = "open"; rep.items = [];
-    const actedN = new Set((rep.recent || []).map(a => a.name)).size;
-    const laterN = freshLater.length;
-    if (!actedN && !laterN) {
-      $("#view").innerHTML = `<div class="empty" style="font-size:16px">
-        ${W("今夜は返信待ちがありません", "いまは返信待ちがありません")}</div>
-        <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
-      return;
-    }
-    $("#view").innerHTML = `<div style="text-align:center;padding:38px 8px 8px">
-      <div style="font-size:19px;font-weight:800">✨ おつかれさま👏 ${W("今夜", "今日")}: ${actedN}人に対応</div>
-      <div style="font-size:13.5px;color:var(--sub);margin-top:10px">
-        ${laterN ? `あとで ${laterN}人 <a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
-          onclick="startLater();return false">▸いまやる</a> ・ ` : ""}
-        <a href="#" style="color:var(--gold);font-weight:700;text-decoration:none"
-          onclick="repHistory();return false">▸${W("今夜", "今日")}の対応を見る</a></div>
-      <button class="btn ghost" style="margin-top:22px" onclick="nav('#home')">ホームへ</button></div>`;
-    return;
-  }
+
+// --- 行の1タップ裁定(↷/✕/✓)。楽観移動+黒帯アンドゥ。サーバはv190のact/undoそのまま ---
+function _listAct(k, action, label) {
+  const it = rep.items[k];
+  if (!it || it._done) return;
+  repLock();
+  const p = fire("/api/liff/reply/act", { mid: it.mid, action, text: "", mids: it.mids });
+  p.then(r => { if (r && r.act_id) it._act_id = r.act_id; }).catch(() => {});
+  if (action === "deferred") it.deferred = it.count || 1;   // 楽観: 🌙あとで区画へ
+  else it._done = action;                                    // skipped/done: 畳んで区画へ
+  delete draftCache["m" + it.mid];
+  if (rep.i === k) rep.i = -1;
+  bust("home");
+  drawRep();
+  snack(label || `${{ deferred: "↷", skipped: "✕", done: "✓" }[action] || "✓"} ${esc(disp(it.name))}を${
+    { deferred: "「あとで」に", skipped: "「返さない」に", done: "対応済みに" }[action] || "記録に"}しました`, p);
+}
+window.listAct = (k, action) => { if (repLocked()) return; _listAct(k, action); };
+window.listUndoLocal = k => {   // 楽観行の取り消し(act往復前でもpromise経由で戻せる)
+  const it = rep.items[k];
+  if (!it) return;
+  if (it._act_id) undoNow(Promise.resolve({ act_id: it._act_id }));
+  else toast("処理中です。1秒おいてもう一度押してください");
+};
+
+// --- 📌ピン留め(いつも「いま返す」に出す相手。選別マシンの本人調整ダイヤル) ---
+window.pinToggle = async k => {
+  const it = rep.items[k];
+  if (!it) return;
+  const on = it.pin ? 0 : 1;
+  it.pin = on; drawRep();
+  try {
+    const r = await api("/api/liff/hotpin", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: it.contact, on }) });
+    if (r && r.error) throw new Error(r.error);
+    toast(on ? `📌 ${disp(it.name)}はいつも「いま返す」に出します` : "📌 ピン留めを外しました");
+  } catch (e) { it.pin = on ? 0 : 1; drawRep(); toast("保存できませんでした"); }
+};
+
+// --- 既存ヘルパ互換(repSend/repCls系がこの2つを呼ぶ): rep.i=展開中の行 ---
+function repAdvance(stampText) {
   const it = rep.items[rep.i];
-  setHead(`📨 ${rep.mode === "later" ? "あとで" : "返信"}`, `${rep.i + 1}/${n}`, true);
-  // v190(B-2): カーソルより前方に新しい急ぎが湧いた時は1行で知らせる(順送りは止めない)
-  let aheadUrg = "";
-  if (rep.mode === "open" && rep.i > 0) {
-    const k = rep.items.findIndex((x, j) => j < rep.i && x.urgent);
-    if (k >= 0) aheadUrg = `<div style="background:rgba(192,64,44,.08);border:1px solid rgba(192,64,44,.35);
-      border-radius:10px;padding:8px 11px;font-size:12.5px;font-weight:700;color:var(--red);margin:0 0 8px;cursor:pointer"
-      onclick="repJumpUrgent(${k})">🔥 新しい急ぎ1件 ▸先にやる</div>`;
-  }
-  // v120: いつ来たか(きょう 9:33(19分前) 形式)
+  if (it) { it._done = it._done || "done"; delete draftCache["m" + it.mid]; }
+  rep.i = -1; repLock(); bust("home");
+  drawRep();
+  if (stampText) snack(stampText);
+}
+window.repAct = action => {   // 展開中カードの下ボタン(✓対応した等)
+  if (repLocked() || rep.i < 0) return;
+  const k = rep.i, it = rep.items[k];
+  if (!it) return;
+  // v190(#20)継承: 未送信の下書きが見えている✓は文言を変える(送ったつもり防止)
+  const hasDraft = action === "done" && !!document.querySelector("#drafts .draft");
+  _listAct(k, action, hasDraft
+    ? `✓ ${esc(disp(it.name))}を対応済みに(下書きは送っていません)` : null);
+};
+
+// --- 行・区画の描画 ---
+function _exStrip(s) { return String(s || "").replace(/〔[^〕]*〕/g, " ").replace(/\s+/g, " ").trim(); }
+function lrowHtml(p, k) {
+  const open = rep.i === k;
+  const tm = p.ts ? new Date(p.ts * 1000) : null, now = new Date();
+  const tmS = tm ? ((tm.toDateString() === now.toDateString() ? "" :
+    (new Date(now - 86400000).toDateString() === tm.toDateString() ? "きのう " :
+      `${tm.getMonth() + 1}/${tm.getDate()} `)) +
+    `${tm.getHours()}:${String(tm.getMinutes()).padStart(2, "0")}`) : "";
+  const why = p.urgent ? `<span class="why">🔥 ${esc(repReason(p.reason || "") || "急ぎ")}</span>`
+    : p.pin ? `<span class="why b">📌</span>`
+    : p.unlinked ? `<span class="why b">🆕 はじめて</span>`
+    : (p.rank === "S" || p.rank === "A") ? `<span class="why b">💎${esc(p.rank)}</span>`
+    : p.kind === "staff" ? `<span class="why b">${W("🏠 店内", "🏠 社内")}</span>`
+    : p.kind === "peer" ? `<span class="why b">${W("🏮 同業", "🤝 仲間")}</span>` : "";
+  const later = repIsLater(p);
+  return `<div class="lrow${p.urgent && !later ? " urg" : p.pin && !later ? " pinb" : ""}" id="lr${k}">
+    <div class="ltop">
+      <span class="lmain" onclick="listOpen(${k})">
+        <span class="l1"><span class="nm">${esc(disp(p.name))}</span>
+          ${p.unlinked ? "" : `<span class="rk">${esc(p.rank)}</span>`}
+          ${(p.count || 1) > 1 ? `<span class="rk" style="background:var(--cream);color:var(--sub)">📬${p.count}</span>` : ""}
+          <span class="tm">${esc(tmS)}</span></span>
+        <span class="l2">${why}<span class="ex">${esc(_exStrip(p.text))}</span></span>
+      </span>
+      <span class="lbtns">
+        ${later ? "" : `<button title="あとで" onclick="listAct(${k},'deferred')">↷</button>`}
+        <button title="返さない" onclick="listAct(${k},'skipped')">✕</button>
+      </span>
+    </div>${open ? lbodyHtml(p, k) : ""}</div>`;
+}
+function lbodyHtml(p, k) {
   let whenFull = "";
-  if (it.ts) {
-    const d0 = new Date(it.ts * 1000), now = new Date();
+  if (p.ts) {
+    const d0 = new Date(p.ts * 1000), now = new Date();
     const sameDay = d0.toDateString() === now.toDateString();
     const yest = new Date(now - 86400000).toDateString() === d0.toDateString();
     const day = sameDay ? "きょう" : yest ? "きのう" : `${d0.getMonth() + 1}/${d0.getDate()}`;
-    const hm = `${d0.getHours()}:${String(d0.getMinutes()).padStart(2, "0")}`;
-    const mins = Math.floor((now / 1000 - it.ts) / 60);
+    const mins = Math.floor((now / 1000 - p.ts) / 60);
     const rel = mins < 60 ? `${mins}分前` : mins < 1440 ? `${Math.floor(mins / 60)}時間前` : "";
-    whenFull = `${day} ${hm}${rel ? `（${rel}）` : ""}`;
+    whenFull = `${day} ${d0.getHours()}:${String(d0.getMinutes()).padStart(2, "0")}${rel ? `（${rel}）` : ""}`;
   }
-  // v120: 内容タグ(既存トリアージ理由から。追加のAIコストなし)
-  const tag = repTag(it.reason || "");
-  const stat = it.unlinked ? `🆕 未登録` : `ランク${it.rank}`;
-  const bar = `<div class="ibar${it.urgent ? " urgent" : ""}" ${it.unlinked ? "" :
-      `onclick="nav('#card/${encodeURIComponent(it.contact)}')"`}>
-    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
-      <span class="who">${esc(disp(it.name))}</span><span class="when">${whenFull}</span></div>
-    <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center">
-      ${it.urgent ? `<span class="rtag rt-urgent">🔥 急ぎ</span>` : ""}
-      <span class="rtag ${tag.c}">${tag.t}</span>
-      ${it.kind === "staff" ? `<span class="rtag rt-chat">${W("🏠 店内", "🏠 社内")}</span>` : it.kind === "peer" ? `<span class="rtag rt-chat">${W("🏮 同業", "🤝 仲間")}</span>` : ""}
-      ${(it.count || 1) > 1 ? `<span class="rtag rt-chat">📬 ${it.count}通ぶん</span>` : ""}
-      <span style="font-size:12.5px;color:var(--sub)">${stat}${it.unlinked ? "" : " ▸カード"}</span></div></div>`;
-  let mid = aheadUrg + `<div class="prog"><i style="width:${rep.i / n * 100}%"></i></div>` + bar + `
-    <div class="msgcard">「${esc(it.text)}${it.truncated ? "…" : ""}」
-    ${it.truncated ? `<div><a href="#" style="font-size:12px" onclick="repFull(${it.mid});return false">📄 全文を見る</a></div>` : ""}
-    <div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(it.reason)}</div>
-    ${it.grp ? `<div style="font-size:11px;color:var(--gold);margin-top:4px">👥 グループの発言 — すべてがあなた宛てとは限りません(下書きはあなた宛てのぶんにだけ応えます)</div>` : ""}</div>`;
-  if (it.unlinked) {
-    // v120: 初客=ランク直押しの1タップ登録。業界の人は2段階
-    // v145: 既存カードの候補があれば最上段に提案(グループ着信の表記ゆれ→重複カード防止)
-    const candHtml = (it.cands || []).length ? `
+  const head = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px">
+    <span style="font-size:12px;color:var(--sub)">${whenFull ? esc(whenFull) + "・" : ""}${p.unlinked
+      ? "🆕 未登録" : `${W("ランク", "つながり")}${esc(p.rank)}`}</span>
+    ${p.unlinked ? "" : `<a href="#" style="font-size:12.5px;display:inline-block;padding:10px 4px;margin:-10px 0"
+        onclick="nav('#card/${encodeURIComponent(p.contact)}');return false">▸カード</a>`}
+    ${p.unlinked ? "" : `<button class="chip" style="margin-left:auto;padding:4px 10px;min-height:0;font-size:12px${
+        p.pin ? ";border-color:var(--gold);font-weight:800" : ""}"
+        onclick="pinToggle(${k})">📌 ${p.pin ? "いつも上◎" : "いつも上に"}</button>`}</div>`;
+  const msg = `<div class="msgcard">「${esc(p.text)}${p.truncated ? "…" : ""}」
+    ${p.truncated ? `<div><a href="#" style="font-size:12px" onclick="repFull(${p.mid});return false">📄 全文を見る</a></div>` : ""}
+    ${p.reason ? `<div style="font-size:11px;color:var(--sub);margin-top:6px">💡 ${esc(repReason(p.reason || ""))}</div>` : ""}
+    ${p.grp_total ? `<div style="font-size:11px;color:var(--gold);margin-top:4px">👥 グループ ${p.grp_total}通のうち、あなた宛て${p.count || 1}通だけ表示しています</div>`
+      : p.grp ? `<div style="font-size:11px;color:var(--gold);margin-top:4px">👥 グループの発言 — すべてがあなた宛てとは限りません(下書きはあなた宛てのぶんにだけ応えます)</div>` : ""}</div>`;
+  if (p.unlinked) {
+    const candHtml = (p.cands || []).length ? `
         <div class="note" style="margin:4px 0 6px">🔗 もしかして、もうカードがある人？</div>
-        <div class="chips">${it.cands.map(c2 =>
+        <div class="chips">${p.cands.map(c2 =>
           `<button class="chip on" onclick="repLink(${JSON.stringify(c2.code).replace(/"/g, '&quot;')})">🔗 ${esc(disp(c2.name))}と同一人物</button>
            <span style="font-size:11px;color:var(--sub);align-self:center">${esc(c2.why)}</span>`).join("")}</div>
         <div style="height:1px;background:var(--border);margin:12px 0"></div>` : "";
-    $("#view").innerHTML = mid + `
-      <div class="card"><h3 class="sec">🆕 はじめての相手です</h3>
-        ${candHtml}
-        <div class="note" style="margin:4px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
-        <div class="chips">
-          <!-- v177: class="chip on"(紺塗り)は他画面で「選択中」の意味に使われており「もうSで登録済み？」に
-               見えた。強調は金枠+太字に変更し、選択状態の表現とは分離(flow-inbox-7) -->
-          <button class="chip" style="border-color:var(--gold);border-width:2px;font-weight:800"
-            onclick="repClsRank('S')">💎 S（${W("太客", "大切な人")}）</button>
-          <button class="chip" onclick="repClsRank('A')">A</button>
-          <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
-          <button class="chip" style="border-style:dashed"
-            onclick="repAct('deferred')">↷ あとで(仕分けごと)</button>
-        </div>
-        <div style="height:1px;background:var(--border);margin:12px 0"></div>
-        <div class="chips">
-          <button class="chip" onclick="repInd()">👥 ${W("業界の人", "仕事の人")}</button>
-          <button class="chip" onclick="repCls('priv')">🔒 私用(取り込まない)</button>
-        </div></div>
-      <div class="actbar"><button id="xbtn2" class="xleft" onclick="repX(this)">✕ 返さない</button>
-        <button onclick="repAct('deferred')">↷ あとで</button></div>`;
-    $("#view").classList.add("hasbar");
-    return;
+    return `<div class="lbody"><div class="card" style="border:none;padding:0;margin:0">
+      ${head}${msg}
+      <h3 class="sec">🆕 はじめての相手です</h3>
+      ${candHtml}
+      <div class="note" style="margin:4px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
+      <div class="chips">
+        <button class="chip" style="border-color:var(--gold);border-width:2px;font-weight:800"
+          onclick="repClsRank('S')">💎 S（${W("太客", "大切な人")}）</button>
+        <button class="chip" onclick="repClsRank('A')">A</button>
+        <button class="chip" onclick="repClsRank('B')">B（ふつう）</button>
+      </div>
+      <div style="height:1px;background:var(--border);margin:12px 0"></div>
+      <div class="chips">
+        <button class="chip" onclick="repInd()">👥 ${W("業界の人", "仕事の人")}</button>
+        <button class="chip" onclick="repCls('priv')">🔒 私用(取り込まない)</button>
+      </div></div></div>`;
   }
-  $("#view").innerHTML = mid + `<div id="drafts"><div class="skel"></div><div class="skel"></div></div>
-    <div class="actbar">
-      <button id="xbtn2" class="xleft" onclick="repX(this)">✕ 返さない</button>
-      <button style="background:var(--navy);color:#fff;border-color:var(--navy)"
-        onclick="repAct('done')">✓ 対応した</button>
+  return `<div class="lbody">${head}${msg}
+    <div id="drafts"><div class="skel"></div><div class="skel"></div></div>
+    <div class="lfoot">
+      <button onclick="repAct('done')">✓ 対応した(送らず記録)</button>
       <button onclick="repWrite()">✎ 自分で書く</button>
-      <button onclick="repAct('deferred')">↷ あとで</button></div>`;
-  $("#view").classList.add("hasbar");
-  const cur = it.mid;
-  const r = await prefetchReply(cur);
-  if (rep.items[rep.i] && rep.items[rep.i].mid === cur && $("#drafts"))
-    $("#drafts").innerHTML =
-      (r.gen_note ? `<div style="background:#FDF3E0;border:1px solid #E3C98A;border-radius:10px;
-         padding:8px 10px;font-size:13px;color:#7A5F1E;margin:0 0 8px">⚠️ ${esc(r.gen_note)}
-         <button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin-left:6px"
-           onclick="repRegen(${cur})">🔁 作り直す</button></div>` : "")
-      + cardRefChip(r.card_keys)
-      + ((r.drafts || []).length ? `<div class="note" style="margin:0 2px 6px">💡 直したい時は文章をタップ</div>` : "")
-      + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
-      || `<div class="note">下書きを作れませんでした。<button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin:0 6px"
-           onclick="repRegen(${cur})">🔁 もう一度つくる</button> 下のボタンで記録だけもできます。</div>`);
+    </div></div>`;
 }
-window.repJumpUrgent = k => {   // v190: 前方に湧いた急ぎを現在位置へ繰り上げて先に処理(裁定後は元の流れへ)
+async function fillDrafts(p, gen) {
+  const r = await prefetchReply(p.mid);
+  if (gen !== rep.gen) return;   // 展開が変わっていたら破棄(v191#3の世代ガードを継承)
+  if (rep.i < 0 || rep.items[rep.i] !== p || !$("#drafts")) return;
+  $("#drafts").innerHTML =
+    (r.gen_note ? `<div style="background:#FDF3E0;border:1px solid #E3C98A;border-radius:10px;
+       padding:8px 10px;font-size:13px;color:#7A5F1E;margin:0 0 8px">⚠️ ${esc(r.gen_note)}
+       <button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin-left:6px"
+         onclick="repRegen(${p.mid})">🔁 作り直す</button></div>` : "")
+    + cardRefChip(r.card_keys)
+    + ((r.drafts || []).length ? `<div class="note" style="margin:0 2px 6px">💡 直したい時は文章をタップ</div>` : "")
+    + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
+    || `<div class="note">下書きを作れませんでした。<button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin:0 6px"
+         onclick="repRegen(${p.mid})">🔁 もう一度つくる</button> 下のボタンで記録だけもできます。</div>`);
+}
+window.listOpen = k => {
   if (repLocked()) return;
-  const [x] = rep.items.splice(k, 1);
-  rep.i -= 1;                      // 除去ぶんのずれを補正
-  rep.items.splice(rep.i, 0, x);   // 現在位置に差し込む=次の描画で急ぎが出る
+  snackHide();
+  rep.i = (rep.i === k) ? -1 : k;
   drawRep();
+  if (rep.i >= 0) setTimeout(() => {
+    document.getElementById("lr" + k)?.scrollIntoView({ block: "nearest" }); }, 30);
 };
+function lsubHtml(nm, st, undoHtml) {
+  return `<div class="lsub"><span class="nm">${esc(disp(nm))}</span>
+    <span class="st">${esc(st)}</span>${undoHtml}</div>`;
+}
+function drawRep() {
+  const gen = rep.gen = (rep.gen || 0) + 1;
+  document.getElementById("histsheet")?.remove();   // 旧シートの残留保険(v191#5)
+  const items = rep.items || [];
+  const wrap = items.map((p, k) => ({ p, k }));
+  const live = wrap.filter(x => !x.p._done);
+  const hot = live.filter(x => !repIsLater(x.p) && repIsHot(x.p));
+  const norm = live.filter(x => !repIsLater(x.p) && !repIsHot(x.p));
+  const later = live.filter(x => repIsLater(x.p));
+  hot.sort((a, b) => ((b.p.urgent ? 1 : 0) - (a.p.urgent ? 1 : 0)) || ((a.p.ts || 0) - (b.p.ts || 0)));
+  norm.sort((a, b) => (((b.p.rank === "A") ? 1 : 0) - ((a.p.rank === "A") ? 1 : 0)) || ((a.p.ts || 0) - (b.p.ts || 0)));
+  // ✕/✓区画 = サーバ確定分(recent_acted)+この画面の楽観分(_done)
+  const recSkip = (rep.recent || []).filter(a => a.action === "skipped");
+  const recDone = (rep.recent || []).filter(a => a.action === "replied" || a.action === "done" || a.action === "stamped");
+  const locSkip = wrap.filter(x => x.p._done === "skipped");
+  const locDone = wrap.filter(x => x.p._done && x.p._done !== "skipped");
+  const openN = hot.length + norm.length;
+  setHead("📨 受信", openN ? `${openN}人` : "", true);
+  let h = "";
+  if (hot.length) h += `<div class="lsec"><span class="tt">🔥 いま返す</span><span class="ct">${hot.length}人</span></div>`
+    + hot.map(x => lrowHtml(x.p, x.k)).join("");
+  if (norm.length) h += `<div class="lsec"><span class="tt">📥 そのほか</span><span class="ct">${norm.length}人</span></div>`
+    + norm.map(x => lrowHtml(x.p, x.k)).join("");
+  if (!openN) {
+    const actedN = Math.max(rep.acted_n || 0, 0) + locDone.length + locSkip.length;
+    h += `<div class="empty" style="padding:30px 10px;font-size:15px">受信はぜんぶ${W("さばきました", "さばきました")}✨
+      ${actedN ? `<br><span style="font-size:12.5px;color:var(--sub)">${W("今夜", "今日")}: ${actedN}人に対応</span>` : ""}
+      ${later.length ? `<br><span style="font-size:12.5px;color:var(--sub)">下の🌙は${W("今夜", "今日")}のうちにどうぞ</span>` : ""}</div>`;
+  }
+  const fold = (key, tt, n, html) => !n ? "" :
+    `<div class="lsec" onclick="rep.f_${key}=!rep.f_${key};drawRep()">
+      <span class="tt">${tt}</span><span class="ct">${n}${key === "later" ? "人" : "件"}</span>
+      <span class="arr">${rep["f_" + key] ? "▲" : "▼"}</span></div>` + (rep["f_" + key] ? html : "");
+  h += fold("later", "🌙 あとで", later.length, later.map(x => lrowHtml(x.p, x.k)).join(""));
+  h += fold("skip", "✕ 返さない", locSkip.length + recSkip.length,
+    locSkip.map(x => lsubHtml(x.p.name, "たったいま",
+      `<span class="undo" onclick="listUndoLocal(${x.k})">↩︎ 戻す</span>`)).join("")
+    + recSkip.map(a => lsubHtml(a.name, a.tm,
+      `<span class="undo" onclick="repHistUndo(${a.act_id})">↩︎ 戻す</span>`)).join(""));
+  h += fold("done", `✓ ${W("今夜の対応", "今日の対応")}`, locDone.length + recDone.length,
+    locDone.map(x => lsubHtml(x.p.name, "たったいま",
+      `<span class="undo" onclick="listUndoLocal(${x.k})">↩︎ 戻す</span>`)).join("")
+    + recDone.map(a => lsubHtml(a.name, a.tm, a.sent
+      ? `<span class="st" style="margin-left:auto">送信済み</span>`
+      : `<span class="undo" onclick="repHistUndo(${a.act_id})">↩︎ 戻す</span>`)).join(""));
+  if (openN) h += `<div class="note" style="text-align:center;margin:14px 0 4px">
+    タップで開いて返信 / ↷✕は1タップ / まちがえたら下の黒帯か各区画の↩︎</div>`;
+  $("#view").innerHTML = h;
+  const cur = rep.i >= 0 ? rep.items[rep.i] : null;
+  if (cur && !cur._done && !cur.unlinked) fillDrafts(cur, gen);
+}
 window.repRegen = async mid => {
   toast("作り直しています…");
   delete draftCache["m" + mid];
@@ -2236,6 +2285,14 @@ window.repRegen = async mid => {
 };
 // v160: バッジ文言がW()を通っておらず一般モードでも「来店・日程」「太客さん」のまま
 // 出ていた漏れを修正(判定に使うreason文字列自体は変更しない。表示ラベルのみW())
+// v191(A1): サーバreason(triage.py固定文言)の表示用変換。判定に使うreason文字列は不変(v160方式)。
+// 一般モードの返信画面に「来店の申し出」「同伴の相談」等の夜職語彙が原文で出ていた漏れの修正
+function repReason(r) {
+  if (!r) return "";
+  const M = { "来店の申し出": "会いに来る申し出", "来店・席の確認": "予定・場所の確認",
+    "同伴の相談": "会食・会う相談", "S客からの受信": "大切な人からの受信" };
+  return W(r, M[r] || r);
+}
 function repTag(reason) {
   if (/来店|日程|同伴|予約|アフター|お誘い/.test(reason)) return { c: "rt-visit", t: W("🍾 来店・日程", "📅 会う話・日程") };
   if (/金|支払|料金|ツケ|請求/.test(reason)) return { c: "rt-money", t: "💴 お金の話" };
@@ -2346,43 +2403,6 @@ window.repStill = j => {
 window.repMark = j => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#dr" + j).dataset.text || "", mids: it.mids });
   repAdvance(`✓ ${disp(it.name)}に返信・文体を学習`); };
-const ACT_TOAST = { done: "を対応済みに", deferred: "をあとでに", skipped: "を返さないに", stamped: "を対応済みに" };
-window.repX = btn => {   // v190: ✕2段式(1タップ目で文言変化・3秒自動復帰・他要素タップで即復帰)
-  if (repLocked()) return;
-  if (!btn.classList.contains("armed")) {
-    btn.classList.add("armed"); btn.textContent = "✕ 返さない?";
-    clearTimeout(window._xT); window._xT = setTimeout(() => repXReset(), 3000);
-    return;
-  }
-  repXReset(); repAct("skipped");
-};
-function repXReset() { clearTimeout(window._xT);
-  const b = document.getElementById("xbtn2");
-  if (b) { b.classList.remove("armed"); b.textContent = "✕ 返さない"; } }
-document.addEventListener("click", e => {
-  const b = document.getElementById("xbtn2");
-  if (b && b.classList.contains("armed") && !b.contains(e.target)) repXReset();
-}, true);
-window.repAct = (action, stampText) => {
-  if (repLocked()) return;
-  const it = rep.items[rep.i], idx = rep.i;
-  if (!it) return;
-  // v190: あとで消化中の↷=後ろに回すだけ(サーバ状態は変えない)
-  if (rep.mode === "later" && action === "deferred") {
-    rep.items.push(rep.items.splice(rep.i, 1)[0]);
-    repLock(); drawRep();
-    toast(`↷ ${disp(it.name)}をあとまわしにしました`);
-    return;
-  }
-  // v190(#20): 未送信の下書きがある状態の✓は文言を変える(送ったつもり防止)
-  const hasDraft = action === "done" && !it._sent && !!document.querySelector("#drafts .draft");
-  const p = fire("/api/liff/reply/act", { mid: it.mid, action, text: "", mids: it.mids });
-  repAdvance();   // 視覚は即遷移(記録トーストは中段のアンドゥトーストが兼ねる)
-  const label = hasDraft
-    ? `✓${esc(disp(it.name))} 対応済みに(下書きは送っていません)↩︎`
-    : `${{done:"✓",deferred:"↷",skipped:"✕",stamped:"✓"}[action] || "✓"}${esc(disp(it.name))}${ACT_TOAST[action] || "を記録に"} ↩︎戻す`;
-  undoToast(label, p, idx);
-};
 // v153: 登録系は楽観更新禁止(改善#1後半)。保存を待ち、失敗したら画面を進めない。
 // 圏外でタップ→成功トースト→実は未保存、という「昨日やったのに」の残存経路を塞ぐ
 async function clsSave(body) {
@@ -2482,25 +2502,11 @@ window.repClsRank = async rank => {
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
 const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0 };
-// v175: 「今週は今週は来週は…」のような壊れた組み立て文が履歴チップとして永久に再提示され、
-// タップすると全員の文面に必達注入される問題の掃除(本人指摘 2026-08-09)。
-// 壊れ判定 = 時期語の二重連結 or 同一句の連続反復。読み出し時に毎回フィルタ+書き戻しで恒久除去。
-const annBroken = s => /(今週|来週|先週)は.*(今週|来週|先週)は/.test(s) || /(.{3,10})\1/.test(s);
-const annNorm = s => String(s || "").trim().replace(/[、。\s]+$/, "");
-function annHistList() {
-  let h = (store.get("annhist") ? store.get("annhist").d : []).map(annNorm).filter(x => x && !annBroken(x));
-  h = [...new Set(h)].slice(0, 5);
-  store.set("annhist", h);
-  return h;
-}
+// v192その6: 履歴チップ(前回組み立てた文の再提示)は本人裁定「残さなくてよい」で廃止
+// (v175の壊れ文フィルタごと不要に。保存済みannhistはvAnnで掃除)
 function annFlash(el) { el.scrollIntoView({ block: "nearest" });
   el.style.transition = "background .4s"; el.style.background = "#FCF3D9";
   setTimeout(() => { el.style.background = ""; }, 500); }
-// v175: 履歴チップは入力欄への反映だけでann.detailを更新しておらず、再描画で消えていた
-// (「タップで全然機能しない」の一因)。状態と画面を必ず両方更新し、目に見える反応を返す。
-window.annHist = x => { const el = document.getElementById("annDetail"); if (!el) return;
-  el.value = x; ann.detail = x; annFlash(el);
-  toast("入力欄に入れました(このまま配るか、手直しもできます)"); };
 const ANN_PURPOSES = () => [["shukkin", W("🏮 出勤のお知らせ", "🗓 近況のお知らせ")], ["event", W("🎉 イベント", "🍽 お誘い")],
   ["season", "🍂 季節のご挨拶"], ["gobusata", W("🕰 ご無沙汰の掘り起こし", "🕰 ご無沙汰の声かけ")], ["free", "✍️ 自由"]];
 async function vAnn() {
@@ -2508,6 +2514,10 @@ async function vAnn() {
   // v150: 配達おわり後に‹で抜けた古いrun状態が残り、次回「配達おわり!」から始まる問題
   if (ann.step === "run" && ann.q && ann.i >= ann.q.length)
     Object.assign(ann, { step: "purpose", q: [], i: 0, sent: 0 });
+  // v192その6: 入るたびにまっさら(前回の組み立て内容を持ち越さない。本人裁定)。
+  // 配達中断の再開(annq)だけは従来どおり守る
+  if (ann.step !== "run") { ann.detail = ""; ann.step = "purpose"; }
+  store.del("annhist");   // 旧履歴チップの保存分も掃除(機能ごと廃止)
   // v177(flow-tools-4): 中断キューをsessionStorage→store(localStorage)へ。「LINEに切替→LIFFが
   // 閉じられる」という一番ありがちな中断パターンでWebView破棄と共にキューが消えていた。
   // 読み出しはサニタイズ(規約12)+24h期限。壊れていたら黙って捨てる
@@ -2538,10 +2548,9 @@ async function drawAnn() {
         `<button class="chip ${ann.purpose === k ? "on" : ""}"
           onclick="ann.detail=(document.getElementById('annDetail')||{value:ann.detail}).value.trim();ann.purpose='${k}';drawAnn()">${lab}</button>`).join("")}</div>
       <label class="f">伝えたい内容(タップで組み立てもOK。<b>書いた内容は全員の文面に必ず入ります</b>)</label>
-      <div class="chips" style="margin-bottom:6px">${annHistList().map(x =>
-        `<button class="chip" onclick="annHist(${jarg(x)})">${esc(x.slice(0, 18))}${x.length > 18 ? "…" : ""}</button>`).join("")}</div>
-      <div class="chips" style="margin-bottom:6px">${["今週", "来週", "月", "火", "水", "木", "金", "土",
-        W("お店に出ます", "ごはん行きませんか"), W("イベントがあります", "近況のご報告です"), W("同伴できます", "久しぶりに会いたいです")].map(w =>
+      <div class="chips" style="margin-bottom:6px">${["今日", "今週", "来週", "月", "火", "水", "木", "金", "土",
+        W("お店に出ます", "ごはん行きませんか"), W("来店お願いしたい", "会いに来てほしいです"),
+        W("イベントがあります", "近況のご報告です"), W("同伴できます", "久しぶりに会いたいです")].map(w =>
         `<button class="chip" style="padding:7px 12px;font-size:13px" onclick="annWord(${jarg(w)})">${esc(w)}</button>`).join("")}</div>
       <input class="f" id="annDetail" value="${esc(ann.detail)}" placeholder="例: 今週は金曜と土曜おります">
       <h3 class="sec" style="margin-top:16px">誰に配る？(複数選べます・重複は自動でまとめます)</h3>
@@ -2584,12 +2593,7 @@ window.annPlan = async segs => {
   catch (e) { v.innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
   if (!r.items || !r.items.length) { toast("対象の相手がいません"); ann.step = "seg"; drawAnn(); return; }
   if (r.deduped) toast(`重複${r.deduped}件をまとめました(同じ人に二度送りません)`);
-  // v175: 壊れた文は履歴に入れない+末尾の句読点ゆれで別枠を食わないよう正規化
-  const _d = annNorm(ann.detail);
-  if (_d && !annBroken(_d)) {
-    const h = annHistList().filter(x => x !== _d);
-    h.unshift(_d); store.set("annhist", h.slice(0, 5));
-  }
+  // v192その6: 履歴チップ廃止に伴い履歴保存もやめる(v175の壊れ文フィルタごと不要)
   // v175: 配信下書きキャッシュを全破棄(内容を書き直しても古い内容の下書きが出るバグ)
   Object.keys(draftCache).filter(k => k[0] === "a").forEach(k => delete draftCache[k]);
   // v123(E6): 配達前プレビュー=1人ずつ外せる
@@ -2620,11 +2624,13 @@ window.annStart = () => {
   ann.step = "run"; annSave(); drawAnnRun();
 };
 function annTemplate() {
-  const p = { shukkin: "出勤のお知らせ", event: "イベントの案内", season: "季節のご挨拶",
-    gobusata: "ご無沙汰の相手への軽い挨拶", free: "" }[ann.purpose] || "";
+  // v191(B2): PLAB(prefetchAnn)と同じくモード追従
+  const p = { shukkin: W("出勤のお知らせ", "近況のお知らせ"), event: W("イベントの案内", "お誘い・イベントの案内"),
+    season: "季節のご挨拶", gobusata: "ご無沙汰の相手への軽い挨拶", free: "" }[ann.purpose] || "";
   return (p ? `目的:${p}。` : "") + (ann.detail ? `伝える内容:${ann.detail}` : "");
 }
 async function drawAnnRun() {
+  window.scrollTo(0, 0);   // v192その4: 配信の次の1人は先頭から(送信ユニット差し替えはswDraw側なのでここは常時安全)
   const n = ann.q.length;
   if (ann.i >= n) {
     store.del("annq"); bust("home");
@@ -2742,6 +2748,9 @@ function _oreiGuests() {
     .filter(c => !orei.main || (c.code !== orei.main.code && c.name !== orei.main.name));
 }
 function drawOrei() {
+  // v192その4: 段階(main→detail→send)が変わった時だけ先頭へ。同一段階内の再描画
+  // (チップ選択・人の追加・1通送った印)はスクロール位置を保つ(作業中の手元を飛ばさない)
+  if (drawOrei._st !== orei.step) { drawOrei._st = orei.step; window.scrollTo(0, 0); }
   const v = $("#view");
   if (orei.step === "main") {
     setHead("🙏 お礼", W("1/3 今夜の主賓は？(タップ)", "1/3 誰と会った？(タップ)"), true);
@@ -3069,6 +3078,7 @@ async function vFixup() {
   drawFixup();
 }
 function drawFixup() {
+  window.scrollTo(0, 0);   // v192その4: 「確定して次へ」後に前カードのスクロール位置から始まらない(本人指摘)
   const n = fx.items.length;
   if (fx.i >= n) {
     bust("home"); bust("contacts");
@@ -3077,20 +3087,26 @@ function drawFixup() {
     setHead("🚨 カードの仕分け", "完了", true); return;
   }
   const it = fx.items[fx.i], sg = it.suggest || {};
-  setHead(`🚨 ${fx.i + 1}/${n}｜${disp(it.name)}`, `未確定: ${it.missing.join("・")}`, true);
+  // v192その3(案1・本人裁定): 名前はヘッダから降ろしてカード先頭に大きく置く。
+  // 「視線は入力欄・名前はヘッダ」の分離で誰の話か探していた問題の修正
+  setHead("🚨 カードの仕分け", `${fx.i + 1}/${n}`, true);
   const kindChip = (v, lab) => `<button class="chip ${sg.kind === v ? "on" : ""}" data-kind="${v}">${lab}</button>`;
   const standChip = (v, lab) => `<button class="chip ${sg.stand === v ? "on" : ""}" data-stand="${v}">${lab}</button>`;
-  // v151: 極度の怠け者向け「ぜんぶおまかせ」— 残り全員をAI候補と既定値で一括確定(あとで直せる)
-  const bulkBtn = fx.i === 0 && n >= 2 ? `<button class="btn ghost" style="margin:0 0 10px"
-    onclick="fxBulk()">⚡ ${n}人ぜんぶおまかせで確定する(あとでカードから直せます)</button>` : "";
-  $("#view").innerHTML = bulkBtn + `<div class="prog"><i style="width:${fx.i / n * 100}%"></i></div>
+  // v192その3: ⚡おまかせは細い控えボタンで下へ(一番目立つ位置を毎回占領しない)。残り2人以上で表示
+  const bulkBtn = (n - fx.i) >= 2 ? `<button class="btn ghost" style="margin:10px 0 0;border-style:dashed;
+    font-size:12.5px;color:var(--gold)" onclick="fxBulk()">⚡ 残り${n - fx.i}人ぜんぶおまかせで確定する ›</button>` : "";
+  $("#view").innerHTML = `<div class="prog"><i style="width:${fx.i / n * 100}%"></i></div>
     <div class="card">
-      <div class="note" style="margin:0 0 4px">会話から取れた候補は入力済み。確認して確定するだけ</div>
+      <div style="font-size:21px;font-weight:800;line-height:1.3">${esc(disp(it.name))}
+        <span style="font-size:12px;font-weight:700;color:var(--red);margin-left:6px;vertical-align:2px">未確定: ${esc(it.missing.join("・"))}</span></div>
+      ${it.last_text ? `<div style="background:var(--cream);border-radius:9px;padding:7px 10px;font-size:12px;
+        color:var(--sub);margin:7px 0 2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">「${esc(it.last_text)}」</div>` : ""}
+      <div class="note" style="margin:8px 0 4px">会話から取れた候補は入力済み。確認して確定するだけ</div>
       <div class="note" style="margin:0 0 8px;color:var(--gold)">🔒 会話から読み取った情報は、この確定のあとにカードへ入ります(それまで安全におあずけ)</div>
       <label class="f">呼び名 <span style="color:var(--red)">*</span></label>
       <input class="f" id="fxYb" value="${esc(sg["呼び名"] || "")}">
       ${sg["呼び名"] ? "" : `<button class="chip" style="margin-top:6px"
-        onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code).replace(/"/g, '&quot;')}">表示名をそのまま使う</button>`}
+        onclick="document.getElementById('fxYb').value=${JSON.stringify(it.code).replace(/"/g, '&quot;')}">「${esc(it.code)}」のまま使う</button>`}
       <label class="f">本名（分かれば）</label>
       <input class="f" id="fxHn" value="${esc(sg["本名"] || "")}">
       ${(!sg["本名"] && sg["本名候補"]) ? `<button class="chip" style="margin-top:6px"
@@ -3108,7 +3124,7 @@ function drawFixup() {
       <label class="f">ランク <span style="color:var(--red)">*</span></label>
       <div class="chips" id="fxRank">${["S", "A", "B"].map(v => `<button class="chip ${(it.rank || "B") === v ? "on" : ""}" data-rank="${v}">${v === "S" ? W("S(太客)", "S(最重要)") : v === "A" ? "A" : W("B(ふつう)", "B(ふつう)")}</button>`).join("")}</div>
       <button class="btn primary" id="fxSave">確定して次へ</button>
-      <button class="btn ghost" onclick="fx.i+=1;drawFixup()">あとで(スキップ)</button></div>`;
+      <button class="btn ghost" onclick="fx.i+=1;drawFixup()">あとで(スキップ)</button></div>` + bulkBtn;
   const sel = { kind: sg.kind || "", stand: sg.stand || "", rank: it.rank || "B" };   // v182: ランクも3連の一角
   $("#fxKind").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
     $("#fxKind").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));

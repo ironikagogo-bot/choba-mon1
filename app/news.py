@@ -485,13 +485,19 @@ def refresh(force: bool = False) -> dict:
                 per += 1
                 added += 1
         # v125→v183: 興味キーワード(趣味・お酒・食べ物)。実在見出しのみ・1キーワード1件/日
-        kw_added = 0
+        kw_added, kw_failed = 0, 0
         try:
-            kw_added = _refresh_keywords(now, budget, deadline)
+            kw_added, kw_failed = _refresh_keywords(now, budget, deadline)
         except Exception as e:
             print(f"[news kw] {e}", flush=True)
+            kw_failed += 1
         # 全社失敗(ネットワーク断など)の日はマークせず次周回で再挑戦。一部でも取れたら完了扱い
-        if not rows or failed < len(rows):
+        # v191その2(#17): 会社ネタ0件の構成ではkwフェーズの成否も見る。従来は rows が空だと
+        # ネット全滅日でも当日完了マークが立ち、その日のネタ供給ゼロが確定していた。
+        # 「1件も取れず、かつ失敗があった日」はマークせず次周回で再挑戦。
+        _company_ok = (not rows) or (failed < len(rows))
+        _all_zero_with_fail = ((added + kw_added) == 0 and (failed + kw_failed) > 0)
+        if _company_ok and not _all_zero_with_fail:
             _meta_set("last_day", jst_day)
         # v183: 観測点(実クエリ消費とかかった秒数)。v184の設計判断の根拠データ
         try:
@@ -505,9 +511,10 @@ def refresh(force: bool = False) -> dict:
         _REFRESH_LOCK.release()
 
 
-def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -> int:
+def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -> tuple:
     """v183: 興味インデックスから検索。群語(3人以上)は毎日、その他は日替わりローテで週内一巡
-    (旧v125の「該当者数トップ5固定」は他の興味が永久に検索されない飢餓バグ)。"""
+    (旧v125の「該当者数トップ5固定」は他の興味が永久に検索されない飢餓バグ)。
+    v191その2(#17): 戻りは (added, failed)。失敗数を完了判定(last_day)に使う。"""
     budget = budget if budget is not None else dict(_BUDGETS)
     deadline = deadline or (now + _DEADLINE_S)
     idx = _interest_index()
@@ -531,6 +538,7 @@ def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -
         _meta_set("kw_cursor", str((cur + take) % len(rest)))
     added = 0
     openers = 0
+    kw_failed = 0   # v191その2(#17): 取得失敗数(完了判定用)
     for cn, phase in picks:
         if time.time() > deadline:
             break
@@ -550,6 +558,7 @@ def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -
         try:
             items = _fetch_budgeted(budget, phase, q, require_in_title=rit)
         except Exception:
+            kw_failed += 1   # v191その2(#17)
             continue
         if items is None:
             continue
@@ -580,7 +589,7 @@ def _refresh_keywords(now: float, budget: dict = None, deadline: float = None) -
                            "group" if len(e["who"]) >= _GROUP_MIN_HOT else ""))
             added += 1
             break
-    return added
+    return added, kw_failed
 
 
 def list_items(limit: int = 20) -> list:

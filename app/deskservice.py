@@ -87,22 +87,52 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False, src_ts: fl
     mid = db.add_message(contact, text, cat, reason, ts=(src_ts or None))
     log(f"判定: {CAT_LABEL[cat]} — {reason}")
 
+    # v191その2(#9): 同一相手の未対応旧midに残る下書きキャッシュは、この新着で文脈落ちする
+    # (ラリー連結: 開いたカードに後続到着前の古い下書きが即返しされる)。捨てて、開いた時に
+    # 最新の連結文脈で再生成させる。
+    try:
+        _stale = [m["id"] for m in (db.open_for_contact(contact) or []) if m["id"] != mid]
+        if _stale:
+            with db.conn() as c:
+                c.execute("DELETE FROM drafts WHERE message_id IN (%s)"
+                          % ",".join("?" * len(_stale)), _stale)
+    except Exception:
+        pass
+
     # エロ/ガチ恋フラグの相手は、カテゴリに関わらず受信時に裏で下書きを事前生成
     # (検品パスで生成が遅くなるぶん、開いた時には出来ている状態にする)
+    # v191その2(#9/#11): customer限定(v187§10)+生成先はキュー表示と同じアンカーmid
+    # (urgent優先→最古open)1本だけ。従来は受信毎に当該midへ生成し、開いたカードには出ない
+    # 非表示midの下書きを通数分(API課金つきで)裏生成していた。
     if not _unknown:
         try:
             _c = db.get_contact(contact) or {}
-            if int(_c.get("flag_koi") or 0) == 1 or int(_c.get("flag_ero") or 0) == 1:
-                threading.Thread(target=lambda: drafts.generate(mid), daemon=True).start()
+            if ((_c.get("kind") or "customer") == "customer"
+                    and (int(_c.get("flag_koi") or 0) == 1 or int(_c.get("flag_ero") or 0) == 1)):
+                _opens = db.open_for_contact(contact) or []
+                _urg = [m for m in _opens if (m.get("category") or "") == "urgent"]
+                _pool = _urg or _opens
+                _anchor = (min(_pool, key=lambda m: (m.get("ts") or 0))["id"] if _pool else mid)
+                threading.Thread(target=lambda a=_anchor: drafts.generate(a), daemon=True).start()
         except Exception:
             pass
     # v190(#12): 店内(staff)は通知無音(キューには残る)。
     _kind_n = (db.get_contact(contact) or {}).get("kind") or "customer"
     if cat == "urgent" and not _unknown and _kind_n == "staff":
         log("通知しない(店内の連絡は無音)")
+    # v192: グループの他人宛て発言・システム行では鳴らさない(キュー表示と同じ判定)
+    _grp_ok = True
+    if cat == "urgent" and not _unknown:
+        try:
+            from . import linebot as _lbg
+            _grp_ok = _lbg.group_visible(text, contact)
+            if not _grp_ok:
+                log("通知しない(グループ内の他人宛て発言)")
+        except Exception:
+            _grp_ok = True
     # v190(d-3): 同一相手への緊急通知は15分に1回(ラリー内昇格と併せて枠を守る)
     _dedup_ok = True
-    if cat == "urgent" and not _unknown and _kind_n != "staff":
+    if cat == "urgent" and not _unknown and _kind_n != "staff" and _grp_ok:
         try:
             from . import linebot as _lb0
             _last = float(_lb0._meta_get(f"upush_{contact}") or 0)
@@ -113,7 +143,13 @@ def ingest(contact: str, text: str, log=None, predraft: bool = False, src_ts: fl
                 log("通知しない(15分以内に通知済み)")
         except Exception:
             _dedup_ok = True
-    if cat == "urgent" and not _unknown and _kind_n != "staff" and _dedup_ok:
+    if cat == "urgent" and not _unknown and _kind_n != "staff" and _grp_ok and _dedup_ok:
+        # v191(#18): 通知時刻を記録(urgent精度=通知→応答時間の計測用)
+        try:
+            with db.conn() as c:
+                c.execute("UPDATE messages SET notified_ts=? WHERE id=?", (time.time(), mid))
+        except Exception:
+            pass
         # v190(#2): 匿名化。ロック画面に客名・用件を載せない(覗き見は毎晩の環境条件)
         title = "帳場｜1件届いています"
         # v123: LINEチャットにも1通(Web Push購読が無くても届く経路。月間上限つき)

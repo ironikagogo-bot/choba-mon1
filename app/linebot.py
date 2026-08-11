@@ -19,6 +19,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import threading
 import time
 
@@ -88,7 +89,11 @@ def ensure():
         for tbl, ddl in (("sent_replies", "edited INTEGER DEFAULT 0"),
                          ("sent_replies", "edit_ratio INTEGER DEFAULT 100"),
                          ("messages", "acted_ts REAL"),
-                         ("messages", "swept INTEGER DEFAULT 0")):
+                         ("messages", "swept INTEGER DEFAULT 0"),
+                         # v191(#18): トリアージ計測3列(P1着工判断の実測データ源)
+                         ("messages", "notified_ts REAL"),        # 緊急通知を送った時刻
+                         ("messages", "deferred_ts REAL"),        # ↷あとでにした時刻
+                         ("sent_replies", "message_id INTEGER")): # どの受信への返信か
             try:
                 c.execute(f"ALTER TABLE {tbl} ADD COLUMN {ddl}")
             except Exception:
@@ -323,9 +328,60 @@ def jst_hm():
 
 # ============ 実データ部品 ============
 
+def _nokey_note():
+    """v191その2(一般A2): APIキー未設定時の案内。一般モードに「お店の担当さん」を出さない。"""
+    return ("自動読み取りがお休み中(設定待ち)。サポート担当に連絡を"
+            if config.MODE == "general" else
+            "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を")
+
+
 def _open_msgs():
     from .notify_ingest import is_call_notice
     return [m for m in db.open_messages() if not is_call_notice(m["text"])]
+
+
+# ---- v192: グループ発言の「自分宛てだけ」フィルタ(本人裁定 2026-08-11) ----
+# 会話記録にグループ内の他人宛て発言・システム行(「Eriが写真を送信しました」等)が混ざり
+# 分かりにくい、という実機指摘への対応。グループ由来の1通を見せるかを決定論で判定する。
+_SYS_LINE_RE = re.compile(
+    r"(が(写真|画像|スタンプ|動画|ファイル|ボイスメッセージ|位置情報|連絡先)を送信しました"
+    r"|メッセージの送信を取り消しました|がアルバム[^\n]{0,20}(作成|追加)しました"
+    r"|がノートを(作成|更新)しました|がグループに(参加|招待)しました|が(退出|退会)しました)")
+_GRP_MARK_RE = re.compile(r"^\s*【[^】]{1,30}】")
+
+
+def _self_names():
+    """txt取り込みで学習済みの「自分の呼ばれ方」(db.profiles _selfname)。未学習なら空。"""
+    try:
+        n = ((db.get_profile("_selfname") or {}).get("name") or "").strip()
+    except Exception:
+        n = ""
+    return [] if (not n or n == "自分") else [n]
+
+
+def is_group_code(code) -> bool:
+    try:
+        from . import crm
+        return bool(crm.group_split(code or "")[0])
+    except Exception:
+        return False
+
+
+def group_visible(text, contact, self_names=None) -> bool:
+    """グループ由来の1通を受信キュー・会話記録・緊急通知に見せるか。
+    非グループ=常に見せる。グループ=①システム行は常に隠す ②自分の名前(学習済み)を
+    含む行だけ見せる。名前が未学習の間は消しすぎない(システム行だけ隠す)。
+    宛先判定の精度は要実測(裁定時に本人了承済み)。"""
+    t = (text or "").strip()
+    if not (_GRP_MARK_RE.match(t) or is_group_code(contact)):
+        return True
+    t2 = _GRP_MARK_RE.sub("", t).strip()
+    if _SYS_LINE_RE.search(t2):
+        return False
+    names = _self_names() if self_names is None else self_names
+    if not names:
+        return True
+    return any(nm in t2 for nm in names)
 
 
 def build_queue():
@@ -337,6 +393,9 @@ def build_queue():
     crm.ensure()
     items, seen = [], {}
     msgs = _open_msgs()
+    # v192: グループ発言は「自分宛てだけ」(他人宛て・システム行はキューに出さない)
+    _sn = _self_names()
+    msgs = [m for m in msgs if group_visible(m.get("text"), m.get("contact"), _sn)]
     msgs.sort(key=lambda m: ((0 if m["category"] == "urgent" else 1), m["ts"] or 0))
     for m in msgs:
         c = db.get_contact(m["contact"]) or {}
@@ -354,6 +413,7 @@ def build_queue():
               "kind": kind,   # v189: UIの種別バッジ(店内・同業)用
               "koi": (int(c.get("flag_koi") or 0)
                       if (c.get("kind") or "customer") == "customer" else 0),   # v186/v187: customer限定
+              "pin": int(c.get("flag_hot") or 0),   # v192: 🔥ピン留め(いつも「いま返す」)
               "reason": m.get("reason") or "",
               "urgent": 1 if m["category"] == "urgent" else 0,
               "ts": m.get("ts"),   # v120: 受信時刻(いつ来たかの表示に必須)
@@ -364,17 +424,81 @@ def build_queue():
     return items
 
 
-def _finish_message(mid, action, sent_text=None):
+def record_act(mid, contact, action, before, sr0=0, ev0=0, sent_text=None):
+    """v191その2(#12): 裁定の記録を共通化(v190のLIFF実装 liff_reply_act から括り出し)。
+    before={mid:status}(act前スナップショット)との差分を acted_log に記録し、act後に増えた
+    sent_reply へ message_id を紐付ける(v191#18計測)。LIFF経由とチャット経由の両方から呼ぶ。
+    差分が無ければ何も書かず None(=undo対象なし)。sent_text は sent_replies 行が無い経路
+    (チャットの転送返信)での文体学習undo用フォールバック。"""
+    act_id = None
+    try:
+        ensure()
+        with db.conn() as c:
+            changed = []
+            for r2 in c.execute("SELECT id, status FROM messages WHERE contact=?", (contact,)):
+                if r2["id"] in before and before[r2["id"]] != r2["status"]:
+                    changed.append([r2["id"], before[r2["id"]]])
+            srid, stext = None, (sent_text or "")
+            _sr = c.execute("SELECT id, text FROM sent_replies WHERE id>? AND contact=? "
+                            "ORDER BY id DESC LIMIT 1", (sr0, contact)).fetchone()
+            if _sr:
+                srid, stext = _sr["id"], _sr["text"] or ""
+                # v191(#18): 返信がどの受信へのものかを紐づけ(応答時間の計測用)
+                c.execute("UPDATE sent_replies SET message_id=? WHERE id=?", (mid, srid))
+            _ev = c.execute("SELECT id FROM events WHERE id>? AND contact=? AND status='tentative' "
+                            "ORDER BY id DESC LIMIT 1", (ev0, contact)).fetchone()
+            evid = _ev["id"] if _ev else None
+            if changed:
+                cur = c.execute("INSERT INTO acted_log(contact,action,changed,sent_reply_id,"
+                                "sent_text,event_id,acted_ts) VALUES(?,?,?,?,?,?,?)",
+                                (contact, action, json.dumps(changed), srid, stext, evid,
+                                 time.time()))
+                act_id = cur.lastrowid
+    except Exception as e:
+        print(f"[acted log] {e}", flush=True)
+    return act_id
+
+
+def _finish_message(mid, action, sent_text=None, mids=None):
     """PWAの /api/messages/{mid}/action と同じ意味論(v75まで込み)。
     action: replied(下書きをそのまま転送=学習) / self(自分で書いた=doneと同じ時刻あり返信) /
             deferred / skipped
+    v191その2(#12/#15): mids=画面に束ねて出した兄弟も同状態に(LIFF経路と同じ意味論)。
+    裁定は acted_log にも記録(undo・今夜の裁定履歴・完走人数・計測の欠落を解消)。
     """
     msg = db.get_message(mid)
     if not msg:
         return
+    # v191その2(#12): act前スナップショット(record_act用)
+    _contact = msg["contact"]
+    _before, _sr0, _ev0 = {}, 0, 0
+    try:
+        with db.conn() as c:
+            _before = {r["id"]: r["status"] for r in c.execute(
+                "SELECT id, status FROM messages WHERE contact=?", (_contact,))}
+            _sr0 = c.execute("SELECT IFNULL(MAX(id),0) FROM sent_replies").fetchone()[0]
+            _ev0 = c.execute("SELECT IFNULL(MAX(id),0) FROM events").fetchone()[0]
+    except Exception:
+        pass
     status = {"replied": "replied", "self": "replied", "deferred": "deferred",
               "skipped": "skipped"}[action]
     db.set_status(mid, status)
+    # v191その2(#15): チャット経路でも兄弟(mids)を一括同状態化(1通しか閉じず再出現するバグ。
+    # v177 regress-1と同型のチャット側残存)
+    for _m in (mids or []):
+        try:
+            if int(_m) != mid and db.get_message(int(_m)):
+                db.set_status(int(_m), status, auto=True)
+        except Exception:
+            pass
+    if status == "deferred":
+        # v191その2(#15): ↷あとでの時刻を記録(滞留計測。LIFF経路 main.act と同じ意味論)
+        try:
+            with db.conn() as c:
+                for _m in set([mid] + [int(x) for x in (mids or [])]):
+                    c.execute("UPDATE messages SET deferred_ts=? WHERE id=?", (time.time(), _m))
+        except Exception:
+            pass
     if status == "replied":
         # v175: 10分窓のチェーンクローズ(close_rally_siblings)では隙間の空いた五月雨受信が
         # 閉じられず、返信のたびに過去の1通が再出現するループになっていた(本人報告 2026-08-09)。
@@ -399,6 +523,9 @@ def _finish_message(mid, action, sent_text=None):
             elif ("同伴" in _r) or ("アフター" in _r):
                 db.add_event(msg["contact"], "dohan", f"{msg['contact']} 同伴(仮)", "tentative")
         db.track("linebot_reply")
+    # v191その2(#12): チャット経路の裁定もacted_logへ(action名はLIFF語彙に正規化: self=done)
+    record_act(mid, _contact, {"self": "done"}.get(action, action), _before, _sr0, _ev0,
+               sent_text=(sent_text if action == "replied" else None))
 
 
 def home_msgs():
@@ -604,10 +731,11 @@ def rep_action(uid, token, a, p):
         stp = stamp(f"✓ {it['contact']}に自分の文で返信 {jst_hm()}")
     elif a == "later":
         if not it["unlinked"]:
-            _finish_message(it["mid"], "deferred")
+            # v191その2(#15): 兄弟(mids)も一括で↷(1通しか閉じず残りが再出現していた)
+            _finish_message(it["mid"], "deferred", mids=it.get("mids"))
         stp = stamp(f"↷ {it['contact']}はあとで(まとめ箱)")
     elif a == "skip":
-        _finish_message(it["mid"], "skipped")
+        _finish_message(it["mid"], "skipped", mids=it.get("mids"))   # v191その2(#15)
         stp = stamp(f"↷ {it['contact']}はスキップ")
     else:
         return reply(token, wrong_flow(st))
@@ -795,7 +923,7 @@ def extract_facts(text, partner, self_name):
     """トーク履歴から顧客カード向けの事実をLLM抽出。長文は分割して全文を読む(v83)。
     戻り値: (facts, err)。err=Noneなら成功(0件もあり得る)。"""
     if not config.ANTHROPIC_API_KEY:
-        return [], "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
+        return [], _nokey_note()
     # v150: 長いトークは「末尾(=最新)優先」で読む。先頭だけ読むと直近の話題・進行中の話の
     # 根拠(最新メッセージ)が捨てられ、何年も前の話が抽出される実害があった
     all_chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)]
@@ -927,7 +1055,7 @@ def web_research(contact):
     """🌐 公開情報の人物調査(AnthropicのWeb検索ツールをサーバー側で使用)。
     戻り値: (facts, err)。結果は通常の確認フローに載る(勝手にカードへは書かない)。"""
     if not config.ANTHROPIC_API_KEY:
-        return [], "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
+        return [], _nokey_note()
     from . import crm
     attrs = crm.get_attrs(contact)
     hints = "、".join(f"{k}: {v}" for k, v in list(attrs.items())[:10])
@@ -1219,7 +1347,7 @@ def analyze_persona(contact, sample=50000):
     """生トーク全文＋確認済みファクトから、運用指針としてのペルソナを生成。
     戻り値: (persona_dict, err)。sample=読み込む最大文字数(時間切れ時の縮小リトライ用)。"""
     if not config.ANTHROPIC_API_KEY:
-        return None, "自動読み取りがお休み中(設定待ち)。お店の担当さんに連絡を"
+        return None, _nokey_note()
     from . import crm
     with db.conn() as c:
         r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
@@ -1984,7 +2112,11 @@ def quarantine_release(contact):
     if not raw:
         return
     with db.conn() as c:
-        c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{contact}",))
+        cur = c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{contact}",))
+        # v191その2(#14): 同時確定(2端末・二重タップ)の競合はDELETEの勝者だけが適用・分析する
+        # (敗者はここで終了=保留factsの二重適用・LLM後段分析の二重実行を防ぐ)
+        if (cur.rowcount or 0) != 1:
+            return
     ct = db.get_contact(contact) or {}
     kind = ct.get("kind") or "customer"
     try:
@@ -2381,13 +2513,18 @@ def _crm_contacts():
 
 
 def _yobina(code, attrs=None):
-    """表示に使う呼び名。抽出済みなら「呼び名(表示名)」、無ければ表示名。"""
+    """表示に使う呼び名。抽出済みなら「呼び名(表示名)」、無ければ表示名。
+    v192: グループ由来カード(code=「グループ名: 人名」)は表示を人名だけに剥がす
+    (本人指摘「新規メンバーの登録名にグループ名が表示される」。codeは変えない=
+    紐付け・別名・履歴の同一性は不変。グループ名はカードの「取り込み元」属性に残る)。"""
     from . import crm
     a = attrs if attrs is not None else crm.get_attrs(code)
+    _g, _p = crm.group_split(code)
+    disp = _p if _g else code
     y = a.get("呼び名") or a.get("本名") or ""
-    if y and y != code:
-        return f"{y}({code})"
-    return code
+    if y and y != code and y != disp:
+        return f"{y}({disp})"
+    return disp
 
 
 def _hon_disp(code, attrs=None):
@@ -2682,18 +2819,25 @@ def ann_plan(uid, token, v):
 
 
 def _casual_draft(code, tone):
-    """同業・店内向けの一言(トーン別)。API無ければテンプレ。"""
+    """同業・店内向けの一言(トーン別)。API無ければテンプレ。
+    v191その2(一般B3): テンプレ・AIロールを config.MODE で分岐(一般に夜職語彙を出さない)。"""
     nm = _yobina(code)
-    tmpl = {"peer": f"{nm}、ごぶさた！元気にしてる？また近いうちご飯でも行こ〜",
-            "staff": f"{nm}、いつもありがとう！また一緒のお店入るとき　よろしくね😊"}[tone]
+    _gen = config.MODE == "general"
+    tmpl = ({"peer": f"{nm}、ごぶさた！元気にしてる？また近いうちご飯でも行こ〜",
+             "staff": f"{nm}、いつもありがとう！また一緒に仕事するときもよろしくね😊"}
+            if _gen else
+            {"peer": f"{nm}、ごぶさた！元気にしてる？また近いうちご飯でも行こ〜",
+             "staff": f"{nm}、いつもありがとう！また一緒のお店入るとき　よろしくね😊"})[tone]
     if not config.ANTHROPIC_API_KEY:
         return tmpl
     from . import db as _db
     prof = _db.get_profile("_global") or {}
     ex = "／".join((prof.get("samples") or [])[:3])
-    role = ("同業(同じ夜職の仲間)" if tone == "peer" else "自分の店の後輩・黒服・スタッフ")
-    # v114: 店内の性別で相手像を具体化(店内女=ヘルプ/ママ, 店内男=黒服/ボーイ)
-    if tone == "staff":
+    role = (("社外の仕事仲間" if tone == "peer" else "同僚・チームのメンバー(社内)")
+            if _gen else
+            ("同業(同じ夜職の仲間)" if tone == "peer" else "自分の店の後輩・黒服・スタッフ"))
+    # v114: 店内の性別で相手像を具体化(店内女=ヘルプ/ママ, 店内男=黒服/ボーイ)。夜職モードのみ
+    if tone == "staff" and not _gen:
         try:
             from . import crm as _crm
             sg = (_crm.get_attrs(code) or {}).get("店内区分") or ""

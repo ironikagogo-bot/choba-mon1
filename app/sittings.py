@@ -6,7 +6,7 @@
 """
 import time
 
-from . import db
+from . import config, db
 
 _READY = False
 _SCHEMA = """
@@ -48,6 +48,16 @@ def ensure():
 
 ROLE_LABEL = {"customer": "主賓客", "intro": "紹介者", "guest": "同席顧客", "peer": "同業者",
               "after": "アフター先のお店", "help": "ヘルプ", "report": "担当ママへ共有"}
+
+# v191その2(一般A4): 一般モードの役割ラベル(画面にそのまま出るため夜職語彙を使わない)
+ROLE_LABEL_GENERAL = {"customer": "主賓", "intro": "紹介者", "guest": "同席の方",
+                      "peer": "同席の同僚", "after": "二次会のお店",
+                      "help": "手伝ってくれた人", "report": "上司へ共有"}
+
+
+def role_label(role: str) -> str:
+    d = ROLE_LABEL_GENERAL if config.MODE == "general" else ROLE_LABEL
+    return d.get(role, role)
 
 
 def create_sitting(date_label: str, main: str, members: list,
@@ -171,6 +181,50 @@ def orei_text(role: str, stand: str, name: str, main: str,
     _dv = (dohan_venue or "").strip()
     _av = (after_venue or "").strip()
     _gv = (venue or "").strip()
+    # v191その2(一般B1): 送信文そのものに夜職語彙(同伴・お席・アフター・お店にもぜひ・ご来店)が
+    # 入っていた最重要漏れ。一般モードは中立の御礼文で全役割を分岐。
+    if config.MODE == "general":
+        if role == "customer":
+            parts = []
+            if _dv:
+                parts.append(f"一次会の{_dv}、とても美味しかったです！")
+            if stype == "gaiso":
+                parts.append(f"今日は{_gv}にご一緒させていただきありがとうございました！とても楽しかったです。"
+                             if _gv else "今日はご一緒させていただきありがとうございました！とても楽しかったです。")
+            elif stand == "senior":
+                parts.append(f"{'そのあともお付き合いいただき、誠に' if _dv else '本日はお時間をいただき誠に'}ありがとうございました。")
+            else:
+                parts.append(f"{'そのあともとても楽しかったです！' if _dv else '本日はありがとうございました。'}")
+            if _av:
+                parts.append(f"{_av}の二次会までお付き合いいただき、嬉しかったです。")
+            if stand == "senior" and stype != "gaiso":
+                parts.append("またお目にかかれますよう、心よりお待ちしております。")
+            elif stype == "gaiso":
+                parts.append("またぜひ誘ってください。")
+            else:
+                parts.append("またお会いできる日を楽しみにしています。")
+            return f"{name}、" + "".join(parts)
+        if role == "intro":
+            return f"{name}、本日は{main}をご紹介いただきありがとうございました！おかげさまで良い時間になりました、感謝です。"
+        if role == "guest":
+            if stand == "senior":
+                return f"{name}、本日はご一緒させていただきありがとうございました。おかげさまで楽しい時間になりました。またお目にかかれますように。"
+            return f"{name}、今日はご一緒できて嬉しかったです！ありがとうございました。またぜひ。"
+        if role == "after":
+            if _av:
+                return f"{name}、今夜はありがとうございました！{_av}、居心地がよくて素敵な時間でした。また寄らせてくださいね。"
+            return f"{name}、今夜はお伺いできて嬉しかったです！ありがとうございました。また寄らせてくださいね。"
+        if role == "peer":
+            if stand == "senior":
+                return f"{name}、今日はご一緒できて嬉しかったです！またぜひご一緒させてください。"
+            if stand == "junior":
+                return f"{name}、今日は楽しかった〜！また一緒にやろうね。"
+            return f"{name}、今日はありがとう！また近いうち会お〜。"
+        if role == "help":
+            return f"{name}、今日は手伝ってくれてありがとう！すごく助かった。"
+        if role == "report":
+            return f"{main}さんの件、御礼を一巡します。共有まで。"
+        return f"{name}、今日はありがとうございました。"
     if role == "customer":
         parts = []
         if _dv:
@@ -236,7 +290,7 @@ def generate_orei(sid: int) -> list:
         nm = _name(m["contact"])
         out.append({
             "contact": m["contact"], "name": nm,
-            "role": m["role"], "role_label": ROLE_LABEL.get(m["role"], m["role"]),
+            "role": m["role"], "role_label": role_label(m["role"]),   # v191その2(一般A4)
             "stand": m.get("stand", "equal"),
             "sent": m.get("sent", 0),
             "text": orei_text(m["role"], m.get("stand", "equal"), nm, main,
