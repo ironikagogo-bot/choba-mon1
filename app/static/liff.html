@@ -1481,6 +1481,17 @@ function drawCard(code, d) {
     <div class="note">${esc(d.pstats.note)}</div></details>` : ""}
   ${(d.persona && d.persona.sections) ? `<details class="card"><summary>🧠 ペルソナ</summary>${persona}</details>`
     : `<div class="card"><h3 class="sec">🧠 ペルソナ</h3>${persona}</div>`}
+  ${(d.persona && d.persona.myself && d.persona.myself.length) ? `<details class="card">
+    <summary>🪞 ${W("この人へのわたし", "この人へのわたし")}</summary>
+    <div class="note" style="margin:6px 0 8px">${disp(d.name)}と接している時の、あなた自身の顔(本人の実発言から)</div>
+    ${d.persona.myself.map((m, mi) =>
+      `<div class="kv"><div class="k">${esc(m.k)}<span class="conf">${CONF_DOT[m.conf] || ""}</span></div>
+       <div class="v">${esc(m.v)}${m.src ? `<div class="quote">「${esc(m.src)}」</div>` : ""}
+         <div style="margin-top:4px"><button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
+           onclick="personaFixMy('${cq}',${mi},${JSON.stringify(m.v).replace(/"/g,'&quot;')})">✎直す</button>
+         <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red)"
+           onclick="personaDelMy('${cq}',${mi})">🗑消す</button></div></div></div>`).join("")}
+  </details>` : ""}
   ${(d.persona && d.persona.tolerance && d.persona.tolerance.length) ? `<details class="card"
       ${d.persona.tolerance.some(t => t.ok == null) ? "open" : ""}>
     <summary>🚦 どこまでOKか（踏み込み上限${d.persona.tolerance.some(t => t.ok == null) ? "・要確認" : ""}）</summary>
@@ -1785,6 +1796,24 @@ window.personaFix = async (cq, i, cur) => {
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "fix", index: i, value: v }) });
     if (r.error) return toast(r.error);
     store.del("card_" + code); toast("直しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.personaFixMy = async (cq, i, cur) => {
+  const code = decodeURIComponent(cq);
+  const v = await askEdit("「この人へのわたし」を直す", cur);
+  if (!v) return;
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "myfix", index: i, value: v }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("直しました"); vCard(code);
+  } catch (e) { toast("失敗しました"); }
+};
+window.personaDelMy = async (cq, i) => {
+  const code = decodeURIComponent(cq);
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "mydel", index: i }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code); toast("消しました"); vCard(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaTol = async (cq, i, action) => {

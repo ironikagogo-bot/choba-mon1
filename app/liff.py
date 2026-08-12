@@ -744,6 +744,61 @@ def liff_contact_export(code: str, request: Request, key: str = "", fmt: str = "
     return Response("\n".join(lines), media_type="text/plain; charset=utf-8")
 
 
+@router.get("/api/liff/export_flag")
+def liff_export_flag(request: Request, key: str = "", flag: str = "koi", fmt: str = "txt"):
+    """v213: フラグ指定の一括生ログ書き出し(owner専用key口)。flag=koi(ガチ恋)/ero(下ネタ)/hot(ピン)。
+    用途: ガチ恋会話の実例分析など。中身は相手ごとに区切った取り込みtxt+会話蓄積。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    col = {"koi": "flag_koi", "ero": "flag_ero", "hot": "flag_hot"}.get(flag)
+    if not col:
+        return JSONResponse({"error": "flag は koi/ero/hot"}, status_code=400)
+    from . import crm
+    crm.ensure()
+    with db.conn() as c:
+        codes = [r["code"] for r in c.execute(
+            f"SELECT code FROM contacts WHERE IFNULL({col},0)=1 ORDER BY code")]
+    db.track("liff_export")
+    if fmt == "json":
+        out = []
+        for code in codes:
+            with db.conn() as c:
+                r = c.execute("SELECT text, ts FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+                recv = [dict(x) for x in c.execute(
+                    "SELECT ts, text, category, status FROM messages WHERE contact=? ORDER BY ts", (code,))]
+                sent = [dict(x) for x in c.execute(
+                    "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts", (code,))]
+            out.append({"contact": code, "talk_txt": (r["text"] if r else "") or "",
+                        "received": recv, "sent": sent})
+        return {"flag": flag, "contacts": codes, "items": out}
+    import datetime as _dt
+    def _t(ts):
+        try:
+            return _dt.datetime.fromtimestamp(ts, _dt.timezone(_dt.timedelta(hours=9))).strftime("%Y/%m/%d %H:%M")
+        except Exception:
+            return "?"
+    lines = [f"[帳場一括エクスポート] flag={flag} 対象{len(codes)}人: {'、'.join(codes) or 'なし'}", ""]
+    for code in codes:
+        with db.conn() as c:
+            r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+            recv = [dict(x) for x in c.execute(
+                "SELECT ts, text, status FROM messages WHERE contact=? ORDER BY ts", (code,))]
+            sent = [dict(x) for x in c.execute(
+                "SELECT ts, text FROM sent_replies WHERE contact=? ORDER BY ts", (code,))]
+        lines += [f"■■■■■■■■■■ {code} ■■■■■■■■■■", ""]
+        talk = (r["text"] if r else "") or ""
+        if talk:
+            lines += ["── 取り込みtxt原文 ──", talk, ""]
+        merged = [("📩", m["ts"], m["text"]) for m in recv] + [("📤", m["ts"], m["text"]) for m in sent]
+        merged.sort(key=lambda x: x[1] or 0)
+        if merged:
+            lines.append("── サーバー蓄積(受信📩/送信📤) ──")
+            lines += [f"{_t(ts)}\t{mark}\t{(tx or '').strip()}" for mark, ts, tx in merged]
+        lines.append("")
+    return Response("\n".join(lines), media_type="text/plain; charset=utf-8")
+
+
 @router.post("/api/liff/contact_delete")
 async def liff_contact_delete(request: Request):
     """v145: カードの完全消去(取り消し不可)。UI側でOK入力確認済みの前提。"""
@@ -964,7 +1019,7 @@ async def liff_persona_edit(request: Request):
         value = b.get("value") or ""
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    if action not in ("del", "fix", "summary", "tolok", "tolng", "tolfix", "toldel"):
+    if action not in ("del", "fix", "summary", "tolok", "tolng", "tolfix", "toldel", "myfix", "mydel"):
         return JSONResponse({"error": "bad action"}, status_code=400)
     p = linebot.edit_persona(code, action, index, value)
     if p is None:
@@ -1598,6 +1653,22 @@ def _run_import_job(jid: int, contact: str, text: str):
         if lt:
             linebot._meta_set(f"lasttalk_{contact}", str(lt))
         facts, err = linebot.extract_facts(text, contact, self_name)
+        # v211: 呼び名は決定論抽出を第一候補に(敬称込み・根拠つき)。LLMの呼び名は降格(重複排除)。
+        # AIキーが無い環境でも呼び名だけは取れる=取り込みが空振りしない
+        try:
+            _dy = linebot.extract_yobina_calls(text, self_name)
+        except Exception as _e:
+            print(f"[yobina det] {_e}", flush=True)
+            _dy = None
+        if _dy:
+            from . import crm as _crmy
+            if (_crmy.get_attrs(contact) or {}).get("呼び名") == _dy["v"]:
+                _dy = None   # 既に同じ呼び名が確定済み=聞き直さない
+        if _dy:
+            facts = [f for f in (facts or []) if f.get("k") != "呼び名"]
+            facts = [{"k": "呼び名", "v": _dy["v"], "src": _dy["src"],
+                      "conf": _dy["conf"], "alts": _dy.get("alts", [])}] + facts
+            err = None if not facts[1:] and err else err
         try:
             rel = linebot.classify_relationship(text, contact, self_name)
             if rel:

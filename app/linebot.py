@@ -1401,6 +1401,9 @@ def set_persona_enabled(on):
 
 PERSONA_SECTIONS = ("価値観の核", "知性・教養", "コミュニケーションの好み",
                     "効く話題", "避ける話題", "距離の縮め方", "贈り物の方向")
+# v212: 「この人と接している時の自分」(本人指示2026-08-12: 項目を分けて表示)。
+# 相手の分析と対で、利用者自身がこの相手にどんな顔で接しているかを本人の実発言から出す
+MYSELF_KEYS = ("口調・距離", "演じている役", "盛り上げ方の癖", "気をつけたい癖")
 
 
 def analyze_persona(contact, sample=50000):
@@ -1421,6 +1424,7 @@ def analyze_persona(contact, sample=50000):
         talk = talk[:half] + "\n…(中略)…\n" + talk[-half:]
     attrs = crm.get_attrs(contact)
     facts = "／".join(f"{k}:{v}" for k, v in list(attrs.items())[:15])
+    _selfn = ((db.get_profile("_selfname") or {}).get("name") or "").strip() or "利用者本人"
     # v158: 一般モードは「客の分析」でなく「1対1の人間関係の理解」としてパラメータを変える
     if config.MODE == "general":
         system = ("あなたは人間関係メモアプリの分析エンジン。利用者が自分自身のLINEトーク履歴から"
@@ -1456,8 +1460,17 @@ def analyze_persona(contact, sample=50000):
         "待たせた時=返信が遅れた時の反応。\n"
         "- 各項目 v=結論(80字以内)・src=根拠の実発言引用(40字以内)・conf=高/中/低。"
         "根拠となる実際のやり取りが無い観点は出さない(推測で埋めない)\n"
-        '出力はJSONのみ: {"summary":"...","sections":[{"k":"価値観の核","v":"...","src":"...","conf":"高"}],'
-        '"tolerance":[{"k":"冗談・軽口","v":"...","src":"...","conf":"高"}]}\n'
+        + (f"さらに『この人へのわたし』= 利用者本人({_selfn})がこの相手と接する時に、"
+           "どんな自分で接しているかを本人側の実発言だけから分析して別配列で出す。\n"
+           f"観点(この4つに限定): {'/'.join(MYSELF_KEYS)}\n"
+           "- 口調・距離=敬語/タメ口・絵文字量・文の長さの実際。演じている役=聞き役/盛り上げ役/"
+           "甘え役/仕切り役など、この相手の前で取っている立ち回り。盛り上げ方の癖=よく使う返しの型。"
+           "気をつけたい癖=この相手に対してやりがちな損な癖(安請け合い・既読遅れの謝りすぎ等)。"
+           "根拠が無い観点は出さない\n"
+           f"- 主語は必ず{_selfn}本人。src=本人({_selfn})の実発言の引用(40字以内)\n")
+        + '出力はJSONのみ: {"summary":"...","sections":[{"k":"価値観の核","v":"...","src":"...","conf":"高"}],'
+        '"tolerance":[{"k":"冗談・軽口","v":"...","src":"...","conf":"高"}],'
+        '"myself":[{"k":"口調・距離","v":"...","src":"...","conf":"高"}]}\n'
         f"---\n{talk}"
     )
     try:
@@ -1787,6 +1800,15 @@ def edit_persona(contact, action, index, value=""):
             secs[index]["conf"] = "中"        # 人手修正=確信度中(引用は残す)
     elif action == "summary" and value.strip():
         p["summary"] = value.strip()[:80]
+    # v212: 「この人へのわたし」の修正・削除
+    mys = p.get("myself") or []
+    if action in ("myfix", "mydel") and 0 <= index < len(mys):
+        if action == "mydel":
+            mys.pop(index)
+        elif action == "myfix" and value.strip():
+            mys[index]["v"] = value.strip()[:160]
+            mys[index]["conf"] = "中"
+        p["myself"] = mys
     # v118: 許容レベルの○✕確定・修正・削除
     tols = p.get("tolerance") or []
     if action in ("tolok", "tolng", "tolfix", "toldel") and 0 <= index < len(tols):
@@ -2113,6 +2135,121 @@ def _prefilter_facts(contact, facts):
         batch.append((ck, v))
         out.append(f)
     return out
+
+
+# ============ v211: 呼び名の決定論抽出(敬称込み・実測4本で検証した3層フィルタ) ============
+# 設計(2026-08-12裁定): LLM頼みをやめ、彼女の送信行の「行頭呼びかけ」を全文走査する。
+# 第1層=助詞判別(「田中さんが…」=話題は除外) / 第2層=表示名照合(第三者名を弾く決定打) /
+# 第3層=分布(日数分散)と双方向(相手も使う名前=2人で話す第三者)。
+# 実測: 南さん20回・文ちゃん45回・宮澤くん11回を正しく抽出、第三者(えり/武田/トシ等)誤採用ゼロ。
+# 敬称は呼び名の本体(さん/ちゃん/くんで関係が別物=本人指摘)。くん/君等の表記ゆれは正規化合算。
+# 自動確定はしない(v164規約)— 根拠つきでlinebot_factsのpendingに積み、既存の○✕関門を通す。
+
+_YOB_HON = r"(さん|サン|様|さま|くん|君|ちゃん)"
+_YOB_FILLER = r"(?:ところで|ちなみに|あと|そういえば|お疲れ様です[!！\s]*|おはようございます[!！\s]*|こんばんは[!！\s]*)?"
+_YOB_PARTICLES = ("が", "は", "も", "を", "に", "で", "と", "の", "から", "へ", "って", "たち", "達")
+_YOB_VERB_TAIL = ("行", "来", "食", "飲", "帰", "寝", "見", "観", "買", "遊", "泊")
+_YOB_HON_NORM = {"君": "くん", "サン": "さん", "さま": "様"}
+
+
+def _yob_romaji_hira(sr):
+    """簡易ローマ字→ひらがな(表示名照合用・依存なし)。完全変換でなく前方一致照合が目的。"""
+    sr = sr.lower()
+    V = {"a": "あ", "i": "い", "u": "う", "e": "え", "o": "お"}
+    K = {"k": "かきくけこ", "s": "さしすせそ", "t": "たちつてと", "n": "なにぬねの", "h": "はひふへほ",
+         "m": "まみむめも", "y": "やゆよ", "r": "らりるれろ", "w": "わをん", "g": "がぎぐげご",
+         "z": "ざじずぜぞ", "d": "だぢづでど", "b": "ばびぶべぼ", "p": "ぱぴぷぺぽ"}
+    out, i = "", 0
+    while i < len(sr):
+        c = sr[i]
+        if c in V:
+            out += V[c]; i += 1; continue
+        if c in K and i + 1 < len(sr) and sr[i + 1] in V:
+            row = K[c]
+            if c == "y":
+                out += {"a": "や", "u": "ゆ", "o": "よ"}.get(sr[i + 1], "")
+            elif c == "w":
+                out += {"a": "わ", "o": "を"}.get(sr[i + 1], "")
+            else:
+                out += row["aiueo".index(sr[i + 1])]
+            i += 2; continue
+        if c == "n":
+            out += "ん"; i += 1; continue
+        i += 1
+    return out
+
+
+def _yob_kata_hira(t):
+    return "".join(chr(ord(ch) - 0x60) if "ァ" <= ch <= "ヶ" else ch for ch in t)
+
+
+def extract_yobina_calls(text, self_name):
+    """txt原文から呼び名候補(敬称込み)を決定論で1つ返す。無ければNone。
+    戻り値: {"v","src","conf","alts"}(save_facts互換)。"""
+    import re as _re
+    if not (text or "").strip() or not (self_name or "").strip():
+        return None
+    # 相手表示名(txtヘッダ)
+    _hm = _re.search(r"\[LINE\]\s*(.+?)\s*との", text[:300])
+    partner_disp = (_hm.group(1) if _hm else "").strip()
+    # 行パース
+    cur_date, my, their = "", [], []
+    for ln in text.split("\n"):
+        if _re.match(r"^\d{4}[/.]\d{1,2}[/.]\d{1,2}", ln) and "\t" not in ln:
+            cur_date = ln[:10]; continue
+        tm = _re.match(r"^\d{1,2}:\d{2}\t([^\t]*)\t(.*)$", ln)
+        if not tm:
+            continue
+        (my if tm.group(1) == self_name else their).append((cur_date, tm.group(2)))
+    if not my:
+        return None
+    cand = {}
+    for d, t in my:
+        t0 = (t or "").strip().strip('"').lstrip()
+        mm = _re.match(rf"^{_YOB_FILLER}([一-鿿々ぁ-んァ-ヶーA-Za-z]{{1,8}}?){_YOB_HON}(.{{0,2}})", t0)
+        if not mm:
+            continue
+        name, hon, after = mm.group(1), mm.group(2), mm.group(3).lstrip()
+        hon = _YOB_HON_NORM.get(hon, hon)
+        if any(after.startswith(p) for p in _YOB_PARTICLES):
+            continue   # 話題形(「◯◯さんが…」)
+        if hon == "くん" and name and name[-1] in _YOB_VERB_TAIL:
+            continue   # 「飯行くん(です)」型の誤マッチ
+        c = cand.setdefault(name, {"n": 0, "dates": set(), "hon": {}})
+        c["n"] += 1
+        c["dates"].add(d)
+        c["hon"][hon] = c["hon"].get(hon, 0) + 1
+    if not cand:
+        return None
+    # 相手側使用(2人で話す第三者の印)
+    for name in cand:
+        cand[name]["their"] = sum(1 for _, t in their if _re.search(rf"{_re.escape(name)}{_YOB_HON}", t or ""))
+    # 表示名トークン(読み変換つき)
+    disp = _re.sub(r"[(（][^)）]*[)）]", " ", partner_disp)
+    toks = [w for w in _re.split(r"[\s　_・、,./|~〜\-]+", disp) if w]
+    tok_hira = {_yob_romaji_hira(w) if _re.fullmatch(r"[A-Za-z]+", w) else _yob_kata_hira(w) for w in toks}
+    def _match(name):
+        h = _yob_kata_hira(name)
+        if any(name in w or w in name for w in toks):
+            return True   # 漢字断片(文⊂文太郎)
+        return any(th and h and (th.startswith(h) or h.startswith(th) or h in th) for th in tok_hira)
+    best = None
+    for name, c in sorted(cand.items(), key=lambda x: -x[1]["n"]):
+        span = len(c["dates"])
+        matched = _match(name)
+        if matched:
+            conf = "高"
+        elif c["n"] >= 5 and span >= 3 and c["their"] <= c["n"] // 2:
+            conf = "中"   # 表示名照合は不一致だが頻度・分散が強い(南さん×minamitoshiro型)
+        else:
+            continue
+        hon, _hn = max(c["hon"].items(), key=lambda x: x[1])
+        v = name + hon
+        src = f"あなたが「{v}」と{c['n']}回呼びかけ({span}日に分散)" + ("" if matched else "・表示名とは不一致")
+        alts = [name + h for h in c["hon"] if h != hon]
+        best = {"v": v, "src": src, "conf": conf, "alts": alts}
+        break   # 最頻1件のみ(候補の洪水にしない)
+    return best
 
 
 def save_facts(contact, facts, status="pending"):
