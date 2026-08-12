@@ -458,6 +458,8 @@ async def liff_fixup_save(request: Request):
         rank = (b.get("rank") or "").strip()   # v182: 3連の一角(必須)
         bd = (b.get("誕生日") or "").strip()
         belong = (b.get("所属") or "").strip()
+        tanto = (b.get("担当") or "").strip()[:40]        # v214: 仕分けで担当も一緒に
+        koi = 1 if b.get("flag_koi") in (1, "1", True) else 0   # v214: 恋愛系の線引きも一緒に
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if not db.get_contact(code):
@@ -496,6 +498,14 @@ async def liff_fixup_save(request: Request):
             print(f"[fixup rel] {_e}", flush=True)
     if belong:
         crm.add_def("所属"); crm.set_attr(code, "所属", belong)
+    if tanto and kind == "customer":   # v214: 担当は顧客のみ(staff/peerには意味を持たない)
+        try:
+            crm.add_def("担当"); crm.set_attr(code, "担当", tanto)
+        except Exception as e:
+            print(f"[fixup tanto] {e}", flush=True)
+    if koi and kind == "customer":     # v214: flag_koiは顧客限定(v187§10: 非客に客UIを誤爆させない)
+        with db.conn() as c:
+            c.execute("UPDATE contacts SET flag_koi=1 WHERE code=?", (code,))
     linebot.quarantine_release_async(code)   # v187: 種別確定→検疫解放(客=適用/非客=破棄)
     db.track("liff_fixup_save")
     return {"ok": True}
@@ -797,6 +807,214 @@ def liff_export_flag(request: Request, key: str = "", flag: str = "koi", fmt: st
             lines += [f"{_t(ts)}\t{mark}\t{(tx or '').strip()}" for mark, ts, tx in merged]
         lines.append("")
     return Response("\n".join(lines), media_type="text/plain; charset=utf-8")
+
+
+# ============ v215: 取り込みtxt→カード反映の点検と自動アップデート(owner専用key口) ============
+
+def _card_audit_rows():
+    """取り込み済み(linebot_talks)の各相手について、カード反映状況を棚卸しする。"""
+    from . import linebot, crm, situations
+    linebot.ensure(); crm.ensure(); situations.ensure()
+    rows = []
+    with db.conn() as c:
+        talks = [dict(r) for r in c.execute(
+            "SELECT contact, LENGTH(text) AS chars FROM linebot_talks ORDER BY contact")]
+        for t in talks:
+            code = t["contact"]
+            ct = db.get_contact(code) or {}
+            a = crm.get_attrs(code) or {}
+            fc = {r["status"]: r["n"] for r in c.execute(
+                "SELECT status, COUNT(*) AS n FROM linebot_facts WHERE contact=? GROUP BY status", (code,))}
+            try:
+                import json as _j
+                quar = len(_j.loads(linebot._meta_get(f"quarantine_{code}") or "[]"))
+            except Exception:
+                quar = 0
+            has_persona = bool(linebot.get_persona(code))
+            has_dyn = bool((db.get_profile(code) or {}).get("dynamics"))
+            sitn = c.execute("SELECT COUNT(*) AS n FROM self_examples WHERE contact=?",
+                             (code,)).fetchone()
+            has_style = bool((db.get_profile(code) or {}).get("samples"))
+            rows.append({
+                "contact": code, "chars": t["chars"] or 0,
+                "kind": ct.get("kind") or "?", "rank": ct.get("rank") or "?",
+                "confirmed": linebot.rel_confirmed(code),
+                "yobina": a.get("呼び名") or "",
+                "attrs_n": len([k for k, v in a.items() if (v or "").strip()]),
+                "facts": {"pending": fc.get("pending", 0), "applied": fc.get("applied", 0),
+                          "confirmed": fc.get("confirmed", 0)},
+                "quarantine_held": quar,
+                "persona": has_persona, "dynamics": has_dyn,
+                "situations_n": (sitn["n"] if sitn else 0), "style": has_style,
+            })
+    return rows
+
+
+@router.get("/api/liff/card_audit")
+def liff_card_audit(request: Request, key: str = "", fmt: str = "txt"):
+    """v215: txt取り込み→カード反映の点検(読み取りのみ)。ブラウザで開ける。"""
+    from . import linebot
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    rows = _card_audit_rows()
+    st = linebot._meta_get("backfill215") or ""
+    db.track("liff_card_audit")
+    if fmt == "json":
+        return {"ok": True, "items": rows, "backfill215": st}
+    cust = [r for r in rows if r["kind"] == "customer"]
+    quar_stuck = [r for r in rows if r["quarantine_held"] > 0 or not r["confirmed"]]
+    no_yob = [r for r in cust if r["confirmed"] and not r["yobina"]]
+    no_facts = [r for r in cust if r["confirmed"]
+                and sum(r["facts"].values()) == 0 and r["quarantine_held"] == 0]
+    no_pers = [r for r in cust if r["confirmed"] and not r["persona"] and r["chars"] >= 3000]
+    no_dyn = [r for r in cust if r["confirmed"] and not r["dynamics"]]
+    L = [f"[カード反映点検] 取り込み済み {len(rows)}人(うち顧客 {len(cust)}人)", ""]
+    L.append(f"■ 仕分け待ち(検疫で反映保留・仕分け3連タップ/⚡おまかせで反映): {len(quar_stuck)}人"
+             + (f" … {'、'.join(r['contact'] for r in quar_stuck[:20])}" if quar_stuck else ""))
+    L.append(f"■ 呼び名なし(確定済み顧客): {len(no_yob)}人"
+             + (f" … {'、'.join(r['contact'] for r in no_yob[:20])}" if no_yob else ""))
+    L.append(f"■ 抽出事実ゼロ(確定済み顧客・保留もなし): {len(no_facts)}人"
+             + (f" … {'、'.join(r['contact'] for r in no_facts[:20])}" if no_facts else ""))
+    L.append(f"■ ペルソナ未生成(3000字以上): {len(no_pers)}人"
+             + (f" … {'、'.join(r['contact'] for r in no_pers[:20])}" if no_pers else ""))
+    L.append(f"■ 関係ダイナミクス未分析: {len(no_dyn)}人"
+             + (f" … {'、'.join(r['contact'] for r in no_dyn[:20])}" if no_dyn else ""))
+    L += ["", "── 相手別 ──",
+          "contact\t字数\t種別\t確定\t呼び名\t属性\t事実(保留/適用/確認)\t検疫\tペルソナ\t力学\t実例\t文体"]
+    for r in rows:
+        L.append(f"{r['contact']}\t{r['chars']}\t{r['kind']}\t{'✓' if r['confirmed'] else '…'}"
+                 f"\t{r['yobina'] or '-'}\t{r['attrs_n']}"
+                 f"\t{r['facts']['pending']}/{r['facts']['applied']}/{r['facts']['confirmed']}"
+                 f"\t{r['quarantine_held']}\t{'✓' if r['persona'] else '-'}"
+                 f"\t{'✓' if r['dynamics'] else '-'}\t{r['situations_n']}"
+                 f"\t{'✓' if r['style'] else '-'}")
+    if st:
+        L += ["", f"自動アップデート状況: {st}"]
+    return Response("\n".join(L), media_type="text/plain; charset=utf-8")
+
+
+def _backfill215(self_name):
+    """確定済み顧客のうち、txtは取り込み済みなのに分析が欠けている相手を埋める。
+    v187検疫は尊重(未確定カードには触らない=仕分けが先)。抽出事実は通常どおり
+    pending/自動適用の関門を通る(v164/v187: 重要項目は本人○✕)。"""
+    from . import linebot, crm, situations, dynamics
+    rows = _card_audit_rows()
+    todo = [r for r in rows if r["kind"] == "customer" and r["confirmed"]
+            and r["quarantine_held"] == 0]
+    n_fact = n_yob = n_dyn = n_sit = n_pers = 0
+    for i, r in enumerate(todo[:100]):
+        code = r["contact"]
+        try:
+            with db.conn() as c:
+                tr = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+            text = (tr["text"] if tr else "") or ""
+            if not text:
+                continue
+            # ①呼び名: 決定論抽出(v211・AIキー不要)。無ければpendingで○✕へ
+            if not r["yobina"]:
+                try:
+                    _dy = linebot.extract_yobina_calls(text, self_name)
+                    if _dy:
+                        fs = linebot.curate_facts([{"k": "呼び名", "v": _dy["v"], "src": _dy["src"],
+                                                    "conf": _dy["conf"], "alts": _dy.get("alts", [])}])
+                        linebot.save_split(code, fs)
+                        n_yob += 1
+                except Exception as e:
+                    print(f"[bf215 yobina] {code}: {e}", flush=True)
+            # ②抽出事実ゼロ: 通常の抽出を今の版でやり直す(結果は通常の関門を通る)
+            if sum(r["facts"].values()) == 0 and config.ANTHROPIC_API_KEY:
+                try:
+                    facts, err = linebot.extract_facts(text, code, self_name)
+                    facts = linebot.curate_facts(facts or [])
+                    facts = [f for f in facts if f.get("k") != "呼び名" or not r["yobina"]]
+                    if facts:
+                        linebot.save_split(code, facts)
+                        n_fact += 1
+                except Exception as e:
+                    print(f"[bf215 facts] {code}: {e}", flush=True)
+            # ③後段分析の欠け埋め(取り込み時と同じ関数・同じ順)
+            if not r["dynamics"]:
+                try:
+                    if dynamics.analyze_and_save(code, text, self_name):
+                        n_dyn += 1
+                except Exception as e:
+                    print(f"[bf215 dyn] {code}: {e}", flush=True)
+            if r["situations_n"] == 0:
+                try:
+                    situations.harvest_and_save(code, text, self_name)
+                    n_sit += 1
+                except Exception as e:
+                    print(f"[bf215 sit] {code}: {e}", flush=True)
+            if not r["persona"] and r["chars"] >= 3000:
+                try:
+                    linebot.maybe_auto_persona(code)
+                    n_pers += 1
+                except Exception as e:
+                    print(f"[bf215 persona] {code}: {e}", flush=True)
+            linebot._meta_set("backfill215",
+                              f"実行中 {i + 1}/{len(todo)}人目({code})")
+            # API負荷を平す(dynamics backfillと同じ間隔)。テストは0秒に落とせる
+            time.sleep(float(os.environ.get("CHOUBA_BF215_SLEEP", "3")))
+        except Exception as e:
+            print(f"[bf215] {code}: {e}", flush=True)
+    import datetime as _dt
+    _now = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).strftime("%m/%d %H:%M")
+    linebot._meta_set("backfill215",
+                      f"完了 {_now} 対象{len(todo)}人: 呼び名+{n_yob} 事実+{n_fact} "
+                      f"力学+{n_dyn} 実例+{n_sit} ペルソナ+{n_pers}")
+    print(f"[bf215] 完了: {len(todo)}人 呼び名{n_yob} 事実{n_fact} 力学{n_dyn} "
+          f"実例{n_sit} ペルソナ{n_pers}", flush=True)
+
+
+@router.get("/api/liff/card_backfill")
+def liff_card_backfill_confirm(request: Request, key: str = ""):
+    """v215: 自動アップデートの確認ページ(規約: 破壊的/重いURLのGET直実行禁止→確認を挟む)。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    rows = _card_audit_rows()
+    cust = [r for r in rows if r["kind"] == "customer" and r["confirmed"]
+            and r["quarantine_held"] == 0]
+    miss = sum(1 for r in cust if not r["yobina"] or sum(r["facts"].values()) == 0
+               or not r["persona"] or not r["dynamics"] or r["situations_n"] == 0)
+    stuck = sum(1 for r in rows if r["quarantine_held"] > 0 or not r["confirmed"])
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>カード自動アップデート</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:30px auto;padding:0 16px;line-height:1.8">
+<h2>🔄 カードの自動アップデート</h2>
+<p>取り込み済み {len(rows)}人のうち、分析が欠けている確定済み顧客 <b>{miss}人</b> を埋めます
+(呼び名・抽出事実・関係分析・実例・ペルソナ)。重要項目はこれまで通りカードでの○✕確認を通ります。</p>
+<p style="color:#8a5a00">仕分け待ち {stuck}人 はここでは触りません(LIFFの仕分け/⚡おまかせで確定すると自動反映されます)。</p>
+<p style="font-size:13px;color:#666">AI分析を使うためAPI利用料がかかります。進み具合は card_audit で見られます。</p>
+<form method="post" action="/api/liff/card_backfill">
+<input type="hidden" name="key" value="{config.INGEST_TOKEN}">
+<button type="submit" style="padding:14px 22px;font-size:16px;font-weight:700">実行する</button></form>
+</body></html>"""
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.post("/api/liff/card_backfill")
+async def liff_card_backfill_run(request: Request):
+    if not config.INGEST_TOKEN:
+        return _deny()
+    try:
+        form = await request.form()
+        key = form.get("key") or ""
+    except Exception:
+        key = ""
+    if key != config.INGEST_TOKEN and not _authed(request):
+        return _deny()
+    from . import linebot
+    if (linebot._meta_get("backfill215") or "").startswith("実行中"):
+        return Response("すでに実行中です。card_audit で進み具合を確認してください。",
+                        media_type="text/plain; charset=utf-8")
+    self_name = (db.get_profile("_selfname") or {}).get("name") or "自分"
+    linebot._meta_set("backfill215", "実行中 0人目")
+    threading.Thread(target=_backfill215, args=(self_name,), daemon=True).start()
+    db.track("liff_card_backfill")
+    return Response("🔄 自動アップデートを開始しました(裏で実行)。進み具合は card_audit で見られます。",
+                    media_type="text/plain; charset=utf-8")
 
 
 @router.post("/api/liff/contact_delete")
@@ -2307,6 +2525,7 @@ async def liff_classify(request: Request):
         v = body.get("kind") or ""
         rank = body.get("rank") or ""
         gender = (body.get("gender") or "").strip()   # v120: 店内の女/男(同僚ホステス/黒服)
+        tanto = (body.get("tanto") or "").strip()[:40]   # v214: 登録時に担当も一緒に(既定=自分)
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     if not name or v not in ("work", "staff", "peer", "priv", "link"):
@@ -2325,6 +2544,11 @@ async def liff_classify(request: Request):
         if rank in ("S", "A", "B"):
             with db.conn() as c:
                 c.execute("UPDATE contacts SET rank=? WHERE code=?", (rank, name))
+        if tanto:   # v214: 担当(自分/別の子)。別の子なら下書きが控えめトーンになる(既存crm.py注入)
+            try:
+                crm.add_def("担当"); crm.set_attr(name, "担当", tanto)
+            except Exception as e:
+                print(f"[classify tanto] {e}", flush=True)
     elif v == "staff":
         crm.mark_staff(name)
         crm.add_alias(name, name)

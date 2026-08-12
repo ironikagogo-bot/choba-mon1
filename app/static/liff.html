@@ -388,6 +388,8 @@ a,button,.chip,.lab,[onclick]{touch-action:manipulation}
 #swsheet .swsc.on{border-color:var(--navy);background:rgba(27,42,74,.08)}
 body.dark #swsheet .swsc.on{background:rgba(201,164,76,.12);border-color:var(--gold)}
 #swsheet .swsc small{display:block;font-weight:400;font-size:11px;color:var(--sub);margin-top:2px}
+/* ===== v214: Pro Max追修正 — 1文字チップ(ランクA等)の横幅38px→44px(HIG 44×44) ===== */
+.chip{min-width:44px}
 </style>
 </head>
 <body>
@@ -2361,7 +2363,18 @@ function lbodyHtml(p, k) {
       ${head}${msg}
       <h3 class="sec">🆕 はじめての相手です</h3>
       ${candHtml}
-      <div class="note" style="margin:4px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
+      <!-- v214: 担当を登録の流れに(既定=自分でタップ不要。別の子の時だけ+2タップ) -->
+      <div class="note tantoLab" style="margin:4px 0 2px">${W("担当", "主担当")}</div>
+      <div class="chips" style="margin-bottom:2px">
+        <button class="chip on" id="rtSelf" onclick="repTanto('self')">自分</button>
+        <button class="chip" id="rtOther" onclick="repTanto('other')">${W("別の子", "別の人")}</button>
+      </div>
+      <div id="rtBox" style="display:none">
+        <input class="f" id="rtNm" placeholder="${W("担当の名前", "主担当の名前")}" style="margin:4px 0 2px">
+        <div class="note" style="margin:0 0 4px">${W("担当が別の子 → 下書きは控えめトーンになります",
+          "主担当が別の人 → 下書きは控えめトーンになります")}</div>
+      </div>
+      <div class="note" style="margin:6px 0 8px">💐 ${W("お客様なら、ランクを押すだけで登録完了", "仕事の相手なら、つながりの濃さを押すだけで登録完了")}</div>
       <div class="chips">
         <button class="chip" style="border-color:var(--gold);border-width:2px;font-weight:800"
           onclick="repClsRank('S')">💎 S（${W("太客", "大切な人")}）</button>
@@ -2689,12 +2702,25 @@ window.repSendMine = async () => {
 window.repMarkMine = () => { const it = rep.items[rep.i];
   fire("/api/liff/reply/act", { mid: it.mid, action: "replied", text: $("#mywrite").dataset.text || "", mids: it.mids });
   repAdvance(`✓ ${disp(it.name)} 返信済み`); };
+// v214: 担当チップ(既定=自分。別の子なら名前欄を出す)
+window.repTanto = sel => {
+  document.getElementById("rtSelf")?.classList.toggle("on", sel === "self");
+  document.getElementById("rtOther")?.classList.toggle("on", sel === "other");
+  const box = document.getElementById("rtBox");
+  if (box) { box.style.display = sel === "other" ? "" : "none";
+    if (sel === "other") document.getElementById("rtNm")?.focus(); }
+};
 window.repClsRank = async rank => {
   const it = rep.items[rep.i];
-  if (!await clsSave({ contact: it.contact, kind: "work", rank })) return;
+  // v214: 担当も一緒に保存。既定=自分。「別の子」で名前未入力ならそのまま(未設定=あとでカードから)
+  const _oth = document.getElementById("rtOther")?.classList.contains("on");
+  const _nm = (document.getElementById("rtNm")?.value || "").trim();
+  const tanto = _oth ? _nm : "自分";
+  if (!await clsSave({ contact: it.contact, kind: "work", rank, tanto })) return;
   bust("contacts");
   it.unlinked = false; it.rank = rank || "B"; drawRep();   // その場で下書きへ進む
-  toast(`✓ ${W("お客様", "仕事の相手")}${rank ? `(${W("ランク", "つながり")}${rank})` : ""}で登録`);
+  toast(`✓ ${W("お客様", "仕事の相手")}${rank ? `(${W("ランク", "つながり")}${rank})` : ""}で登録${
+    tanto && tanto !== "自分" ? `(${W("担当", "主担当")}: ${tanto})` : ""}`);
 };
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
@@ -3321,13 +3347,41 @@ function drawFixup() {
       <div class="chips" id="fxStand">${standChip("up", "先輩・目上")}${standChip("even", "対等")}${standChip("down", "後輩・目下")}</div>
       <label class="f">ランク <span style="color:var(--red)">*</span></label>
       <div class="chips" id="fxRank">${["S", "A", "B"].map(v => `<button class="chip ${(it.rank || "B") === v ? "on" : ""}" data-rank="${v}">${v === "S" ? W("S(太客)", "S(最重要)") : v === "A" ? "A" : W("B(ふつう)", "B(ふつう)")}</button>`).join("")}</div>
+      <div id="fxCustBox" style="display:${(sg.kind || "customer") === "customer" ? "block" : "none"}">
+        <!-- v214: 担当と恋愛系の線引きも仕分けの流れで(既定=自分/OFFでタップ不要・顧客のみ) -->
+        <label class="f">${W("担当", "主担当")}</label>
+        <div class="chips" id="fxTanto">
+          <button class="chip on" data-tanto="self">自分</button>
+          <button class="chip" data-tanto="other">${W("別の子", "別の人")}</button></div>
+        <div id="fxTantoBox" style="display:none">
+          <input class="f" id="fxTantoNm" placeholder="${W("担当の名前", "主担当の名前")}">
+          <div class="note" style="margin:4px 0 0">${W("担当が別の子 → 下書きは控えめトーンになります",
+            "主担当が別の人 → 下書きは控えめトーンになります")}</div></div>
+        <label class="f">💘 ${W("ガチ恋の線引き", "恋愛感情への線引き")}</label>
+        <div class="chips" id="fxKoi">
+          <button class="chip on" data-koi="0">OFF</button>
+          <button class="chip" data-koi="1">ON</button></div>
+        <div class="note" style="margin:2px 0 0">${W("好意が重たい相手はON。下書きが線引き用になります",
+          "恋愛感情が重ための相手はON。下書きが線引き用になります")}</div>
+      </div>
       <button class="btn primary" id="fxSave">確定して次へ</button>
       <button class="btn ghost" onclick="fx.i+=1;drawFixup()">あとで(スキップ)</button></div>` + bulkBtn;
-  const sel = { kind: sg.kind || "", stand: sg.stand || "", rank: it.rank || "B" };   // v182: ランクも3連の一角
+  const sel = { kind: sg.kind || "", stand: sg.stand || "", rank: it.rank || "B",
+    tanto: "self", koi: 0 };   // v182: ランクも3連の一角 / v214: 担当・線引き
   $("#fxKind").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
     $("#fxKind").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); sel.kind = b.dataset.kind;
-    $("#fxBelongBox").style.display = sel.kind === "peer" ? "block" : "none"; });
+    $("#fxBelongBox").style.display = sel.kind === "peer" ? "block" : "none";
+    // v214: 担当・線引きは顧客だけの項目(staff/peer/privでは畳む)
+    $("#fxCustBox").style.display = sel.kind === "customer" ? "block" : "none"; });
+  $("#fxTanto").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
+    $("#fxTanto").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); sel.tanto = b.dataset.tanto;
+    $("#fxTantoBox").style.display = sel.tanto === "other" ? "block" : "none";
+    if (sel.tanto === "other") $("#fxTantoNm").focus(); });
+  $("#fxKoi").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
+    $("#fxKoi").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
+    b.classList.add("on"); sel.koi = Number(b.dataset.koi); });
   $("#fxStand").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return;
     $("#fxStand").querySelectorAll(".chip").forEach(x => x.classList.remove("on"));
     b.classList.add("on"); sel.stand = b.dataset.stand; });
@@ -3337,7 +3391,10 @@ function drawFixup() {
   $("#fxSave").onclick = async () => {
     const body = { code: it.code, "呼び名": $("#fxYb").value.trim(), "本名": $("#fxHn").value.trim(),
       "誕生日": $("#fxBd").value.trim(), kind: sel.kind, stand: sel.stand, rank: sel.rank,
-      "所属": ($("#fxBelong") || { value: "" }).value.trim() };
+      "所属": ($("#fxBelong") || { value: "" }).value.trim(),
+      // v214: 担当(既定=自分。別の子で名前未入力なら未設定のまま)と恋愛系の線引き
+      "担当": sel.tanto === "other" ? $("#fxTantoNm").value.trim() : "自分",
+      flag_koi: sel.koi };
     if (body.kind !== "priv" && (!body["呼び名"] || !body.kind || !body.stand || !body.rank))
       return toast("呼び名・種別・立場・ランクは必須です(候補ボタンで1タップ入力できます)");
     if (body.kind === "priv") {   // v150: ネイティブconfirm廃止(iOSのドメイン名入りダイアログ問題)
