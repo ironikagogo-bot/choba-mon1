@@ -207,7 +207,11 @@ def push_urgent(contact, reason):
         return False
     # v190(#2): 匿名化。相手名・用件をLINE通知に載せない(覗き見対策)。
     # ⚠️「1件届いています」はdeskservice._BOT_SIGS(bot共鳴フィルタ)の照合句。同時更新必須。
-    alt = "🔥 1件届いています。"
+    # v205: 時刻を付けて「状態」ではなく「出来事」に読めるようにする(処理後もトーク一覧に
+    # 残り続けて『まだ1件ある』ように見える、の対の半分。もう半分は maybe_push_all_clear)。
+    import datetime as _dt
+    _hm = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).strftime("%H:%M")
+    alt = f"🔥 {_hm} 1件届いています。"
     liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
     if liff_id:
         # v155: ボタン1タップでその人の下書きへ直行(メニュー→一覧探索の3画面を省略)。
@@ -233,7 +237,47 @@ def push_urgent(contact, reason):
     ok = push_owner([msg])
     if ok:
         _meta_set(_lp_month_key(), str(n + 1))
+        _meta_set("upush_pending", "1")   # v205: 対の「✓対応済み」を送る予約
     return ok
+
+
+def maybe_push_all_clear(send=None):
+    """v205: 直前に🔥pushを出していて、急ぎ(urgent)が1件も残っていない瞬間に
+    「✓対応済み」を1通だけ送る。トーク一覧のプレビューが『🔥1件届いています』のまま
+    残り続ける問題(本人報告 2026-08-11)への対。
+    規律: 🔥push 1通につき最大1通(upush_pending印)・月間上限はURGENT_PUSH_CAPと同じ財布・
+    ↷あとで(deferred)の急ぎが残っている間は「対応済み」と言わない。"""
+    try:
+        if _meta_get("upush_pending") != "1":
+            return False
+        with db.conn() as c:
+            rows = [dict(r) for r in c.execute(
+                "SELECT m.text, m.contact, IFNULL(ct.kind,'customer') AS kind FROM messages m "
+                "LEFT JOIN contacts ct ON ct.code=m.contact "
+                "WHERE m.status IN ('open','deferred') AND m.category='urgent'")]
+        for r in rows:
+            if (r.get("kind") or "customer") == "staff":
+                continue   # 店内は🔥通知の対象外(通知条件と同じ判定)
+            if not group_visible(r.get("text") or "", r.get("contact") or ""):
+                continue
+            return False   # まだ急ぎが残っている
+        n = urgent_push_count()
+        if n >= URGENT_PUSH_CAP:
+            _meta_set("upush_pending", "0")
+            return False
+        import datetime as _dt
+        hm = _dt.datetime.now(_dt.timezone(_dt.timedelta(hours=9))).strftime("%H:%M")
+        fn = send or (lambda msgs: push_owner(msgs))
+        # ⚠️「対応済みになりました」はdeskservice._BOT_SIGSの照合句。同時更新必須。
+        ok = fn([{"type": "text",
+                  "text": f"✓ {hm} 急ぎの連絡はぜんぶ対応済みになりました。"}])
+        if ok:
+            _meta_set("upush_pending", "0")
+            _meta_set(_lp_month_key(), str(n + 1))
+        return bool(ok)
+    except Exception as e:
+        print(f"[allclear] {e}", flush=True)
+        return False
 
 
 def push_owner(messages):
@@ -463,6 +507,11 @@ def record_act(mid, contact, action, before, sr0=0, ev0=0, sent_text=None):
                 act_id = cur.lastrowid
     except Exception as e:
         print(f"[acted log] {e}", flush=True)
+    # v205: 裁定のたびに「急ぎ全消化なら✓対応済みを1通」を裏で判定(応答は待たせない)
+    try:
+        threading.Thread(target=maybe_push_all_clear, daemon=True).start()
+    except Exception:
+        pass
     return act_id
 
 

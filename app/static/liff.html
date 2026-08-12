@@ -867,15 +867,15 @@ function lineSearchWord(name) {
 // 「大山さん🌵AMANE芳美（誕生日）」にも対応: 客名が先頭・店/担当は後ろの構造を利用。
 // 並び: 漢字→英字(3字以上)→かな。担当名・複数カード共通語(店名の印)・2文字以下英字は
 // 末尾に降格(消さない: 別の語で当たる実例に備え全部見せる裁定)。数字は捨てる。
-function swTokens(s) {
+function swRawTokens(s) {   // v206: 区切り・括弧・敬称処理済みのトークン(混在字種のまま)
   s = String(s || "").replace(/[(（][^)）]*[)）]/g, " ");   // 括弧内(誕生日等のメモ)は捨てる
-  const toks = s.split(/[\s　_・、,./|~〜\-]+|[\u{1F000}-\u{1FAFF}☀-➿⬀-⯿️‍]+/u).filter(Boolean);
+  return s.split(/[\s　_・、,./|~〜\-]+|[\u{1F000}-\u{1FAFF}☀-➿⬀-⯿️‍]+/u).filter(Boolean)
+    .map(t => t.replace(/(さん|様|さま|くん|君|ちゃん)$/, "")).filter(Boolean);
+}
+function swTokens(s) {
   const runs = [];
-  for (let t of toks) {
-    t = t.replace(/(さん|様|さま|くん|君|ちゃん)$/, "");   // 末尾敬称を剥がす
-    if (!t) continue;
+  for (const t of swRawTokens(s))
     for (const r of (t.match(/[一-鿿々]+|[ぁ-んァ-ヶー]+|[A-Za-z]+|[0-9]+/g) || [])) runs.push(r);
-  }
   const seen = new Set();
   return runs.filter(r => !seen.has(r) && seen.add(r));
 }
@@ -883,15 +883,28 @@ function _swDemoted(w, tanto, common) {
   return (tanto && w === tanto) || (common || []).includes(w) || /^[A-Za-z]{1,2}$/.test(w);
 }
 function swCandidates(sname, yobina, tanto, common) {
-  const kanji = [], latin = [], kana = [], demoted = [];
-  for (const r of swTokens(sname)) {
-    if (/^[0-9]+$/.test(r)) continue;
-    if (_swDemoted(r, tanto, common)) { demoted.push(r); continue; }
-    if (/^[一-鿿々]+$/.test(r)) kanji.push(r);
-    else if (/^[A-Za-z]+$/.test(r)) latin.push(r);
-    else kana.push(r);
+  // v206: LINEの相手検索は「名前(トークン)の先頭一致」に強く途中一致に弱い(実運用報告
+  // 2026-08-11: LINE名「K町田」に候補「町田」が出ない)。トークン先頭に立つ語を優先し、
+  // 途中断片は回収レーン側へ。混在トークン(英字+漢字等)は分解すると先頭語が消えるので
+  // トークン全体(2〜10字)も候補に加える(「K町田」はそれ自体が最良の検索語)。
+  const pre = { kanji: [], mixed: [], latin: [], kana: [] };
+  const mid = { kanji: [], latin: [], kana: [] };
+  const demoted = [], seen = new Set();
+  const push = (arr, w) => { if (!seen.has(w)) { seen.add(w); arr.push(w); } };
+  for (const t of swRawTokens(sname)) {
+    const runs = t.match(/[一-鿿々]+|[ぁ-んァ-ヶー]+|[A-Za-z]+|[0-9]+/g) || [];
+    // 全部が降格語(店名+担当の連結トークン等)なら全体も降格。1語でも生き残りがあれば候補
+    const alive = runs.some(r => !/^[0-9]+$/.test(r) && !_swDemoted(r, tanto, common));
+    if (runs.length > 1 && t.length >= 2 && t.length <= 10 && !/^[0-9]+$/.test(t)
+        && !_swDemoted(t, tanto, common)) push(alive ? pre.mixed : demoted, t);
+    runs.forEach((r, i) => {
+      if (/^[0-9]+$/.test(r)) return;
+      if (_swDemoted(r, tanto, common)) { push(demoted, r); return; }
+      const g = /^[一-鿿々]+$/.test(r) ? "kanji" : /^[A-Za-z]+$/.test(r) ? "latin" : "kana";
+      if (i === 0) push(pre[g], r); else push(mid[g], r);
+    });
   }
-  const out = kanji.concat(latin, kana, demoted);
+  const out = pre.kanji.concat(pre.mixed, pre.latin, pre.kana, mid.kanji, mid.latin, mid.kana, demoted);
   if (!out.length && yobina) {
     // v178: 呼び名フォールバックも末尾敬称を剥がす(「Yuji Tsuboiさん」で検索すると本名にヒットしない
     // 実運用報告)。検索は部分一致なので、敬称が本当にLINE名に含まれる相手にも剥がした語で当たる
