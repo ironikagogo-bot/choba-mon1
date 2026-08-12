@@ -704,6 +704,46 @@ def liff_contact(code: str, request: Request):
     return p
 
 
+@router.get("/api/liff/export/{code:path}")
+def liff_contact_export(code: str, request: Request, key: str = "", fmt: str = "txt"):
+    """v210: 相手1人の生ログ書き出し(owner専用・key付き救済口の規約)。
+    用途: 呼び名抽出の実測・デバッグ・移行。中身=取り込みtxt原文+受信(moto経由)+送信記録。
+    ブラウザで開ける(ヘッダ不要のkey=INGEST_TOKEN)。破壊なしの読み取りのみ。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    from . import linebot
+    if not db.get_contact(code):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    with db.conn() as c:
+        r = c.execute("SELECT text, ts FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+        talk = (r["text"] if r else "") or ""
+        talk_ts = r["ts"] if r else None
+        recv = [dict(x) for x in c.execute(
+            "SELECT ts, text, category, status FROM messages WHERE contact=? ORDER BY ts", (code,))]
+        sent = [dict(x) for x in c.execute(
+            "SELECT ts, text, edited FROM sent_replies WHERE contact=? ORDER BY ts", (code,))]
+    db.track("liff_export")
+    if fmt == "json":
+        return {"contact": code, "talk_txt": talk, "talk_imported_ts": talk_ts,
+                "received": recv, "sent": sent}
+    import datetime as _dt
+    def _t(ts):
+        try:
+            return _dt.datetime.fromtimestamp(ts, _dt.timezone(_dt.timedelta(hours=9))).strftime("%Y/%m/%d %H:%M")
+        except Exception:
+            return "?"
+    lines = [f"[帳場エクスポート] {code}", ""]
+    if talk:
+        lines += ["===== 取り込みtxt原文 =====", talk, ""]
+    lines.append("===== サーバー蓄積(受信=📩 / 送信=📤) =====")
+    merged = [("📩", m["ts"], m["text"], m.get("status", "")) for m in recv] +              [("📤", m["ts"], m["text"], "") for m in sent]
+    merged.sort(key=lambda x: x[1] or 0)
+    for mark, ts, text, st in merged:
+        lines.append(f"{_t(ts)}\t{mark}\t{(text or '').strip()}" + (f"\t[{st}]" if st else ""))
+    return Response("\n".join(lines), media_type="text/plain; charset=utf-8")
+
+
 @router.post("/api/liff/contact_delete")
 async def liff_contact_delete(request: Request):
     """v145: カードの完全消去(取り消し不可)。UI側でOK入力確認済みの前提。"""
@@ -2073,6 +2113,57 @@ async def liff_reply_act(request: Request):
         print(f"[acted log] {e}", flush=True)
     db.track("liff_reply_act")
     return {**r, "act_id": act_id}
+
+
+@router.post("/api/liff/reply/sweep")
+async def liff_reply_sweep(request: Request):
+    """v209: たまった受信の一括片づけ(本人裁定2026-08-12・モック承認済み)。
+    クライアントが画面で数えて見せた mids を「返さない」に一括変更する。
+    - auto=True(swept=1)で閉じる=そのまま率・スキップ数など成績集計に混ぜない(v72の掃除概念)
+    - 相手単位で actedログ を切り、act_ids を返す→黒帯の↩︎で一括アンドゥ可能
+    - サーバー側でも保護規則を再適用(S客・ピン・非店内の急ぎは絶対に巻き込まない)"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        body = await request.json()
+        mids = [int(x) for x in (body.get("mids") or [])]
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if not mids or len(mids) > 2000:
+        return JSONResponse({"error": "bad mids"}, status_code=400)
+    groups: dict[str, list] = {}
+    with db.conn() as c:
+        for mid in mids:
+            m = c.execute("SELECT id, contact, category, status FROM messages WHERE id=?",
+                          (mid,)).fetchone()
+            if not m or m["status"] not in ("open", "deferred"):
+                continue
+            ct = db.get_contact(m["contact"]) or {}
+            kind = (ct.get("kind") or "customer")
+            # 保護(クライアントの🔥いま返す条件と同じ向き): S客・📌ピン・店内以外の急ぎ
+            if (ct.get("rank") == "S" and kind == "customer"):
+                continue
+            if int(ct.get("flag_hot") or 0) == 1:
+                continue
+            if m["category"] == "urgent" and kind != "staff":
+                continue
+            groups.setdefault(m["contact"], []).append(m["id"])
+        _sr0 = c.execute("SELECT IFNULL(MAX(id),0) FROM sent_replies").fetchone()[0]
+        _ev0 = c.execute("SELECT IFNULL(MAX(id),0) FROM events").fetchone()[0]
+    act_ids, n_msgs = [], 0
+    for contact, ids in groups.items():
+        with db.conn() as c:
+            before = {r["id"]: r["status"] for r in c.execute(
+                "SELECT id, status FROM messages WHERE contact=?", (contact,))}
+        for mid in ids:
+            db.set_status(mid, "skipped", auto=True)   # auto=swept=1(成績除外)
+        n_msgs += len(ids)
+        aid = linebot.record_act(ids[0], contact, "skipped", before, sr0=_sr0, ev0=_ev0)
+        if aid:
+            act_ids.append(aid)
+    db.track("liff_sweep")
+    return {"ok": True, "contacts": len(groups), "messages": n_msgs, "act_ids": act_ids}
 
 
 @router.post("/api/liff/reply/undo")

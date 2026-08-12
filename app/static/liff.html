@@ -376,6 +376,18 @@ header .back .lbl{font-size:10px}
   outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
 /* ⑦' タップ遅延対策(ピンチズームは無効化しない) */
 a,button,.chip,.lab,[onclick]{touch-action:manipulation}
+/* ===== v209: 一括片づけ(モック承認の形。赤=急ぎ・緑=送信の専有規約を守り紺/琥珀) ===== */
+.swtail{display:block;width:100%;margin:6px 0 14px;background:none;border:1.5px dashed var(--border);
+  border-radius:12px;padding:13px;font-size:14px;font-weight:700;color:var(--gold);cursor:pointer;
+  font-family:inherit;min-height:48px}
+#swsheet .swscrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:98}
+#swsheet .swpanel{position:fixed;left:0;right:0;bottom:0;background:var(--panel);border-radius:18px 18px 0 0;
+  box-shadow:0 -8px 30px rgba(0,0,0,.25);padding:16px 16px calc(22px + env(safe-area-inset-bottom));z-index:99}
+#swsheet .swsc{flex:1;border:1.5px solid var(--border);background:var(--panel);border-radius:12px;
+  padding:11px 8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;color:var(--ink);min-height:48px}
+#swsheet .swsc.on{border-color:var(--navy);background:rgba(27,42,74,.08)}
+body.dark #swsheet .swsc.on{background:rgba(201,164,76,.12);border-color:var(--gold)}
+#swsheet .swsc small{display:block;font-weight:400;font-size:11px;color:var(--sub);margin-top:2px}
 </style>
 </head>
 <body>
@@ -541,7 +553,7 @@ async function boot() {
   if (!ID_TOKEN && !ING) {
     // v151: 開発用prompt()の廃止(エンドユーザーに見える穴だった)。
     // 案内カードを出し、開発時はURLに ?token= を付ける運用に一本化
-    setHead("🏮 帳場くん", "", false);
+    setHead(W("🏮 帳場くん", "📒 帳場くん"), "", false);
     $("#view").innerHTML = `<div class="card" style="text-align:center;padding:26px 16px">
       <div style="font-size:44px">🙇‍♀️</div>
       <h3 class="sec" style="justify-content:center;margin-top:10px">うまくひらけませんでした</h3>
@@ -584,6 +596,9 @@ async function boot() {
   try {
     const h = await fetch("/api/liff/hello").then(r => r.json());
     MODESW = h.mode === "general";   // v157: aki-testだけ表示トグルを解禁
+    // v208: generalサーバーの既定表示は一般(本人裁定「夜を一切感じないように」)。
+    // 端末で明示的に切り替えた記録(cb_mode)がある時だけそれを尊重(Akiのaki-test運用は不変)
+    try { if (MODESW && localStorage.getItem("cb_mode") == null) GENMODE = true; } catch (e) { if (MODESW) GENMODE = true; }
     if (ID_TOKEN && h.has_liff && !h.bound) { showBindGuide(); return; }
   } catch (e) {}
   route();   // 認証完了後にもう一度描く(キャッシュ表示→実データへ)
@@ -1128,7 +1143,7 @@ function fire(path, body) {   // 楽観更新: 待たずに裏でPOST(失敗は�
 
 // ============ ホーム ============
 async function vHome() {
-  setHead("🏮 帳場くん", "今日の状況", false);
+  setHead(W("🏮 帳場くん", "📒 帳場くん"), "今日の状況", false);
   if (!store.get("home")) $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   cached("home", "/api/liff/home", drawHome, 30);
 }
@@ -1858,15 +1873,15 @@ async function vEdit(code) {
       <label class="f">${W("店内の区分", "社内の区分")}</label>${chip("staffgender",
         [["女", W("店内(女)", "女性")], ["男", W("店内(男)", "男性")]], (d.attrs["店内区分"] || ""))}</div>
     <label class="f">立場</label>${chip("stand", [["up", "目上"], ["even", "対等"], ["down", "目下"]], d.stand || "even")}
-    <label class="f">下ネタ対応</label>${chip("flagero", [["0", "なし"], ["1", "いなし(受け流す)"], ["2", "ノリOK"]], String(d.flag_ero || 0))}
-    <label class="f">ガチ恋の線引き</label>${chip("flagkoi", [["0", "OFF"], ["1", "線引きON(長文案も出す)"]], String(d.flag_koi || 0))}
+    <label class="f">${W("下ネタ対応", "際どい話への対応")}</label>${chip("flagero", [["0", "なし"], ["1", W("いなし(受け流す)", "受け流す")], ["2", W("ノリOK", "気にしない")]], String(d.flag_ero || 0))}
+    <label class="f">${W("ガチ恋の線引き", "恋愛感情への線引き")}</label>${chip("flagkoi", [["0", "OFF"], ["1", W("線引きON(長文案も出す)", "線引きON(ていねい長文案)")]], String(d.flag_koi || 0))}
     <label class="f">誕生日</label><input class="f" id="f_birthday" value="${esc(d.birthday)}" placeholder="8月19日">
     ${EDIT_ATTRS.map(attrField).join("")}
     <label class="f">メモ(自由)</label><textarea class="f" id="f_note">${esc(d.note)}</textarea>
   </div>
   <button class="btn primary" id="btnSave">保存する</button>
   <button class="btn ghost" onclick="history.back()">やめる</button>
-  <div class="note">保存すると顧客カードにすぐ反映されます。</div>
+  <div class="note">${W("保存すると顧客カードにすぐ反映されます。", "保存するとカードにすぐ反映されます。")}</div>
   <details class="card" style="margin-top:14px"><summary>🔀 重複カードの統合</summary>
     <div class="note" style="margin:6px 0">同じ人のカードが2枚ある時に。<b>このカード(${esc(disp(d.name))})が消えて</b>、
     選んだカードへ会話・履歴・情報が全部移ります(この名前は別名として残り、以後の受信も移動先に入ります)。取り消せません。</div>
@@ -2129,17 +2144,60 @@ function snack(text, actPromise) {
 function snackHide() { const el = document.getElementById("snack");
   if (el) el.style.display = "none"; clearTimeout(_sT); _sActP = null; }
 async function undoNow(actP) {
-  let actId = null;
-  try { const r = await actP; actId = r && r.act_id; } catch (e) {}
-  if (!actId) { toast("戻せませんでした(通信)"); return false; }
+  let ids = null;
+  try { const r = await actP; ids = r && (r.act_ids || (r.act_id ? [r.act_id] : null)); } catch (e) {}
+  if (!ids || !ids.length) { toast("戻せませんでした(通信)"); return false; }
   try {
-    const r2 = await api("/api/liff/reply/undo", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
-    if (r2.error) { toast(r2.error); return false; }
+    for (const actId of ids) {
+      const r2 = await api("/api/liff/reply/undo", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
+      if (r2.error) { toast(r2.error); return false; }
+    }
   } catch (e) { return toast("戻せませんでした(通信)"), false; }
   bust("home"); toast("↩︎ 戻しました"); vInbox();
   return true;
 }
+
+// ===== v209: 一括片づけ(シート→実行→黒帯↩︎)。prompt/confirm禁止規約=専用シート =====
+window.sweepSheet = () => {
+  const sc = rep._swScope; if (!sc || !sc.all.n) return;
+  document.getElementById("swsheet")?.remove();
+  const el = document.createElement("div"); el.id = "swsheet";
+  const btn = (id, tt, c, on) => `<button id="${id}" class="swsc ${on ? "on" : ""}" data-k="${id}">
+      ${tt}<small>${c.n}人・${c.m}通</small></button>`;
+  el.innerHTML = `<div class="swscrim" onclick="document.getElementById('swsheet').remove()"></div>
+    <div class="swpanel">
+      <h3 style="font-size:16px;margin-bottom:4px">🧹 まとめて片づける</h3>
+      <div style="font-size:12.5px;color:var(--sub);line-height:1.7;margin-bottom:12px">選んだ範囲を「返さない」にします。成績には数えません。あとから戻せます。</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        ${sc.old.n ? btn("swold", "5日以上まえだけ", sc.old, true) : ""}
+        ${btn("swall", "📥そのほか ぜんぶ", sc.all, !sc.old.n)}
+      </div>
+      <div style="font-size:12px;color:var(--sub);background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:9px 11px;margin-bottom:12px">
+        まもるもの: 🔥${W("急ぎとS客", "急ぎと大切な人")}・🌙あとで はこのまま残します</div>
+      <button class="btn" id="swgo" style="background:var(--navy);color:#fff;width:100%;font-weight:800"></button>
+      <button class="btn ghost" style="width:100%;margin-top:6px" onclick="document.getElementById('swsheet').remove()">やめる</button>
+    </div>`;
+  document.body.appendChild(el);
+  let key = sc.old.n ? "old" : "all";
+  const sync = () => { const c = sc[key];
+    el.querySelector("#swgo").textContent = `🧹 ${c.n}人を片づける(↩︎戻せます)`;
+    el.querySelectorAll(".swsc").forEach(b => b.classList.toggle("on", b.id === "sw" + key)); };
+  el.querySelectorAll(".swsc").forEach(b => b.addEventListener("click", () => { key = b.id === "swold" ? "old" : "all"; sync(); }));
+  el.querySelector("#swgo").addEventListener("click", async () => {
+    const mids = key === "old" ? sc.oldMids : sc.allMids;
+    const c = sc[key];
+    el.remove();
+    const p = api("/api/liff/reply/sweep", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mids }) });
+    // 楽観更新: 対象行を消して黒帯に↩︎(既存の型)
+    const set = new Set(mids);
+    (rep.items || []).forEach(x => { if ((x.mids || [x.mid]).some(m => set.has(m)) && !repIsHot(x) && !repIsLater(x)) x._done = "skipped"; });
+    drawRep();
+    snack(`🧹 ${c.n}人(${c.m}通) 片づけました`, p);
+  });
+  sync();
+};
 window.repHistUndo = async actId => {   // 区画行の「↩︎戻す」(サーバ確定済みの裁定の取り消し)
   try {
     const r = await api("/api/liff/reply/undo", { method: "POST",
@@ -2340,10 +2398,18 @@ function drawRep() {
   const openN = hot.length + norm.length;
   setHead("📨 受信", openN ? `${openN}人` : "", true);
   let h = "";
+  // v209: 一括片づけ(本人裁定・モック承認)。対象=📥そのほか(いま返す・あとでは巻き込まない)
+  const swOld = norm.filter(x => (Date.now() / 1000 - (x.p.ts || 0)) >= 5 * 86400);
+  const swCnt = a => ({ n: a.length, m: a.reduce((t, x) => t + ((x.p.mids || []).length || 1), 0) });
+  rep._swScope = { old: swCnt(swOld), all: swCnt(norm),
+    oldMids: swOld.flatMap(x => x.p.mids || [x.p.mid]), allMids: norm.flatMap(x => x.p.mids || [x.p.mid]) };
+  if (swOld.length >= 5) h += `<div class="banner" style="border-color:var(--gold);cursor:pointer" onclick="sweepSheet()">🧹<div class="txt">
+      <b>たまった受信 ${swOld.length}人</b><br><span style="font-size:12px">5日以上まえの分をまとめて片づけられます</span></div><span class="chev">›</span></div>`;
   if (hot.length) h += `<div class="lsec"><span class="tt">🔥 いま返す</span><span class="ct">${hot.length}人</span></div>`
     + hot.map(x => lrowHtml(x.p, x.k)).join("");
   if (norm.length) h += `<div class="lsec"><span class="tt">📥 そのほか</span><span class="ct">${norm.length}人</span></div>`
-    + norm.map(x => lrowHtml(x.p, x.k)).join("");
+    + norm.map(x => lrowHtml(x.p, x.k)).join("")
+    + (norm.length >= 3 ? `<button class="swtail" onclick="sweepSheet()">🧹 たまった受信をまとめて片づける</button>` : "");
   if (!openN) {
     const actedN = Math.max(rep.acted_n || 0, 0) + locDone.length + locSkip.length;
     // v198(本人裁定): 状態メッセージは祝い調をやめて現状を淡々と述べる線に統一
@@ -3093,7 +3159,8 @@ async function vNews() {
     html += `<h3 class="sec" style="font-size:12px;color:var(--sub);margin:12px 2px 6px">🏢 ${W("お客様の会社", "会社・仕事")}</h3>`
       + co.map(x => newsCard(x, items.indexOf(x))).join("");
   if (!items.length)
-    html += `<div class="empty">まだありません。顧客カードに会社名・趣味・好きなお酒・好きな食べ物を入れると毎朝ここに集まります。</div>`;
+    html += `<div class="empty">${W("まだありません。顧客カードに会社名・趣味・好きなお酒・好きな食べ物を入れると毎朝ここに集まります。",
+      "まだありません。カードに会社名・趣味・好きな食べ物を入れると毎朝ここに集まります。")}</div>`;
   $("#view").innerHTML = html;
 }
 window.newsSend = async j => {

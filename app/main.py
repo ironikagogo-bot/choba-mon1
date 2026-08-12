@@ -193,6 +193,7 @@ FEATURE_LABELS = {
     "contact_delete": "連絡先削除", "transfer": "移籍", "wipe": "データ消去",
     "news_refresh": "ネタ帳の更新",
     "liff_copy_send": "コピーで送信(返信)",
+    "liff_sweep": "一括片づけ",
 }
 
 
@@ -233,7 +234,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v207"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v210"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
