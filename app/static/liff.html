@@ -39,7 +39,7 @@ body.dark .rtag{filter:brightness(.92) saturate(.9)}
 body.dark img, body.dark #qrimg{background:#fff}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'Hiragino Sans','Noto Sans JP',sans-serif;background:var(--cream);color:var(--ink);
-  min-height:100vh;font-size:16px;line-height:1.6}
+  min-height:100vh;min-height:100dvh;font-size:16px;line-height:1.6}
 header{position:sticky;top:0;z-index:10;background:var(--navy);color:#F0ECE2;
   padding:calc(env(safe-area-inset-top) + 12px) 16px 12px;display:flex;align-items:center;gap:10px}
 header .back{font-size:20px;line-height:1;color:#F0ECE2;background:none;border:none;
@@ -346,13 +346,44 @@ body.dark .chiprow .c{border-color:var(--border);box-shadow:none}
 .chiprow .c em{font-style:normal;color:var(--gold);margin-left:4px;font-variant-numeric:tabular-nums}
 .c-new{animation:netapulse 2.4s ease-in-out infinite}
 @media (prefers-reduced-motion: reduce){.c-new{animation:none;outline:2px solid var(--gold)}}
+/* ===== v207: Pro Max監査対応(2026-08-12・実測コントラスト+フォーカス+微修正)。追記型 =====
+   実測値はPlaywright監査より。①〜⑦のモック裁定済み。既存クラス名・変数体系不変(新規は変数のみ) */
+:root{--green-txt:var(--green);--red-txt:var(--red)}
+body.dark{--green-txt:#6FBF8A;--red-txt:#F0907B}
+/* ①ダーク用件ラベル 3.1→7.0/6.9(ヒーロー既出色=世界観不変) */
+body.dark .ltop .why{color:#F0907B}
+body.dark .ltop .why.b{color:#C9A44C}
+/* ①' ダークの緑テキスト 3.3→8.4(緑=送信ボタン専用のLINE緑とは別系統・文字色のみ) */
+body.dark .stat-ok{color:var(--green-txt)}
+body.dark .st.done{color:var(--green-txt)}
+body.dark .swlearn .msg{color:var(--green-txt)}
+body.dark .st.err{color:var(--red-txt)}
+body.dark .st.amb{color:var(--red-txt)}
+/* ②ライト琥珀の強調文字 3.2→6.8(金の枠・チップは据え置き=文字だけ濃く) */
+.banner b{color:#6b5218}
+body.dark .banner b{color:var(--gold)}
+/* ③金ボタンの文字 3.5→4.9(ダーク既対応の手法をライトにも) */
+.btn.primary{color:#231a08}
+body.dark .btn.primary{color:#1B2028}
+/* ⑤極小ラベル9→10px(タップ枠44pxは不変) */
+.lbtns small{font-size:10px}
+header .back .lbl{font-size:10px}
+/* ⑥↷✕の間隔5→8px(誤タップ距離) */
+.lbtns{gap:8px}
+/* ⑦フォーカスリング=全対象(本人裁定2026-08-12「全ての選択に入れる」。
+   :focus-visible限定=タップでは一切発火しない。PCブラウザ・外部キーボード用) */
+:where(a,button,input,textarea,select,[onclick],[tabindex]):focus-visible{
+  outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
+/* ⑦' タップ遅延対策(ピンチズームは無効化しない) */
+a,button,.chip,.lab,[onclick]{touch-action:manipulation}
 </style>
 </head>
 <body>
 <header id="hd"><button class="back" id="btnBack"><span>‹</span><span class="lbl">ホーム</span></button>
   <div style="flex:1"><h1 id="hdTitle">🏮 帳場くん</h1><div class="sub" id="hdSub">今日の状況</div></div>
-  <button id="themeBtn" onclick="toggleTheme()" style="background:transparent;border:1px solid rgba(255,255,255,.3);
-    border-radius:10px;color:#F0ECE2;font-size:16px;padding:6px 10px">🌙</button>
+  <button id="themeBtn" onclick="toggleTheme()" aria-label="表示の明暗を切り替え"
+    style="background:transparent;border:1px solid rgba(255,255,255,.3);border-radius:10px;color:#F0ECE2;
+    font-size:16px;width:44px;height:44px;padding:0">🌙</button>
 </header>
 <main id="view"></main>
 <div id="toast"></div>
@@ -1123,7 +1154,7 @@ function drawHome(d) {
   $("#view").innerHTML = `
   <div onclick="nav('#reader')" style="cursor:pointer;display:flex;align-items:center;gap:8px;
     font-size:13px;font-weight:700;margin:0 2px 10px;
-    color:${rdOk ? 'var(--green)' : 'var(--red)'}">
+    color:${rdOk ? 'var(--green-txt)' : 'var(--red-txt)'}">
     ${rdOk ? '📡 受信係 稼働中' : '📡 受信係 要確認'}
     <span style="color:var(--sub);font-weight:400">${ago}</span>
     <span class="chev" style="margin-left:auto">›</span></div>
