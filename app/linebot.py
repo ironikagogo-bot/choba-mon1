@@ -1598,13 +1598,45 @@ def analyze_persona(contact, sample=50000):
                          "ok": None})   # ok: None=未確定 / 1=本人が採用 / 0=却下(注入しない)
     # v221: 「この人へのわたし」の取り出し。v212でプロンプト・UI・編集は入れたのに
     # ここで捨てていた(AIが返しても保存されず🪞が永遠に出ない実バグ・本人指摘2026-08-13)
-    mys = []
-    for m in (obj.get("myself") or [])[:4]:
-        k = str(m.get("k", "")).strip()[:14]
-        v = str(m.get("v", "")).strip()
-        if k in MYSELF_KEYS and v:
-            mys.append({"k": k, "v": v[:160], "src": str(m.get("src", ""))[:60],
-                        "conf": m.get("conf") if m.get("conf") in ("高", "中", "低") else "中"})
+    def _parse_mys(arr):
+        out = []
+        for m in (arr or [])[:4]:
+            k = str(m.get("k", "")).strip()[:14]
+            v = str(m.get("v", "")).strip()
+            if k in MYSELF_KEYS and v:
+                out.append({"k": k, "v": v[:160], "src": str(m.get("src", ""))[:60],
+                            "conf": m.get("conf") if m.get("conf") in ("高", "中", "低") else "中"})
+        return out
+    mys = _parse_mys(obj.get("myself"))
+    # v227: 🪞が空のときは1回だけ小さく問い直す。長文で出力が途中で切れると配列末尾の
+    # myselfが最初に犠牲になる(サルベージは前半を守る)ため、専用の追撃で取りこぼしを回収
+    if not mys and len(talk) >= 1000:
+        try:
+            _p2 = (f"次の会話から、利用者本人({_selfn})がこの相手と接する時にどんな自分でいるかだけを"
+                   f"分析してください。観点(この4つに限定): {'/'.join(MYSELF_KEYS)}。"
+                   f"主語は必ず{_selfn}本人。src=本人の実発言引用(40字以内)。根拠が無い観点は出さない。"
+                   '出力はJSONのみ: {"myself":[{"k":"口調・距離","v":"...","src":"...","conf":"高"}]}\n'
+                   f"---\n{talk[:24000]}")
+            rr3 = requests.post("https://api.anthropic.com/v1/messages",
+                                headers={"x-api-key": config.ANTHROPIC_API_KEY,
+                                         "anthropic-version": "2023-06-01",
+                                         "content-type": "application/json"},
+                                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 1500,
+                                      "system": system,
+                                      "messages": [{"role": "user", "content": _p2}]},
+                                timeout=90)
+            if rr3.status_code == 200:
+                _o3 = "".join(b.get("text", "") for b in rr3.json().get("content", []))
+                _t3 = _o3.replace("```json", "").replace("```", "").strip()
+                try:
+                    _obj3 = json.loads(_t3[_t3.index("{"):_t3.rindex("}") + 1])
+                except (ValueError, json.JSONDecodeError):
+                    _obj3 = _json_salvage(_t3) or {}
+                mys = _parse_mys(_obj3.get("myself"))
+                if mys:
+                    print(f"[persona] {contact}: 🪞追撃で{len(mys)}件回収", flush=True)
+        except Exception as _e:
+            print(f"[persona myself retry] {_e}", flush=True)
     return {"summary": str(obj.get("summary", ""))[:80], "sections": secs,
             "tolerance": tols, "myself": mys}, None
 

@@ -450,7 +450,72 @@ def _template_one(v, mode, template="") -> str:
     return (base + "\n" + t) if t else base
 
 
-def _generate_one_ai(v, mode, template, now, purpose=""):
+# v226(B案): 直近の実やり取り(30日以内・末尾3通)。話題は「この流れの続き」だけに絞らせる。
+# 唐突さの主因=カード属性(点)から話題を選び会話の流れ(線)を知らないこと、への直接対策
+_TOPIC_KEYS = ("進行中の話", "関係性メモ", "家族", "好きなお酒", "好きな食べ物",
+               "趣味・関心", "健康", "仕事・会社", "お気に入りキャスト", "記念日")
+
+
+def _recent_corpus(code, days=30):
+    """直近days日の受信・送信本文(新しい順)。[(who, ts, text)]"""
+    import re as _re3
+    cutoff = time.time() - days * 86400
+    with db.conn() as c:
+        recv = [("相手", r["ts"], r["text"]) for r in c.execute(
+            "SELECT ts, text FROM messages WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 6",
+            (code, cutoff))]
+        sent = [("自分", r["ts"], r["text"]) for r in c.execute(
+            "SELECT ts, text FROM sent_replies WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 6",
+            (code, cutoff))]
+    rows = sorted(recv + sent, key=lambda x: x[1] or 0)
+    return [(w, t, _re3.sub(r"【\??[^】]{0,30}】", "", (x or "")).strip()) for w, t, x in rows]
+
+
+def _recent_exchange_block(code):
+    rows = [r for r in _recent_corpus(code) if r[2]][-3:]
+    if not rows:
+        return ""
+    lines = "\n".join(f"{w}「{tx[:80]}」" for w, _, tx in rows)
+    return ("【直近の実際のやり取り(30日以内・古→新)】\n" + lines +
+            "\n→ 相手個別の話題に触れる場合は、この流れの自然な続きだけにする。"
+            "ここに出ていない話題は、カードに書いてあっても本文で蒸し返さない"
+            "(急に古い話を出すと監視されている印象になる)。流れが無ければ挨拶と季節だけでよい。")
+
+
+def _fresh_topic_keys(code, days=30):
+    """v226(A案): カードの話題キーのうち、直近days日の会話に実際に登場したものだけ(決定論)。"""
+    from . import crm as _crm
+    a = _crm.get_attrs(code) or {}
+    corpus = "".join(tx for _, _, tx in _recent_corpus(code, days))
+    if not corpus:
+        return set()
+    out = set()
+    for k in _TOPIC_KEYS:
+        val = (a.get(k) or "").strip()
+        if not val:
+            continue
+        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val) if len(t) >= 2]
+        if any(t in corpus for t in toks):
+            out.add(k)
+    return out
+
+
+def _topic_hits(text, code):
+    """生成文に登場するカード話題の数(決定論検品)。値のトークンが本文に現れたキーを数える。"""
+    from . import crm as _crm
+    a = _crm.get_attrs(code) or {}
+    hits = 0
+    for k in _TOPIC_KEYS:
+        val = (a.get(k) or "").strip()
+        if not val:
+            continue
+        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val) if len(t) >= 2]
+        if any(t in (text or "") for t in toks):
+            hits += 1
+    return hits
+
+
+def _generate_one_ai(v, mode, template, now, purpose="", plevel=1, strict=False):
     profile = db.get_profile("_global") or {}
     per = db.get_profile(v["code"]) or {}
     cp = contact_profile_block(per)
@@ -483,17 +548,41 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
         ctx_lines.append("★最優先・必達内容(この配信で伝えたい本題。この文面の骨にして、"
                         "本人の口調で自然に膨らませる。情報・事実は削らない): 「" + template + "」")
     if mode != "thanks":
-        # v119: 「濃すぎる」対策。個人事実の上限を明文化し、軽い話題を既定の入り口にする
-        ctx_lines.append("【個別化の分量(厳守)】この相手専用に見える一文を、ちょうど1つ。"
-                         "2つ以上の詰め込み/細かい会話引用/研究してます感は不気味なので禁止。"
-                         "カードに使える事実が無い時は、天気・季節をこの相手の生活に寄せた一言で代用する。")
+        # v226: 個別化つまみ(plevel 0=入れない/1=ひとつまみ/2=しっかり)
+        if plevel <= 0:
+            ctx_lines.append("【個別化の分量(厳守)】相手ごとの話題・事実には一切触れない。"
+                             "呼びかけの名前以外は全員に送れる共通の文面でよい。季節・天気の一言はOK。")
+        elif plevel >= 2:
+            ctx_lines.append("【個別化の分量(厳守)】この相手専用に見える話題は2つまで。"
+                             "羅列・研究してます感は禁止。")
+        else:
+            # v119: 「濃すぎる」対策。個人事実の上限を明文化し、軽い話題を既定の入り口にする
+            ctx_lines.append("【個別化の分量(厳守)】この相手専用に見える一文を、ちょうど1つ。"
+                             "2つ以上の詰め込み/細かい会話引用/研究してます感は不気味なので禁止。"
+                             "カードに使える事実が無い時は、天気・季節をこの相手の生活に寄せた一言で代用する。")
         _lt = light_topic_block(v["code"])
         if _lt:
             ctx_lines.append(_lt)
+        # v226(B案): 直近のやり取りの流れを渡し、話題は「続き」だけに絞る
+        if plevel >= 1:
+            _rx = _recent_exchange_block(v["code"])
+            if _rx:
+                ctx_lines.append(_rx)
+        if strict:   # v226: 検品リトライ(1回目が話題超過だった時)
+            _lim = 0 if plevel <= 0 else (2 if plevel >= 2 else 1)
+            ctx_lines.append(f"【重要・出し直し】前回の出力は相手個別の話題を入れすぎていた。"
+                             f"個別の話題は{_lim}個以内に減らし、残りは挨拶・季節・本題だけにする。")
     # v101: 顧客カードを配信生成にも実接続
+    # v226(A案): plevel1では直近30日の会話に実際に出た話題だけカードから渡す(鮮度フィルタ)。
+    # plevel0はカード事実そのものを渡さない
     try:
         from . import crm as _crm
-        _cb = _crm.card_prompt_block(v["code"])
+        if mode == "thanks" or plevel >= 2:
+            _cb = _crm.card_prompt_block(v["code"])
+        elif plevel <= 0:
+            _cb = _crm.card_prompt_block(v["code"], only_keys=set())   # 安全系(NG話題・担当)だけ残る
+        else:
+            _cb = _crm.card_prompt_block(v["code"], only_keys=_fresh_topic_keys(v["code"]))
     except Exception:
         _cb = ""
     # v118: 関係性(事実)＋許容レベル(本人確定のみ)を配信にも注入
@@ -561,22 +650,34 @@ def _force_yobina(text, v):
 
 
 def generate(mode="greeting", ranks=None, tags=None, template="", now=None, codes=None,
-             purpose="") -> dict:
+             purpose="", plevel=1) -> dict:
     """あて先を選び、一人ずつ違う下書きを一括生成して返す(保存も送信もしない)。
     codes 指定時はその相手だけ(UIで個別に外した人を除く)。
-    template=必達内容(本人が書いた文) / purpose=配信の種類(出勤・イベント等)。"""
+    template=必達内容(本人が書いた文) / purpose=配信の種類(出勤・イベント等)。
+    plevel=個別化つまみ(0=入れない/1=ひとつまみ/2=しっかり)。v226"""
     now = now or time.time()
     recips = select_recipients(ranks, tags, mode, now, codes)
     ai = bool(config.ANTHROPIC_API_KEY)
     items = []
     for v in recips:
         try:
-            text = (_generate_one_ai(v, mode, template, now, purpose=purpose)
+            text = (_generate_one_ai(v, mode, template, now, purpose=purpose, plevel=plevel)
                     if ai else _template_one(v, mode, template))
             row_ai = ai
         except Exception:
             text = _template_one(v, mode, template)
             row_ai = False
+        # v226: 決定論検品 — つまみの上限を超えて話題が入っていたら1回だけ厳しめに出し直す
+        if row_ai and mode != "thanks":
+            _lim = 0 if plevel <= 0 else (2 if plevel >= 2 else 1)
+            try:
+                if _topic_hits(text, v["code"]) > _lim:
+                    print(f"[campaign 検品] {v['code']}: 話題{_topic_hits(text, v['code'])}個>"
+                          f"上限{_lim} → 出し直し", flush=True)
+                    text = _generate_one_ai(v, mode, template, now, purpose=purpose,
+                                            plevel=plevel, strict=True)
+            except Exception as _e:
+                print(f"[campaign 検品] {_e}", flush=True)
         text = _force_yobina(text, v)   # v217: AIが登録名で呼んでも決定論で呼び名に戻す
         items.append({
             "code": v["code"], "rank": v["rank"], "tags": v["tags"],

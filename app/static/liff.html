@@ -408,6 +408,16 @@ body.dark .grpnote{background:rgba(159,180,220,.16);color:#9FB4DC}
 .grpwarn{background:#FDF3E0;border:1px solid #E3C98A;color:#7A5F1E;font-size:12px;
   border-radius:8px;padding:8px 10px;line-height:1.6;margin:6px 0 0}
 body.dark .grpwarn{background:#2a2313;border-color:#5a4a1e;color:#E3C98A}
+/* ===== v226: 配信の雛形モード — 差し込み名のハイライト ===== */
+mark.annm{background:#F5E9C8;color:#6b5218;border-radius:4px;padding:0 3px;font-weight:700}
+body.dark mark.annm{background:rgba(201,164,76,.25);color:#E3C98A}
+/* ===== v225: カードの「一覧へ」フロート(常に左下・確認バーがある時はその上) ===== */
+.fablist{position:fixed;left:12px;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:39;
+  background:var(--panel);border:1.5px solid var(--gold);color:var(--gold);font-weight:800;
+  font-size:13.5px;border-radius:24px;padding:12px 16px;min-height:44px;cursor:pointer;
+  font-family:inherit;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.fablist.up{bottom:calc(env(safe-area-inset-bottom) + 76px)}
+body.dark .fablist{box-shadow:0 4px 14px rgba(0,0,0,.5)}
 </style>
 </head>
 <body>
@@ -928,7 +938,7 @@ function prefetchAnn(code, tone, template) {
   if (!draftCache[k]) draftCache[k] =
     api("/api/liff/ann/draft", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, tone, template: ann.detail || "",
-          purpose: PLAB[ann.purpose] || "" }) }).catch(() => (delete draftCache[k], { text: "" }));
+          purpose: PLAB[ann.purpose] || "", plevel: ann.plevel }) }).catch(() => (delete draftCache[k], { text: "" }));
   return draftCache[k];
 }
 
@@ -1528,6 +1538,11 @@ function drawCard(code, d) {
     <div class="note">${esc(d.pstats.note)}</div></details>` : ""}
   ${(d.persona && d.persona.sections) ? `<details class="card"><summary>🧠 ペルソナ</summary>${persona}</details>`
     : `<div class="card"><h3 class="sec">🧠 ペルソナ</h3>${persona}</div>`}
+  ${(d.persona && d.persona.sections && !(d.persona.myself && d.persona.myself.length)) ? `<div class="card">
+    <h3 class="sec">🪞 この人へのわたし</h3>
+    <div class="note">${d.persona.myself !== undefined
+      ? "本人側の発言が少なく、分析材料が足りませんでした(会話が増えたらペルソナの🔁で再分析)"
+      : "旧形式の分析のままです — ペルソナの「🔁 全部分析し直す」を押すと追加されます"}</div></div>` : ""}
   ${(d.persona && d.persona.myself && d.persona.myself.length) ? `<details class="card">
     <summary>🪞 ${W("この人へのわたし", "この人へのわたし")}</summary>
     <div class="note" style="margin:6px 0 8px">${disp(d.name)}と接している時の、あなた自身の顔(本人の実発言から)</div>
@@ -1590,9 +1605,10 @@ function drawCard(code, d) {
        無かった(編集後も含め毎回ホーム経由になる摩擦。実運用者から複数回報告)。‹の仕様は変えず
        画面内ボタンで補う(編集画面の「やめる」と同じ思想)。v161: 本人指摘で上にも同じボタンを追加し、
        サイズもbtn(大)からchip(小)へ — 主役はあくまで✎カードを直す、一覧へは控えめな導線でいい。 -->
-  <div style="text-align:center;margin-top:10px">
-    <button class="chip" onclick="nav('#list')">🗂 一覧へ</button>
-  </div>
+  <!-- v225: 一覧へ戻るフロート(本人要望2026-08-13「常に画面下部に」)。確認バーがある時は
+       その上に載せる。末尾の旧chip版は重複になるため撤去(上部の‹一覧へは温存) -->
+  <div style="height:64px"></div>
+  <button class="fablist${d.pending_facts ? " up" : ""}" onclick="nav('#list')">‹ 🗂 一覧へ</button>
   ${d.pending_facts ? `<div style="height:70px"></div>
   <div class="stickyfix" onclick="nav('#seibip/${cq}')">✅ <b>${esc(disp(d.name))}の確認 ${d.pending_facts}件</b>
     <span style="font-weight:400">○✕するだけ・30秒</span><span class="chev" style="margin-left:auto">›</span></div>` : ""}`;
@@ -2807,7 +2823,8 @@ window.repClsRank = async rank => {
 };
 
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
-const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0 };
+const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0,
+  mode: "ai", plevel: 1 };   // v226: 作り方(ai/tpl)と個別化つまみ
 // v192その6: 履歴チップ(前回組み立てた文の再提示)は本人裁定「残さなくてよい」で廃止
 // (v175の壊れ文フィルタごと不要に。保存済みannhistはvAnnで掃除)
 function annFlash(el) { el.scrollIntoView({ block: "nearest" });
@@ -2838,7 +2855,8 @@ async function vAnn() {
   drawAnn();
 }
 function annSave() { store.set("annq",
-  { purpose: ann.purpose, detail: ann.detail, segs: ann.segs, tone: ann.tone, q: ann.q, i: ann.i, sent: ann.sent }); }
+  { purpose: ann.purpose, detail: ann.detail, segs: ann.segs, tone: ann.tone, q: ann.q, i: ann.i, sent: ann.sent,
+    mode: ann.mode, plevel: ann.plevel }); }
 async function drawAnn() {
   const v = $("#view");
   if (ann.step === "resume") {
@@ -2853,15 +2871,38 @@ async function drawAnn() {
       <div class="chips" style="margin:8px 0 6px">${ANN_PURPOSES().map(([k, lab]) =>
         `<button class="chip ${ann.purpose === k ? "on" : ""}"
           onclick="ann.detail=(document.getElementById('annDetail')||{value:ann.detail}).value.trim();ann.purpose='${k}';drawAnn()">${lab}</button>`).join("")}</div>
+      <h3 class="sec" style="margin-top:14px">どうやって書く？</h3>
+      <div class="chips" style="margin:6px 0 8px">
+        <button class="chip ${ann.mode !== "tpl" ? "on" : ""}" onclick="annMode('ai')">🤖 一人ずつAIが書く</button>
+        <button class="chip ${ann.mode === "tpl" ? "on" : ""}" onclick="annMode('tpl')">📝 じぶんの雛形で</button>
+      </div>
+      ${ann.mode === "tpl" ? `
+      <label class="f">雛形(この1通が全員に届きます。<b>{名前}</b>の場所だけ相手ごとの呼び名に変わります)</label>
+      <textarea class="f" id="annDetail" style="min-height:100px" oninput="annTplPv()">${esc(ann.detail)}</textarea>
+      <div class="chips" style="margin:6px 0 2px">
+        <button class="chip" style="border-style:dashed;border-color:var(--gold);color:var(--gold);font-weight:800"
+          onclick="annTplIns()">+ {名前} を入れる</button></div>
+      <div class="note">呼び名には敬称が含まれています(「さん」を足す必要はありません)</div>
+      <div id="annPv" style="margin-top:6px"></div>` : `
+      <div class="note" style="margin:0 0 4px">カードの話題をどれくらい入れる？</div>
+      <div class="chips" style="margin:0 0 8px">
+        <button class="chip ${ann.plevel === 0 ? "on" : ""}" onclick="ann.plevel=0;drawAnn()">入れない</button>
+        <button class="chip ${ann.plevel === 1 ? "on" : ""}" onclick="ann.plevel=1;drawAnn()">ひとつまみ(推奨)</button>
+        <button class="chip ${ann.plevel === 2 ? "on" : ""}" onclick="ann.plevel=2;drawAnn()">しっかり</button>
+      </div>
+      <div class="note" style="margin:0 0 8px">${ann.plevel === 0 ? "全員ほぼ同じ文面。呼びかけの名前だけ変わります"
+        : ann.plevel === 1 ? "直近30日の会話に出た話題だけを最大1つ。入れすぎは「調べられてる感」が出ます"
+        : "カードの話題を2つまで積極的に使います(親しい相手向け)"}</div>
       <label class="f">伝えたい内容(タップで組み立てもOK。<b>書いた内容は全員の文面に必ず入ります</b>)</label>
       <div class="chips" style="margin-bottom:6px">${["今日", "今週", "来週", "月", "火", "水", "木", "金", "土",
         W("お店に出ます", "ごはん行きませんか"), W("来店お願いしたい", "会いに来てほしいです"),
         W("イベントがあります", "近況のご報告です"), W("同伴できます", "久しぶりに会いたいです")].map(w =>
         `<button class="chip" style="padding:7px 12px;font-size:13px" onclick="annWord(${jarg(w)})">${esc(w)}</button>`).join("")}</div>
-      <input class="f" id="annDetail" value="${esc(ann.detail)}" placeholder="例: 今週は金曜と土曜おります">
+      <input class="f" id="annDetail" value="${esc(ann.detail)}" placeholder="例: 今週は金曜と土曜おります">`}
       <h3 class="sec" style="margin-top:16px">誰に配る？(複数選べます・重複は自動でまとめます)</h3>
       <div class="chips" id="annSegs" style="margin-top:8px"><span class="spin"></span></div>
       <div class="note">${W("同業・店内", "仕事仲間・社内")}は文面のトーンが自動で変わります。配達中も1人ずつスキップ可</div></div>`;
+    if (ann.mode === "tpl") annTplPv();
     cached("annseg", "/api/liff/ann/segments", d => {
       if (!d || !$("#annSegs")) return;
       const c = d.counts;
@@ -2952,6 +2993,26 @@ async function drawAnnRun() {
     <div class="actbar"><button onclick="annSkip()">スキップ</button>
       <button onclick="annSave();nav('#home')">中断(続きから再開可)</button></div>`;
   $("#view").classList.add("hasbar");
+  // v226: 雛形モード — AIを呼ばず{名前}を差し替えるだけ(即表示・課金ゼロ)
+  if (ann.mode === "tpl") {
+    const nm = disp(p.name);
+    const text = (ann.detail || "").replaceAll("{名前}", nm);
+    swSetup("ann", { code: p.code, sname: p.sname, yobina: p.name, tanto: p.tanto,
+                     sword: p.sword, common: swCommon(ann.q.map(x => x.sname)) });
+    _swSend["ann"] = annBtns(p);
+    $("#drafts").innerHTML =
+      `<div class="note" style="margin:0 0 4px">📝 雛形のまま・<mark class="annm">名前</mark>だけ差し替えています。直したい時は文章をタップ(この人にだけ効きます)</div>
+       <div class="note" style="margin:0 0 4px">📮 宛先: <b style="color:var(--head)" class="plink" data-plink="${encq(p.code)}">${esc(nm)}</b></div>
+       <div class="draft" id="dr0"><div class="t" onclick="repEdit(0)">${
+         esc(text).replaceAll(esc(nm), `<mark class="annm">${esc(nm)}</mark>`)}</div>
+         <textarea style="display:none">${esc(text)}</textarea>
+         ${swUnitHtml("ann", _swSend["ann"])}</div>`;
+    copyWord(swWord("ann")).then(ok => {
+      const s = SW["ann"];
+      if (ok && s && !s.copied) { s.copied = true; swDraw("ann", _swSend["ann"]); }
+    });
+    return;
+  }
   const tpl = ann.detail || "";
   ann.q.slice(ann.i + 1, ann.i + 3).forEach(x => prefetchAnn(x.code, x.tone || ann.tone, tpl));  // 先読み
   const cur = p.code;
@@ -3348,6 +3409,38 @@ async function vAnni() {
 const fx = { items: [], i: 0 };
 // v151: 配信の文面をタップで組み立て(初回に文章タイプを強要する唯一の箇所の解体)。
 // 曜日は「金」→「金曜」に育て、読点や助詞は軽く自動補完する
+// v226: 作り方の切替(ai/tpl)。入力中の内容を保存してから再描画
+window.annMode = m => {
+  const el = document.getElementById("annDetail");
+  if (el) ann.detail = el.value;
+  if (m === "tpl" && ann.mode !== "tpl" && !(ann.detail || "").includes("{名前}"))
+    ann.detail = "{名前}、" + (ann.detail || "");   // 雛形の書き出しを用意(呼びかけから)
+  ann.mode = m; drawAnn();
+};
+// v226: {名前}をカーソル位置に挿入
+window.annTplIns = () => {
+  const ta = document.getElementById("annDetail");
+  if (!ta) return;
+  const st = ta.selectionStart ?? ta.value.length;
+  ta.value = ta.value.slice(0, st) + "{名前}" + ta.value.slice(st);
+  ann.detail = ta.value; ta.focus(); annTplPv();
+};
+// v226: 実在の相手2人分の呼び名でプレビュー(送る前に結果が見える)
+window.annTplPv = () => {
+  const box = document.getElementById("annPv");
+  const ta = document.getElementById("annDetail");
+  if (!box || !ta) return;
+  ann.detail = ta.value;
+  const cs = ((store.get("contacts") || {}).d || {}).contacts || [];
+  const names = cs.filter(c => !c.kind || c.kind === "customer").slice(0, 2)
+    .map(c => disp((c.yobina || "").trim() || c.name));
+  if (!names.length) names.push(W("山本さん", "山本さん"));
+  const hl = nm => esc(ta.value).replaceAll("{名前}", `<mark class="annm">${esc(nm)}</mark>`);
+  box.innerHTML = names.map((nm, i) =>
+    `<div style="background:var(--cream);border-radius:10px;padding:9px 11px;font-size:13.5px;line-height:1.7;margin-top:6px">
+      <div style="font-size:11px;color:var(--sub);font-weight:700;margin-bottom:3px">👀 プレビュー(${i + 1}人目: ${esc(nm)})</div>${hl(nm)}</div>`).join("")
+    + (ta.value.includes("{名前}") ? "" : `<div class="note" style="margin-top:6px">💡 {名前}が入っていません。全員まったく同じ文面になります</div>`);
+};
 window.annWord = w => {
   const el = document.getElementById("annDetail");
   if (!el) return;

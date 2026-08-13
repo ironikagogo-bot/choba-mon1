@@ -509,11 +509,13 @@ def stale_by_content(v: str, days: int = 70) -> bool:
     return latest is not None and (today - latest).days > days
 
 
-def card_prompt_block(code: str) -> str:
+def card_prompt_block(code: str, only_keys=None) -> str:
     """顧客カードの属性を、下書き/配信生成用のプロンプト断片にする。
     - 事実は「自然に1〜2点だけ活かす」指示付き(詰め込み禁止)
     - NG話題は厳守指示
-    - 担当が自分以外なら「出しゃばらない」配慮を厳守指示"""
+    - 担当が自分以外なら「出しゃばらない」配慮を厳守指示
+    - v226: only_keys指定時、個人的な話題キーはその集合にあるものだけ通す
+      (配信の鮮度フィルタ用。呼び名・NG話題・担当などの安全系は常に残す)"""
     ensure()
     a = get_attrs(code) or {}
     dates = get_attr_dates(code)
@@ -536,13 +538,15 @@ def card_prompt_block(code: str) -> str:
     lines = []
     if a.get("呼び名"):
         lines.append(f"- 呼び名(この相手をこう呼んでいる): {a['呼び名']}")
-    if a.get("進行中の話"):
+    def _pass(k):
+        return only_keys is None or k in only_keys
+    if a.get("進行中の話") and _pass("進行中の話"):
         _l = _dated("進行中の話", "進行中の話")
         if _l:
             lines.append(_l)
     for k in ("関係性メモ", "記念日", "家族", "好きなお酒", "好きな食べ物",
               "趣味・関心", "健康", "仕事・会社", "お気に入りキャスト"):
-        if a.get(k):
+        if a.get(k) and _pass(k):
             _l = _dated(k, k)
             if _l:
                 lines.append(_l)

@@ -944,10 +944,12 @@ def _backfill215(self_name):
                 or r["situations_n"] == 0 or (not r["persona"] and r["chars"] >= 3000)):
             return True
         # v218: 旧形式ペルソナ(「この人へのわたし」なし)も欠け扱い
-        if r["persona"] and r["chars"] >= 3000:
+        # v227: myselfキー自体が無い(=v221前の旧分析)相手だけ対象。空配列([]=分析済みで
+        # 材料不足)は正しい結果なので何度も再分析しない
+        if r["persona"] and r["chars"] >= 200:
             try:
                 from . import linebot as _lb
-                return not ((_lb.get_persona(r["contact"]) or {}).get("myself"))
+                return (_lb.get_persona(r["contact"]) or {}).get("myself") is None
             except Exception:
                 return False
         return False
@@ -1007,12 +1009,13 @@ def _backfill215(self_name):
                     n_pers += 1
                 except Exception as e:
                     print(f"[bf215 persona] {code}: {e}", flush=True)
-            elif r["persona"] and r["chars"] >= 3000:
+            elif r["persona"] and r["chars"] >= 200:
                 # v218: 旧形式ペルソナ(v212の「この人へのわたし」が無い)は再分析して付ける。
                 # ○✕確定済みの項目はpersona_asyncのマージ(v118)で保持される
+                # v227: 下限3000→200字(短い会話の相手が永久に旧形式のまま残っていた)
                 try:
                     _p = linebot.get_persona(code) or {}
-                    if not _p.get("myself"):
+                    if _p.get("myself") is None:   # v227: 旧分析のみ(空配列=材料不足は再分析しない)
                         linebot.persona_async(code)
                         n_pers += 1
                 except Exception as e:
@@ -2726,6 +2729,11 @@ async def liff_ann_draft(request: Request):
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
     purpose = (body.get("purpose") or "").strip()
+    try:
+        plevel = int(body.get("plevel") if body.get("plevel") is not None else 1)
+    except Exception:
+        plevel = 1
+    plevel = max(0, min(2, plevel))   # v226: 個別化つまみ
     if not db.get_contact(code):
         return JSONResponse({"error": "not found"}, status_code=404)
     if tone in ("peer", "staff"):
@@ -2734,7 +2742,7 @@ async def liff_ann_draft(request: Request):
     else:
         # 注: greetingはranks/tags必須の設計。宛先は確定済みなので全ランクを通す
         r = campaign.generate(mode="greeting", ranks=["S", "A", "B"], codes=[code],
-                              template=template, purpose=purpose)
+                              template=template, purpose=purpose, plevel=plevel)
         items = r.get("items") or []
         text = items[0]["text"] if items else ""
         # v177: AI生成できたか(row_ai)をフロントに通す=フォールバック時に琥珀注意を出す下地
