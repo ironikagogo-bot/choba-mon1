@@ -412,11 +412,10 @@ body.dark .grpwarn{background:#2a2313;border-color:#5a4a1e;color:#E3C98A}
 mark.annm{background:#F5E9C8;color:#6b5218;border-radius:4px;padding:0 3px;font-weight:700}
 body.dark mark.annm{background:rgba(201,164,76,.25);color:#E3C98A}
 /* ===== v225: カードの「一覧へ」フロート(常に左下・確認バーがある時はその上) ===== */
-.fablist{position:fixed;left:12px;bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:39;
+.fablist{position:fixed;left:10px;top:74px;z-index:39;
   background:var(--panel);border:1.5px solid var(--gold);color:var(--gold);font-weight:800;
-  font-size:13.5px;border-radius:24px;padding:12px 16px;min-height:44px;cursor:pointer;
+  font-size:13.5px;border-radius:24px;padding:11px 15px;min-height:44px;cursor:pointer;
   font-family:inherit;box-shadow:0 4px 14px rgba(0,0,0,.18)}
-.fablist.up{bottom:calc(env(safe-area-inset-bottom) + 76px)}
 body.dark .fablist{box-shadow:0 4px 14px rgba(0,0,0,.5)}
 </style>
 </head>
@@ -1487,8 +1486,7 @@ function drawCard(code, d) {
     .join("");
   $("#view").innerHTML = `
   <div style="display:flex;justify-content:space-between;gap:8px;margin:-4px 0 8px">
-    <button class="chip" style="border-color:var(--gold);color:var(--gold);font-weight:700"
-      onclick="nav('#list')">‹ 🗂 一覧へ</button>
+    <span style="width:104px"></span><!-- v227: 左上フロートの着地スペース(旧チップは撤去) -->
     <button class="chip on" onclick="nav('#edit/${encq(code)}')">✎ カードを直す</button></div>
   ${d.needs_fixup ? `<div class="banner" onclick="nav('#fixup')">🪄<div class="txt">
     <b>お名前の確認だけ</b>残っています — 1人10秒</div><span class="chev">›</span></div>` : ""}
@@ -1605,13 +1603,17 @@ function drawCard(code, d) {
        無かった(編集後も含め毎回ホーム経由になる摩擦。実運用者から複数回報告)。‹の仕様は変えず
        画面内ボタンで補う(編集画面の「やめる」と同じ思想)。v161: 本人指摘で上にも同じボタンを追加し、
        サイズもbtn(大)からchip(小)へ — 主役はあくまで✎カードを直す、一覧へは控えめな導線でいい。 -->
-  <!-- v225: 一覧へ戻るフロート(本人要望2026-08-13「常に画面下部に」)。確認バーがある時は
-       その上に載せる。末尾の旧chip版は重複になるため撤去(上部の‹一覧へは温存) -->
-  <div style="height:64px"></div>
-  <button class="fablist${d.pending_facts ? " up" : ""}" onclick="nav('#list')">‹ 🗂 一覧へ</button>
+  <!-- v227: 一覧へは左上フロート1個に統一(下フロートは本文・操作域に被るため撤去・本人裁定) -->
+  <button class="fablist" id="fabList" onclick="nav('#list')">‹ 🗂 一覧へ</button>
   ${d.pending_facts ? `<div style="height:70px"></div>
   <div class="stickyfix" onclick="nav('#seibip/${cq}')">✅ <b>${esc(disp(d.name))}の確認 ${d.pending_facts}件</b>
     <span style="font-weight:400">○✕するだけ・30秒</span><span class="chev" style="margin-left:auto">›</span></div>` : ""}`;
+  // v227: フロートをヘッダの実高の直下へ(ヘッダはsticky=bottomが安定値)
+  try {
+    const _hb = document.getElementById("hd").getBoundingClientRect().bottom;
+    const _fb = document.getElementById("fabList");
+    if (_fb) _fb.style.top = Math.round(_hb + 8) + "px";
+  } catch (e) {}
 }
 // v123: カード印刷ビュー(10分トークン→外部ブラウザ→共有→PDF)
 window.cardPrint = async (cq, mode) => {
