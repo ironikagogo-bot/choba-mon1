@@ -261,8 +261,17 @@ def smart_tags(contact, now) -> list:
 def contact_view(contact, now=None) -> dict:
     now = now or time.time()
     days = _days_since(contact.get("last_visit_ts"), now)
+    # v217: 呼び名を配信文面の呼びかけに使う(本人指摘2026-08-13: 「Yasuhiro Yamamotoさん」と
+    # LINE登録名で呼びかけていた。呼び名がカードにあるのに使っていなかった)
+    yob = ""
+    try:
+        from . import crm
+        yob = ((crm.get_attrs(contact["code"]) or {}).get("呼び名") or "").strip()
+    except Exception:
+        pass
     return {
         "code": contact["code"],
+        "yobina": yob,
         "rank": contact.get("rank", "B"),
         "tags": smart_tags(contact, now),
         "last_visit": _gap_str(days),
@@ -423,7 +432,9 @@ def _template_one(v, mode, template="") -> str:
     v177: template=本人が書いた必達内容(「今週は金曜と土曜おります」等)。UIは
     「書いた内容は全員の文面に必ず入ります」と約束しているので、AI失敗時の
     フォールバックでも捨てずに機械連結して守る。"""
-    name = hon(v["code"].split(".")[-1] if "." in v["code"] else v["code"])
+    # v217: 呼び名があれば必ず呼び名で(無ければ従来どおり登録名から)
+    name = hon((v.get("yobina") or "").strip()
+               or (v["code"].split(".")[-1] if "." in v["code"] else v["code"]))
     if mode == "thanks":
         ds = v.get("days_since")
         when = "昨日" if (ds is not None and ds <= 1) else "先日"
@@ -443,8 +454,11 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
     profile = db.get_profile("_global") or {}
     per = db.get_profile(v["code"]) or {}
     cp = contact_profile_block(per)
+    _yob = (v.get("yobina") or "").strip()
     ctx_lines = [
-        f"相手: {v['code']}(ランク{v['rank']})",
+        (f"相手: {v['code']}(ランク{v['rank']})。呼び名: {_yob} — 呼びかけは必ずこの呼び名を使う"
+         f"(登録名「{v['code']}」で呼ばない)" if _yob
+         else f"相手: {v['code']}(ランク{v['rank']})"),
         f"季節: {season_label(now)}",
         f"前回来店: {v['last_visit']}",
     ]
@@ -530,6 +544,22 @@ def _generate_one_ai(v, mode, template, now, purpose=""):
     return text
 
 
+def _force_yobina(text, v):
+    """v217: 文面中の登録名呼びかけを呼び名へ置換する決定論ガード(プロンプト指示の保険)。
+    登録名と呼び名が部分文字列関係(山本/山本さん等)の時は二重敬称の危険があるため触らない。"""
+    yob = (v.get("yobina") or "").strip()
+    code = (v.get("code") or "").strip()
+    if not yob or not text or not code or code == yob:
+        return text
+    h = hon(yob)
+    if code in h or h in code or code in yob or yob in code:
+        return text
+    out = text
+    for suf in ("さん", "様", "さま", "ちゃん", "くん"):
+        out = out.replace(code + suf, h)
+    return out.replace(code, h)
+
+
 def generate(mode="greeting", ranks=None, tags=None, template="", now=None, codes=None,
              purpose="") -> dict:
     """あて先を選び、一人ずつ違う下書きを一括生成して返す(保存も送信もしない)。
@@ -547,6 +577,7 @@ def generate(mode="greeting", ranks=None, tags=None, template="", now=None, code
         except Exception:
             text = _template_one(v, mode, template)
             row_ai = False
+        text = _force_yobina(text, v)   # v217: AIが登録名で呼んでも決定論で呼び名に戻す
         items.append({
             "code": v["code"], "rank": v["rank"], "tags": v["tags"],
             "last_visit": v["last_visit"], "why": _why(v, mode),

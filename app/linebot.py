@@ -909,7 +909,7 @@ def handle_file(uid, token, message):
                                     ensure_ascii=False) if not contact else "",
                          time.time()))
         jid = cur.lastrowid
-    _meta_set(f"liffimp_{jid}", text[-200000:])   # v150: 末尾=最新を保持
+    _meta_set(f"liffimp_{jid}", text[-400000:])   # v150: 末尾=最新を保持(v218 S4: 20万→40万字。linebot_talksの統合上限と揃える)
     db.track("linebot_txt_import")
     liff_id = os.environ.get("CHOUBA_LIFF_ID", "")
     if contact and not is_existing:
@@ -1221,6 +1221,18 @@ def sname_backfill():
 def save_talk(contact, text):
     ensure()
     with db.conn() as c:
+        # v218(S4): 再実行(メタ保存の末尾切り詰め版)が全文を上書きして「関係の始まり」を
+        # 失う事故のガード。新テキストが既存の真の末尾断片なら、長い既存を残す。
+        # (本当に新しい短いtxtが旧全文の完全な末尾に一致することは実質ない)
+        try:
+            r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (contact,)).fetchone()
+            old = (r["text"] if r else "") or ""
+            if old and text and len(text) < len(old) and old.endswith(text):
+                print(f"[save_talk] {contact}: 切り詰め断片({len(text)}字)で全文({len(old)}字)を"
+                      "上書きしない", flush=True)
+                return
+        except Exception:
+            pass
         c.execute("INSERT INTO linebot_talks(contact,text,ts) VALUES(?,?,?) "
                   "ON CONFLICT(contact) DO UPDATE SET text=excluded.text, ts=excluded.ts",
                   (contact, text, time.time()))
@@ -1406,6 +1418,45 @@ PERSONA_SECTIONS = ("価値観の核", "知性・教養", "コミュニケーシ
 MYSELF_KEYS = ("口調・距離", "演じている役", "盛り上げ方の癖", "気をつけたい癖")
 
 
+def _json_salvage(t):
+    """v216: 途中で切れたJSON文字列を、完結している末尾要素まで巻き戻して閉じ直す決定論修復。
+    1回走査で「閉じ括弧の直後」の候補位置を集め、末尾側から最大80箇所だけ閉じ直しを試す。
+    直せなければNone(呼び出し側が再問い合わせへ)。"""
+    try:
+        s = t[t.index("{"):]
+    except (ValueError, AttributeError):
+        return None
+    stack, in_str, esc, cands = [], False, False, []
+    for i, ch in enumerate(s):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+                # 文字列値の閉じ直後も候補(配列の途中切れでも直前の完結値まで戻れる)
+                cands.append((i + 1, "".join("}" if c == "{" else "]" for c in reversed(stack))))
+        else:
+            if ch == '"':
+                in_str = True
+            elif ch in "{[":
+                stack.append(ch)
+            elif ch in "}]":
+                if not stack:
+                    break
+                stack.pop()
+                cands.append((i + 1, "".join("}" if c == "{" else "]" for c in reversed(stack))))
+    for pos, closers in reversed(cands[-80:]):
+        try:
+            obj = json.loads(s[:pos].rstrip().rstrip(",") + closers)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            continue
+    return None
+
+
 def analyze_persona(contact, sample=50000):
     """生トーク全文＋確認済みファクトから、運用指針としてのペルソナを生成。
     戻り値: (persona_dict, err)。sample=読み込む最大文字数(時間切れ時の縮小リトライ用)。"""
@@ -1477,7 +1528,7 @@ def analyze_persona(contact, sample=50000):
         rr = requests.post("https://api.anthropic.com/v1/messages",
                            headers={"x-api-key": config.ANTHROPIC_API_KEY,
                                     "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                           json={"model": config.ANTHROPIC_MODEL, "max_tokens": 4000,
+                           json={"model": config.ANTHROPIC_MODEL, "max_tokens": 6000,
                                  "system": system, "messages": [{"role": "user", "content": prompt}]},
                            timeout=180)
         if rr.status_code != 200:
@@ -1487,6 +1538,10 @@ def analyze_persona(contact, sample=50000):
         try:
             obj = json.loads(t[t.index("{"):t.rindex("}") + 1])
         except (ValueError, json.JSONDecodeError):
+            # v216: 途中切れJSONの決定論サルベージ(v212で観点が4配列に増え長文で切れやすくなった)。
+            # 末尾から完結している要素までを残して閉じ直す。成功すれば再問い合わせ不要
+            obj = _json_salvage(t)
+        if obj is None:
             # v101: 空応答・JSON崩れは1回だけ出し直させる(v95知見の再適用)
             _msgs = [{"role": "user", "content": prompt}]
             if (out or "").strip():
@@ -1499,14 +1554,19 @@ def analyze_persona(contact, sample=50000):
                                 headers={"x-api-key": config.ANTHROPIC_API_KEY,
                                          "anthropic-version": "2023-06-01",
                                          "content-type": "application/json"},
-                                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 4000,
+                                json={"model": config.ANTHROPIC_MODEL, "max_tokens": 6000,
                                       "system": system, "messages": _msgs},
                                 timeout=180)
             if rr2.status_code != 200:
                 return None, f"API {rr2.status_code}: {rr2.text[:90]}"
             out = "".join(b.get("text", "") for b in rr2.json().get("content", []))
             t = out.replace("```json", "").replace("```", "").strip()
-            obj = json.loads(t[t.index("{"):t.rindex("}") + 1])
+            try:
+                obj = json.loads(t[t.index("{"):t.rindex("}") + 1])
+            except (ValueError, json.JSONDecodeError):
+                obj = _json_salvage(t)   # v216: 再問い合わせも切れたら決定論修復
+                if obj is None:
+                    raise
     except requests.Timeout:
         return None, "時間切れ"
     except Exception as e:
@@ -1536,8 +1596,17 @@ def analyze_persona(contact, sample=50000):
             tols.append({"k": k, "v": v[:120], "src": str(t.get("src", ""))[:60],
                          "conf": t.get("conf") if t.get("conf") in ("高", "中", "低") else "中",
                          "ok": None})   # ok: None=未確定 / 1=本人が採用 / 0=却下(注入しない)
+    # v221: 「この人へのわたし」の取り出し。v212でプロンプト・UI・編集は入れたのに
+    # ここで捨てていた(AIが返しても保存されず🪞が永遠に出ない実バグ・本人指摘2026-08-13)
+    mys = []
+    for m in (obj.get("myself") or [])[:4]:
+        k = str(m.get("k", "")).strip()[:14]
+        v = str(m.get("v", "")).strip()
+        if k in MYSELF_KEYS and v:
+            mys.append({"k": k, "v": v[:160], "src": str(m.get("src", ""))[:60],
+                        "conf": m.get("conf") if m.get("conf") in ("高", "中", "低") else "中"})
     return {"summary": str(obj.get("summary", ""))[:80], "sections": secs,
-            "tolerance": tols}, None
+            "tolerance": tols, "myself": mys}, None
 
 
 def maybe_auto_persona(contact):
@@ -2293,10 +2362,32 @@ def quarantine_add(contact, facts):
         cur = json.loads(_meta_get(f"quarantine_{contact}") or "[]")
     except Exception:
         cur = []
+    # v218r: 前回適用失敗の退避キー(bak)が残っていたら、ここで本体に合流させて消す。
+    # 合流しないと次のreleaseがbakを新rawで上書きし、旧保留分が黙って消える(レビュー指摘#1)
+    try:
+        bak = json.loads(_meta_get(f"quarantine_bak_{contact}") or "[]")
+        if bak:
+            cur = bak + cur
+            with db.conn() as c:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_bak_{contact}",))
+            print(f"[quarantine] {contact}: 退避分{len(bak)}件を本体に合流", flush=True)
+    except Exception:
+        pass
     seen = {(f.get("k"), f.get("v")) for f in cur}
     cur += [f for f in (facts or []) if (f.get("k"), f.get("v")) not in seen]
     _meta_set(f"quarantine_{contact}", json.dumps(cur[-200:], ensure_ascii=False))
     print(f"[quarantine] {contact}: {len(facts or [])}件を種別確定まで保留", flush=True)
+
+
+def quarantine_discard(contact):
+    """v218(S2): 私用仕分け・完全消去などで検疫の保留事実を破棄する(適用せず消す)。"""
+    try:
+        with db.conn() as c:
+            c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{contact}",))
+            c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_bak_{contact}",))   # v218r
+        print(f"[quarantine] {contact}: 保留分を破棄(私用/削除)", flush=True)
+    except Exception as e:
+        print(f"[quarantine discard] {e}", flush=True)
 
 
 def quarantine_release_async(contact):
@@ -2305,15 +2396,28 @@ def quarantine_release_async(contact):
 
 def quarantine_release(contact):
     """種別確定時に呼ぶ。検疫マーカーが無ければ何もしない(旧カードの確定で走らない)。"""
-    raw = _meta_get(f"quarantine_{contact}")
+    mk, bak = f"quarantine_{contact}", f"quarantine_bak_{contact}"
+    raw = _meta_get(mk)
     if not raw:
-        return
+        # v218(S5): 前回の適用中クラッシュ(再デプロイ等)の取り残し(退避キー)があれば復元して続行
+        with db.conn() as c:
+            cur = c.execute("UPDATE OR IGNORE linebot_meta SET k=? WHERE k=?", (mk, bak))
+            if (cur.rowcount or 0) != 1:
+                return
+        raw = _meta_get(mk)
+        if not raw:
+            return
+        print(f"[quarantine] {contact}: 前回中断分を復元して再適用", flush=True)
     with db.conn() as c:
-        cur = c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_{contact}",))
+        cur = c.execute("DELETE FROM linebot_meta WHERE k=?", (mk,))
         # v191その2(#14): 同時確定(2端末・二重タップ)の競合はDELETEの勝者だけが適用・分析する
         # (敗者はここで終了=保留factsの二重適用・LLM後段分析の二重実行を防ぐ)
         if (cur.rowcount or 0) != 1:
             return
+        # v218(S5): 適用が終わるまで退避キーに保持(適用前にスレッド死しても黙って消えない)。
+        # 勝者決定と同一トランザクションで退避=退避自体に競合窓がない
+        c.execute("INSERT INTO linebot_meta(k,v) VALUES(?,?) "
+                  "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (bak, raw))
     ct = db.get_contact(contact) or {}
     kind = ct.get("kind") or "customer"
     try:
@@ -2323,12 +2427,16 @@ def quarantine_release(contact):
     if kind != "customer":
         print(f"[quarantine] {contact}: 非顧客({kind})確定 → 保留{len(facts)}件を破棄・分析なし",
               flush=True)
+        with db.conn() as c:
+            c.execute("DELETE FROM linebot_meta WHERE k=?", (bak,))   # v218(S5): 破棄確定
         return
+    _apply_ok = True
     try:
         if facts:
             ncrit, nauto = save_split(contact, facts)
             print(f"[quarantine] {contact}: 顧客確定 → 保留適用 重要{ncrit}/自動{nauto}", flush=True)
     except Exception as e:
+        _apply_ok = False   # v218(S5): 適用失敗時は退避キーを残す(次回復元の材料)
         print(f"[quarantine apply] {e}", flush=True)
     # 取り込み時にスキップした後段分析(実例庫・力学・ペルソナ)をここで実行
     try:
@@ -2353,6 +2461,11 @@ def quarantine_release(contact):
         maybe_auto_persona(contact)
     except Exception as e:
         print(f"[quarantine persona] {e}", flush=True)
+    if _apply_ok:
+        with db.conn() as c:
+            c.execute("DELETE FROM linebot_meta WHERE k=?", (bak,))   # v218(S5): 適用完了=退避解放
+    else:
+        print(f"[quarantine] {contact}: 適用失敗のため退避キーを保持(次の確定操作で復元)", flush=True)
 
 
 def save_split(contact, facts):

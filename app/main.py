@@ -20,6 +20,10 @@ from .style_profile import extract_profile
 from .provisioning import linking, MockProvisioner, DeskState
 
 app = FastAPI(title="帳場 pilot API")
+# v218(軽量化2): gzip配信。liff.html 245KB→約75KB(-70%)。プロキシが既に圧縮している場合も
+# 二重圧縮にはならない(Content-Encoding付きはスキップされる)
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=2048)
 db.init()
 linking.init()
 # v72: 起動時に全モジュールのスキーマを先に整える(新規DBでのAPI 500を根絶)＋
@@ -234,7 +238,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v215"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v224"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")

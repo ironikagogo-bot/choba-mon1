@@ -703,15 +703,30 @@ def delete_contact_full(code: str) -> dict:
                        ("linebot_facts", "contact"), ("linebot_talks", "contact"),
                        ("linebot_persona", "contact"), ("news_items", "contact"),
                        ("enrich_suggestions", "contact"), ("style_profile", "contact"),
-                       ("sitting_members", "contact")]:
+                       ("sitting_members", "contact"),
+                       # v218(S3): 消し漏れ4系統。acted_log=返信本文の写し / self_examples=
+                       # この相手の実発言(以後も下書き注入に使われ続けていた)
+                       ("acted_log", "contact"), ("self_examples", "contact")]:
             try:
                 cur = c.execute(f"DELETE FROM {t} WHERE {col}=?", (code,))
                 if cur.rowcount:
                     deleted[t] = cur.rowcount
             except Exception as e:
                 print(f"[delete {t}] {e}", flush=True)
-        for k in (f"lasttalk_{code}", f"pstat_{code}"):
+        for k in (f"lasttalk_{code}", f"pstat_{code}", f"quarantine_{code}",
+                  f"quarantine_bak_{code}"):   # v218r: 退避キーも
             c.execute("DELETE FROM linebot_meta WHERE k=?", (k,))
+        # v218(S3): 取り込みジョブとその原文メタ(最大40万字)も消す
+        try:
+            jids = [r["id"] for r in c.execute(
+                "SELECT id FROM liff_import_jobs WHERE contact=?", (code,))]
+            for jid in jids:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"liffimp_{jid}",))
+            cur = c.execute("DELETE FROM liff_import_jobs WHERE contact=?", (code,))
+            if cur.rowcount:
+                deleted["liff_import_jobs"] = cur.rowcount
+        except Exception as e:
+            print(f"[delete import_jobs] {e}", flush=True)
         c.execute("DELETE FROM contacts WHERE code=?", (code,))
     print(f"[delete_contact_full] {code!r}: {deleted}", flush=True)
     return {"ok": True, "deleted": deleted}
@@ -752,10 +767,29 @@ def rename_contact(old: str, new: str) -> dict:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
                 pass
-        for pref in ("lasttalk_", "pstat_"):
+        # v218(S1): 検疫メタ(quarantine_)も名義追随。移行しないと改名後に種別確定しても
+        # 保留事実(第三者機微含む)が旧名義でlinebot_metaに永久残留し、カードは事実ゼロのままだった
+        for pref in ("lasttalk_", "pstat_", "quarantine_", "quarantine_bak_"):   # v218r: 退避キーも追随
             try:
                 c.execute("UPDATE OR IGNORE linebot_meta SET k=? WHERE k=?",
                           (pref + new, pref + old))
+                # 新名義側に既存キーがあってIGNOREされた場合(検疫のみ): 中身を統合して旧を消す
+                if pref == "quarantine_":
+                    rows = {r["k"]: r["v"] for r in c.execute(
+                        "SELECT k, v FROM linebot_meta WHERE k IN (?, ?)",
+                        (pref + new, pref + old))}
+                    if (pref + old) in rows:   # IGNOREで残った=両方ある
+                        import json as _j
+                        merged = (_j.loads(rows.get(pref + new) or "[]")
+                                  + _j.loads(rows.get(pref + old) or "[]"))
+                        seen, uniq = set(), []
+                        for f in merged:
+                            key = (f.get("k"), f.get("v"))
+                            if key not in seen:
+                                seen.add(key); uniq.append(f)
+                        c.execute("UPDATE linebot_meta SET v=? WHERE k=?",
+                                  (_j.dumps(uniq[-200:], ensure_ascii=False), pref + new))
+                        c.execute("DELETE FROM linebot_meta WHERE k=?", (pref + old,))
             except Exception:
                 pass
     # 旧名がLINE表示名だった場合に備えて紐付けを残す(重複はON CONFLICTで吸収)
@@ -878,6 +912,19 @@ def merge_contact(keep: str, absorb: str) -> dict:
         from . import linebot as _lb2
         _lb2.ensure()
         _raw_a = _lb2._meta_get(f"quarantine_{absorb}")
+        # v218r: absorb側の退避キー(適用失敗の取り残し)も合流対象に
+        _raw_bak = _lb2._meta_get(f"quarantine_bak_{absorb}")
+        if _raw_bak:
+            try:
+                _fa_bak = _json.loads(_raw_bak)
+            except Exception:
+                _fa_bak = []
+            with db.conn() as c:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"quarantine_bak_{absorb}",))
+            if _fa_bak:
+                _lb2.quarantine_add(keep, _fa_bak)
+                if not _raw_a and _keep_rel_ok:
+                    _lb2.quarantine_release_async(keep)
         # v191その3: _meta_getはキー不在で""を返す(Noneではない)。旧判定は常に真で、
         # absorbに検疫が無くても毎mergeで空マーカーquarantine_{keep}='[]'が作られ
         # 後段分析予約が無条件に立っていた。マーカーがある時だけ移行する。

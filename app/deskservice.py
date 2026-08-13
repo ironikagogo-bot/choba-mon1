@@ -298,6 +298,17 @@ class DeskService:
             # 画面には👥タグと注記が出るが、「自分宛てだけ」フィルタでは隠さない(誤検知でDMを
             # 消す事故の方が重い)。実測で精度が確認できたら確定印に昇格する。
             _gguess = ""
+            # v220: リーダー0.6.x系はgroup欄を使わず、sender欄に「グループ名: 送信者」を
+            # 詰めて送る(2026-08-13 aki-test実ログで確定: sender=焼肉大好き: Kento / group無し)。
+            # この複合形式を確定グループとして解釈する。メンバー列挙型の名無しグループ
+            # (「Eri, Sangeetha Roka, Aki: 送信者」)は名前が不安定なので総称【グループ】にする
+            if _sender and not _group and ": " in _sender:
+                from . import crm as _crm0
+                _gs, _ps = _crm0.group_split(_sender)
+                if _gs and _ps:
+                    _group = "グループ" if ("," in _gs or "、" in _gs) else _gs
+                    _sender = _ps
+                    self.log(f"グループ解釈(sender複合形式): {_gs!r} → 送信者{_ps!r}")
             if _sender and not _group:
                 _st = (sub_text or "").strip()
                 if (_st and _st != _sender and _st.upper() not in ("LINE", "LINE LITE")
@@ -310,7 +321,19 @@ class DeskService:
                           else (f"【?{_gguess}】" + rtext) if _gguess else rtext}
                 # 通話系はここでも除外
                 from .notify_ingest import is_call_notice, _CALL_TITLE
-                if _CALL_TITLE.search(rtitle) or is_call_notice(rtext):
+                # v222: 不在着信はsender欄=種別・text欄=相手名で届く(実ログ確定:
+                # sender=LINE不在着信&text=AKO → 「LINE」カードが湧いていた)。
+                # 相手名が取れる不在着信は「📞不在着信」として本人に見せる(折り返しは急ぎが多い)。
+                # 着信中・通話中などの過渡通知は従来どおり捨てる
+                if _CALL_TITLE.search(_sender) or re.match(r"^LINE(不在着信|着信中)$", _sender):
+                    _cn = (rtext or "").strip()
+                    if ("不在" in _sender and _cn and "\n" not in _cn and 1 <= len(_cn) <= 30
+                            and not _CALL_TITLE.search(_cn) and not is_call_notice(_cn)):
+                        parsed = {"contact": _cn, "message": "📞 不在着信がありました"}
+                        self.log(f"不在着信として取り込み: 相手={_cn!r}")
+                    else:
+                        parsed = None
+                elif _CALL_TITLE.search(rtitle) or is_call_notice(rtext):
                     parsed = None
             else:
                 # v177: 旧リーダー(sender欄なし)でも、titleが既存カード/エイリアスに

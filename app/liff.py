@@ -268,7 +268,17 @@ def liff_home(request: Request):
         unlinked_urgent = sum(1 for x in q if x.get("unlinked") and x.get("urgent"))
     except Exception:
         oldest_sa_min, unlinked_urgent = 0, 0
+    # v223(🧹段階投入・裁定3): 5日以上前のopenを持つ相手数。受信箱を開かない人にも
+    # ホームで「たまり」を見せる入口(mon1実測: 一括片づけの入口が受信箱内のみ→使用0)
+    try:
+        with db.conn() as c:
+            sweep_old = c.execute(
+                "SELECT COUNT(DISTINCT contact) AS n FROM messages "
+                "WHERE status='open' AND ts < ?", (time.time() - 5 * 86400,)).fetchone()["n"]
+    except Exception:
+        sweep_old = 0
     return {
+        "sweep_old": sweep_old,
         "fixup": fixup_n,
         "reader": reader,
         "ok": True,
@@ -314,6 +324,23 @@ async def liff_notify_toggle(request: Request):
 # ============ 🚨 未整備カードの強制仕分け(v103) ============
 # どの経路(一括取り込み/チャットtxt/受信/お席の同席・紹介)で生まれたカードでも、
 # 呼び名・本名・種別・立場が欠けていれば ここに並ぶ。放置によるデータのゴミ化を防ぐ。
+
+def _needs_fixup(code, ct, attrs):
+    """v217: この1人に仕分け(3連タップ)が残っているか。_fixup_itemsと同じ判定の単独版。"""
+    try:
+        if (ct.get("linked") or 1) == 0:
+            return False
+        if not ((attrs or {}).get("呼び名") or "").strip():
+            return True
+        if not (ct.get("kind") or "").strip() or not (ct.get("stand") or "").strip():
+            return True
+        with db.conn() as c:
+            r = c.execute("SELECT 1 FROM linebot_facts WHERE contact=? AND k='🔖種別・立場' "
+                          "AND status='pending' LIMIT 1", (code,)).fetchone()
+        return bool(r)
+    except Exception:
+        return False
+
 
 def _fixup_items():
     from . import crm, linebot
@@ -467,11 +494,17 @@ async def liff_fixup_save(request: Request):
     if kind == "priv":
         crm.mute(code)
         crm.discard_unlinked(code)
+        linebot.quarantine_discard(code)   # v218(S2): 保留事実(検疫)も破棄=永久残留させない
         db.track("liff_fixup_priv")
         return {"ok": True, "discarded": True}
-    if not (yb and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")
-            and rank in ("S", "A", "B")):
-        return JSONResponse({"error": "呼び名・種別・立場・ランクは必須です"}, status_code=400)
+    if not (yb and kind in ("customer", "staff", "peer") and stand in ("up", "even", "down")):
+        return JSONResponse({"error": "呼び名・種別・立場は必須です"}, status_code=400)
+    # v220: ランクは顧客のみ必須(店内・同業にS(太客)/A/Bを聞くのは変・本人指摘2026-08-13)。
+    # 非顧客は既定Bで保存(rank列は全カード共通のため)
+    if kind == "customer" and rank not in ("S", "A", "B"):
+        return JSONResponse({"error": "ランクは必須です"}, status_code=400)
+    if rank not in ("S", "A", "B"):
+        rank = "B"
     crm.add_def("呼び名"); crm.set_attr(code, "呼び名", yb)
     if hn:
         crm.add_def("本名"); crm.set_attr(code, "本名", hn)
@@ -691,6 +724,9 @@ def contact_payload(code: str):
                      "ng": attrs.get("NG話題") or "",
                      "relmemo": attrs.get("関係性メモ") or ""},
         "persona": persona, "persona_stat": pstat, "has_talk": _has_talk(code),
+        # v217: 仕分け(呼び名・種別・立場の本人確定)が残っているか。通知→カード直行の動線で
+        # ホームと同じ宿題が見えるように(本人指摘2026-08-13: 入口によって聞かれることが違う)
+        "needs_fixup": _needs_fixup(code, d, attrs),
         # v172: 温度アーク(AI分析)。ok=None:未判断 / 1:下書きに使う / 0:使わない(本人の✓✕・家訓)
         "arc": (lambda: (db.get_profile(code) or {}).get("arc"))(),
         "dyn_block": (lambda: ((db.get_profile(code) or {}).get("dynamics") or {}).get("block") or "")(),
@@ -828,6 +864,7 @@ def _card_audit_rows():
             try:
                 import json as _j
                 quar = len(_j.loads(linebot._meta_get(f"quarantine_{code}") or "[]"))
+                quar += len(_j.loads(linebot._meta_get(f"quarantine_bak_{code}") or "[]"))   # v218(S5)
             except Exception:
                 quar = 0
             has_persona = bool(linebot.get_persona(code))
@@ -858,7 +895,7 @@ def liff_card_audit(request: Request, key: str = "", fmt: str = "txt"):
         if not _authed(request):
             return _deny()
     rows = _card_audit_rows()
-    st = linebot._meta_get("backfill215") or ""
+    st = (linebot._meta_get("backfill215") or "").split("@")[0]   # @以降は内部の時刻印
     db.track("liff_card_audit")
     if fmt == "json":
         return {"ok": True, "items": rows, "backfill215": st}
@@ -900,10 +937,24 @@ def _backfill215(self_name):
     pending/自動適用の関門を通る(v164/v187: 重要項目は本人○✕)。"""
     from . import linebot, crm, situations, dynamics
     rows = _card_audit_rows()
+    # v216: 「欠けがある相手」だけを対象にする(欠けゼロの相手に3秒sleepしない・
+    # 100人上限で101人目以降が永久に回らない問題の解消=絞ってから上限)
+    def _lack(r):
+        if (not r["yobina"] or sum(r["facts"].values()) == 0 or not r["dynamics"]
+                or r["situations_n"] == 0 or (not r["persona"] and r["chars"] >= 3000)):
+            return True
+        # v218: 旧形式ペルソナ(「この人へのわたし」なし)も欠け扱い
+        if r["persona"] and r["chars"] >= 3000:
+            try:
+                from . import linebot as _lb
+                return not ((_lb.get_persona(r["contact"]) or {}).get("myself"))
+            except Exception:
+                return False
+        return False
     todo = [r for r in rows if r["kind"] == "customer" and r["confirmed"]
-            and r["quarantine_held"] == 0]
+            and r["quarantine_held"] == 0 and _lack(r)]
     n_fact = n_yob = n_dyn = n_sit = n_pers = 0
-    for i, r in enumerate(todo[:100]):
+    for i, r in enumerate(todo[:300]):
         code = r["contact"]
         try:
             with db.conn() as c:
@@ -928,6 +979,10 @@ def _backfill215(self_name):
                     facts, err = linebot.extract_facts(text, code, self_name)
                     facts = linebot.curate_facts(facts or [])
                     facts = [f for f in facts if f.get("k") != "呼び名" or not r["yobina"]]
+                    # v224: 自動アップデートは完全に追加専用 — 既に値が入っている属性キーには
+                    # 一切書き込まない(手入力値がAI抽出で上書きされる経路を遮断・本人質問2026-08-13)
+                    _cur = crm.get_attrs(code) or {}
+                    facts = [f for f in facts if not (_cur.get(f.get("k")) or "").strip()]
                     if facts:
                         linebot.save_split(code, facts)
                         n_fact += 1
@@ -952,8 +1007,18 @@ def _backfill215(self_name):
                     n_pers += 1
                 except Exception as e:
                     print(f"[bf215 persona] {code}: {e}", flush=True)
+            elif r["persona"] and r["chars"] >= 3000:
+                # v218: 旧形式ペルソナ(v212の「この人へのわたし」が無い)は再分析して付ける。
+                # ○✕確定済みの項目はpersona_asyncのマージ(v118)で保持される
+                try:
+                    _p = linebot.get_persona(code) or {}
+                    if not _p.get("myself"):
+                        linebot.persona_async(code)
+                        n_pers += 1
+                except Exception as e:
+                    print(f"[bf215 myself] {code}: {e}", flush=True)
             linebot._meta_set("backfill215",
-                              f"実行中 {i + 1}/{len(todo)}人目({code})")
+                              f"実行中 {i + 1}/{len(todo)}人目({code})@{time.time()}")
             # API負荷を平す(dynamics backfillと同じ間隔)。テストは0秒に落とせる
             time.sleep(float(os.environ.get("CHOUBA_BF215_SLEEP", "3")))
         except Exception as e:
@@ -988,29 +1053,36 @@ def liff_card_backfill_confirm(request: Request, key: str = ""):
 <p style="color:#8a5a00">仕分け待ち {stuck}人 はここでは触りません(LIFFの仕分け/⚡おまかせで確定すると自動反映されます)。</p>
 <p style="font-size:13px;color:#666">AI分析を使うためAPI利用料がかかります。進み具合は card_audit で見られます。</p>
 <form method="post" action="/api/liff/card_backfill">
-<input type="hidden" name="key" value="{config.INGEST_TOKEN}">
+<input type="hidden" name="key" value="{key}">
 <button type="submit" style="padding:14px 22px;font-size:16px;font-weight:700">実行する</button></form>
+<!-- v216: keyはこのページを開くのに使った値をそのまま返すだけ(Bearer閲覧時に運用トークンを開示しない) -->
 </body></html>"""
     return Response(html, media_type="text/html; charset=utf-8")
 
 
 @router.post("/api/liff/card_backfill")
 async def liff_card_backfill_run(request: Request):
-    if not config.INGEST_TOKEN:
-        return _deny()
     try:
         form = await request.form()
         key = form.get("key") or ""
     except Exception:
         key = ""
-    if key != config.INGEST_TOKEN and not _authed(request):
-        return _deny()
+    if not ((config.INGEST_TOKEN and key == config.INGEST_TOKEN) or _authed(request)):
+        return _deny()   # v216: GET側と同じ判定(key or 認証。トークン未設定でもBearerで通る)
     from . import linebot
-    if (linebot._meta_get("backfill215") or "").startswith("実行中"):
-        return Response("すでに実行中です。card_audit で進み具合を確認してください。",
-                        media_type="text/plain; charset=utf-8")
+    st = linebot._meta_get("backfill215") or ""
+    # v216: 「実行中」の永久ロック対策 — 開始時刻を持ち、30分を過ぎた実行中表記は
+    # 死んだスレッドの残骸とみなして再実行を許す(再デプロイ・例外死からの復旧口)
+    if st.startswith("実行中"):
+        try:
+            _t0 = float((st.split("@") + ["0"])[1])
+        except Exception:
+            _t0 = 0
+        if time.time() - _t0 < 1800:
+            return Response("すでに実行中です。card_audit で進み具合を確認してください。",
+                            media_type="text/plain; charset=utf-8")
     self_name = (db.get_profile("_selfname") or {}).get("name") or "自分"
-    linebot._meta_set("backfill215", "実行中 0人目")
+    linebot._meta_set("backfill215", f"実行中 0人目@{time.time()}")
     threading.Thread(target=_backfill215, args=(self_name,), daemon=True).start()
     db.track("liff_card_backfill")
     return Response("🔄 自動アップデートを開始しました(裏で実行)。進み具合は card_audit で見られます。",
@@ -2016,7 +2088,7 @@ async def liff_import(request: Request, files: list[UploadFile] = File(...)):
                              json.dumps({"cands": cands, "name": name}, ensure_ascii=False)
                              if not contact else "", time.time()))
             jid = cur.lastrowid
-        linebot._meta_set(f"liffimp_{jid}", text[-200000:])   # v150: 末尾=最新を保持
+        linebot._meta_set(f"liffimp_{jid}", text[-400000:])   # v150: 末尾=最新を保持(v218 S4: 20万→40万字。linebot_talksの統合上限と揃える)
         if contact and not is_existing:
             threading.Thread(target=_run_import_job, args=(jid, contact, text), daemon=True).start()
         out.append({"id": jid, "fname": fname, "status": status0,
@@ -2566,6 +2638,8 @@ async def liff_classify(request: Request):
     elif v == "priv":
         crm.mute(name)
         crm.discard_unlinked(name)
+        from . import linebot as _lb
+        _lb.quarantine_discard(name)   # v218(S2): 保留事実(検疫)も破棄
     db.track("liff_classify")
     return {"ok": True}
 

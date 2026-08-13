@@ -84,6 +84,16 @@ def init():
                 c.execute(f"ALTER TABLE contacts ADD COLUMN {ddl}")
             except sqlite3.OperationalError:
                 pass
+        # v218(軽量化1): インデックス4本。200人/2万通の合成規模でホーム1523ms→657ms(実測-57%)。
+        # IF NOT EXISTSなので既存DBにも安全・起動時1回だけ
+        for ix in ("idx_msg_contact_status ON messages(contact, status)",
+                   "idx_msg_status ON messages(status)",
+                   "idx_msg_contact_ts ON messages(contact, ts)",
+                   "idx_sent_contact_ts ON sent_replies(contact, ts)"):
+            try:
+                c.execute(f"CREATE INDEX IF NOT EXISTS {ix}")
+            except sqlite3.OperationalError:
+                pass
 
 
 def upsert_contact(code: str, rank: str = "B", cycle_days=None, note: str = "",
