@@ -433,13 +433,6 @@ body.dark .tuneq .who{color:#9FB4DC}
   font-size:12.5px;line-height:1.7}
 .tuneex .lb{font-size:10.5px;font-weight:800;color:var(--sub);margin-bottom:3px}
 body.dark .tuneex{background:rgba(255,255,255,.06)}
-/* ===== v237: 🎬リハーサル ===== */
-.msgq{background:var(--cream);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.7}
-body.dark .msgq{background:rgba(255,255,255,.06)}
-#dmsheet .swscrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:98}
-#dmsheet .swpanel{position:fixed;left:0;right:0;bottom:0;background:var(--panel);
-  border-radius:18px 18px 0 0;z-index:99;padding:18px 16px calc(22px + env(safe-area-inset-bottom));
-  box-shadow:0 -10px 30px rgba(0,0,0,.25);max-height:80vh;overflow:auto}
 </style>
 </head>
 <body>
@@ -762,15 +755,6 @@ function route() {
   $("#view").classList.remove("hasbar");
   document.getElementById("histsheet")?.remove();   // v191(#5): 画面遷移後も残留し下部バーを覆っていた
   document.getElementById("swsheet")?.remove();     // v218(C4): 🧹シートも同じ残留経路(エッジスワイプ遷移)
-  document.getElementById("dmsheet")?.remove();    // v237: リハーサルの送信手前シート
-  // v237: リハーサルから抜けたら練習用の受信を残さない(本物の受信箱と混ざらない設計だが、
-  // DBに置きっぱなしにもしない。取り残しはサーバー側でも6時間で掃除する)
-  if (typeof demo === "object" && demo && demo.step === "run"
-      && !(location.hash || "").startsWith("#demo")) {
-    if (demo.timer) { clearTimeout(demo.timer); demo.timer = null; }
-    demo.step = "pick"; demo.landed = null;
-    try { demoWipe(); } catch (e) {}
-  }
   window.scrollTo(0, 0);   // v192その4: 画面遷移は必ず先頭から(前画面のスクロール位置を持ち込まない)
   if (name === "list") return vList();
   if (name === "card" && arg) return vCard(decodeURIComponent(arg));
@@ -788,7 +772,6 @@ function route() {
   if (name === "policy") return vPolicy();   // v167: じぶんの方針
   if (name === "tune") return vTune();       // v232: 🎛返信の調整
   if (name === "backup") return vBackup();   // v235: 💾 データの控え
-  if (name === "demo") return vDemo();       // v237: 🎬 リハーサル
   if (name === "dups") return vDups(arg ? decodeURIComponent(arg) : "");   // v184: 重複カードの統合
   return vHome();
 }
@@ -1313,8 +1296,6 @@ function drawHome(d, stale) {
   <button class="navcard" onclick="nav('#tune')">🎛<div><b>返信の調整${d.tune_n
       ? ` <span class="tunebadge">あたらしい学び ${d.tune_n}</span>` : ""}</b>
     <div class="desc">帳場くんが学んだこと・下書きの効き方をここで調整</div></div><span class="chev">›</span></button>
-  <button class="navcard" onclick="nav('#demo')">🎬<div><b>リハーサル</b>
-    <div class="desc">${W("お客様", "相手")}を1人選んで、送る直前までを練習(実際には送りません)</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
     <div class="desc">返信の基本姿勢を5タップで登録 — ${W("新しいお客様", "新しい相手")}への下書きに効く</div></div><span class="chev">›</span></button>
   <div class="card" style="cursor:pointer" onclick="nav('#reader')"><h3 class="sec">📡 受信係 <span class="chev" style="margin-left:auto">›</span></h3>${moto}
@@ -1381,133 +1362,6 @@ window.policyTap = async (k, v) => {
     _policy = r.policy || next;
     drawPolicy();
   } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); }
-};
-
-// ============ 🎬 リハーサル(v237) ============
-// 本人の実カード・実ペルソナ・実文体を通したまま、来そうな1通だけを差し込んで
-// 送信手前まで通す練習モード。**送信経路には決して繋がない**(サーバー側でも塞いである)。
-// 実体はサーバーの status='rehearsal' 受信。離脱・終了で必ず消す。
-const demo = { step: "pick", cand: [], canSynth: false, mode: "replay", pick: null,
-               landed: null, timer: null };
-async function vDemo() {
-  setHead("🎬 リハーサル", "送信手前まで、本物のカードで", true);
-  if (demo.step === "run") return drawDemo();
-  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
-  try {
-    const d = await api("/api/liff/rehearsal/candidates");
-    demo.cand = d.items || []; demo.canSynth = !!d.can_synth;
-  } catch (e) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
-  demo.step = "pick"; drawDemo();
-}
-function drawDemo() {
-  const v = $("#view");
-  if (demo.step === "pick") {
-    v.innerHTML = `
-      <div class="note" style="margin-bottom:10px">${W("お客様", "相手")}を1人選ぶと、その人から
-        <b>来そうな1通</b>が数秒後に届きます。下書きはいつも通りカード・口調から作られ、
-        <b>送る直前まで</b>進めます(実際には送られません)</div>
-      ${demo.cand.length ? `<div class="card"><h3 class="sec">誰で練習しますか</h3>
-        <div class="chips">${demo.cand.map(c =>
-          `<button class="chip ${demo.pick === c.code ? "on" : ""}" onclick="demoPick(${jarg(c.code)})">${esc(disp(c.name))}<span style="color:var(--sub);font-size:11px"> ${esc(c.rank)}</span></button>`).join("")}</div>
-        <label class="f">1通のつくり方</label>
-        <div class="chips">
-          <button class="chip ${demo.mode === "replay" ? "on" : ""}" onclick="demo.mode='replay';drawDemo()">📼 実際に来た1通を再演</button>
-          ${demo.canSynth ? `<button class="chip ${demo.mode === "synth" ? "on" : ""}" onclick="demo.mode='synth';drawDemo()">🎲 来そうな1通を合成</button>` : ""}
-        </div>
-        <div class="note" style="margin:6px 0 0">${demo.mode === "replay"
-          ? "取り込んだトークから、その人が実際に送ってきた1通を選びます(作り物ではありません)"
-          : "カードと最近の会話から「今なら送ってきそうな1通」を作ります(実在の1通ではありません)"}</div>
-        <button class="btn primary" style="margin-top:12px" ${demo.pick ? "" : "disabled"}
-          onclick="demoStart()">▶ はじめる</button></div>`
-        : `<div class="empty">練習に使える${W("お客様", "相手")}がまだいません<div class="note" style="margin-top:6px">トーク履歴を取り込むと使えるようになります</div></div>`}`;
-    return;
-  }
-  // run: 着弾待ち → 受信行 → 下書き → 送信手前シート
-  const r = demo.landed;
-  v.innerHTML = `
-    <div class="grpnote" style="margin:0 0 10px">🎬 これは練習です。ここから送信されることはありません</div>
-    ${!r ? `<div class="empty" style="padding:34px 0"><span class="spin"></span>
-       <div class="note" style="margin-top:10px">${esc(disp(demo.pickName || ""))}からの連絡を待っています…</div></div>`
-    : `<div class="card" ${r.urgent ? `style="border-color:var(--red)"` : ""}>
-        <div style="display:flex;align-items:center;gap:8px">
-          <b style="font-size:15px">${esc(disp(r.name))}</b>
-          ${r.urgent ? `<span class="hot" style="font-size:11.5px;font-weight:800">🔥 ${esc(r.reason || "急ぎ")}</span>` : ""}
-          <span class="note" style="margin:0 0 0 auto">${r.mode === "synth" ? "🎲 合成" : "📼 再演"}</span></div>
-        <div class="msgq" style="margin-top:8px">「${esc(r.text)}」</div>
-        <div id="demoDrafts" style="margin-top:10px"><div class="empty"><span class="spin"></span>
-          <div class="note" style="margin-top:8px">いつも通り、カードと口調から下書きを作っています…</div></div></div>
-       </div>`}
-    <button class="btn ghost" style="margin-top:12px" onclick="demoEnd()">おわる(練習の跡を消す)</button>`;
-}
-window.demoPick = code => {
-  demo.pick = code;
-  const c = (demo.cand || []).find(x => x.code === code);
-  demo.pickName = c ? c.name : code;
-  drawDemo();
-};
-window.demoStart = async () => {
-  if (!demo.pick) return;
-  demo.step = "run"; demo.landed = null; drawDemo();
-  // 「何もしていないのにポコッと届く」感を作るための間。合成は生成時間がそのまま間になる
-  const wait = demo.mode === "synth" ? 300 : 4200;
-  demo.timer = setTimeout(async () => {
-    let r;
-    try {
-      r = await api("/api/liff/rehearsal/start", { method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: demo.pick, mode: demo.mode }) });
-    } catch (e) { toast("はじめられませんでした(通信)"); demo.step = "pick"; return drawDemo(); }
-    if (r.error) { toast(r.error); demo.step = "pick"; return drawDemo(); }
-    if (!(location.hash || "").startsWith("#demo")) return demoWipe();   // 離脱していたら残さない
-    demo.landed = r; drawDemo();
-    toast(r.urgent ? `🔥 ${disp(r.name)}から急ぎが届きました(練習)` : `📩 ${disp(r.name)}から届きました(練習)`);
-    demoDraft(r);
-  }, wait);
-};
-async function demoDraft(r) {
-  let d;
-  try {
-    d = await api("/api/liff/reply/drafts", { method: "POST",
-      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mid: r.mid }) });
-  } catch (e) { d = null; }
-  const box = document.getElementById("demoDrafts");
-  if (!box || !(location.hash || "").startsWith("#demo")) return;
-  const ds = (d && d.drafts) || [];
-  box.innerHTML = (d && d.card_keys ? cardRefChip(d.card_keys) : "")
-    + (ds.length ? ds.map((g, j) => `
-      <div class="draft" style="margin-top:8px"><div class="t">${esc(g.text)}</div>
-        <div class="who">📤 ${esc(disp(r.name))}へ送ります <small>(1対1のトーク)</small></div>
-        <button class="btn green" style="margin:0;border-radius:0 0 10px 10px"
-          onclick="demoSheet(${j})">📤 LINEで送る</button></div>`).join("")
-      : `<div class="note">下書きを作れませんでした(AIの設定を確認してください)</div>`);
-  demo.drafts = ds;
-}
-window.demoSheet = j => {
-  const t = ((demo.drafts || [])[j] || {}).text || "";
-  const r = demo.landed || {};
-  // 送信手前で止める専用シート。sendViaLineは呼ばない(=LINEに渡らない)
-  const el = document.createElement("div"); el.id = "dmsheet";
-  el.innerHTML = `<div class="swscrim" onclick="demoSheetClose()"></div>
-    <div class="swpanel">
-      <div style="font-size:15px;font-weight:800;margin-bottom:2px">ここまでが本番と同じです</div>
-      <div class="note" style="margin:0 0 10px">本番ならこのあとLINEが開いて、${esc(disp(r.name || ""))}に貼り付けて送ります。
-        練習なので<b>ここで止めます</b></div>
-      <div class="msgq">${esc(t)}</div>
-      <button class="btn primary" style="margin-top:12px" onclick="demoSheetClose()">とじる</button>
-    </div>`;
-  document.body.appendChild(el);
-};
-window.demoSheetClose = () => { document.getElementById("dmsheet")?.remove(); };
-async function demoWipe() {
-  try { await api("/api/liff/rehearsal/clear", { method: "POST",
-    headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) {}
-}
-window.demoEnd = async () => {
-  if (demo.timer) { clearTimeout(demo.timer); demo.timer = null; }
-  demoSheetClose();
-  await demoWipe();
-  Object.assign(demo, { step: "pick", landed: null, drafts: null });
-  bust("home"); toast("🎬 練習の跡を消しました"); nav("#home");
 };
 
 // ============ 💾 データの控え(v235) ============
@@ -1596,8 +1450,6 @@ function drawTune() {
       : `<div class="empty" style="padding:18px 0">✓ ぜんぶ見ました<div class="note" style="margin-top:6px">新しく学ぶと、ここにまた並びます</div></div>`}</div>
     <!-- v235: itemsの添字(i)は元配列のまま渡す。tq{i}とtuneAct(i)がその添字に依存 -->
   </div>
-  <button class="navcard" onclick="nav('#demo')">🎬<div><b>リハーサル</b>
-    <div class="desc">${W("お客様", "相手")}を1人選んで、送る直前までを練習(実際には送りません)</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
     <div class="desc">口調・距離感・${W("色恋", "親密トーン")}など、全員への基本ルール</div></div><span class="chev">›</span></button>
   <div class="card"><h3 class="sec">📣 ${W("配信", "まとめて連絡")}の個別化(既定)</h3>
@@ -3302,6 +3154,17 @@ window.annPlan = async segs => {
   Object.assign(ann, { segs, tone: "cust", q: r.items, i: 0, sent: 0, step: "preview", excl: {} });
   drawAnnPreview();
 };
+// v240(本人報告「アナウンスでAI生成に失敗することが多い」): 定型文に落ちた時、
+// その相手ぶんだけ作り直せるようにする。従来は配達を中断して最初からやり直すしかなかった。
+// レート制限・一時的な過負荷が主因なので、少し置いてもう一度叩けば通ることが多い
+window.annRegen = () => {
+  const p = ann.q[ann.i];
+  if (!p) return;
+  delete draftCache["a" + p.code];   // prefetchAnnと同じ鍵(相手コードだけ)
+  toast("🔁 作り直しています…");
+  drawAnnRun();
+};
+
 // v123(E6+E5): 事前除外プレビュー＋上限8人の明示
 function drawAnnPreview() {
   const inc = ann.q.filter(p => !ann.excl[p.code]);
@@ -3382,7 +3245,9 @@ async function drawAnnRun() {
       cardRefChip(r.card_keys)
       + (r.text ? `<div class="note" style="margin:0 0 4px">📮 宛先: <b style="color:var(--head)" class="plink" data-plink="${encodeURIComponent(p.code)}">${esc(disp(p.name))}</b></div>`
         + (r.ai === false ? `<div style="background:#FDF3E0;border:1px solid #E3C98A;border-radius:10px;
-             padding:8px 10px;font-size:13px;color:#7A5F1E;margin:0 0 8px">⚠️ AIが使えなかったため定型文です。文章をタップして自分の言葉に直してから送るのがおすすめ</div>` : "")
+             padding:8px 10px;font-size:13px;color:#7A5F1E;margin:0 0 8px">⚠️ AIが使えなかったため定型文です。文章をタップして直すか、作り直してみてください
+             <button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin-left:6px"
+               onclick="annRegen()">🔁 作り直す</button></div>` : "")
         + `<div class="draft" id="dr0"><div class="t" onclick="repEdit(0)">${esc(r.text)}</div>
            <textarea style="display:none">${esc(r.text)}</textarea>
            ${swUnitHtml("ann", _swSend["ann"])}</div>`

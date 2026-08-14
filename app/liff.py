@@ -1486,46 +1486,6 @@ def liff_tune(request: Request):
             "plevel_default": max(0, min(2, pl)), "example": ex}
 
 
-# ============ 🎬 リハーサル(v237) ============
-# 設計意図は app/rehearsal.py の冒頭に書いた。ここは口だけ。
-
-
-@router.get("/api/liff/rehearsal/candidates")
-def liff_rehearsal_candidates(request: Request):
-    if not _authed(request):
-        return _deny()
-    from . import rehearsal
-    return {"ok": True, "items": rehearsal.candidates(),
-            "can_synth": bool(config.ANTHROPIC_API_KEY)}
-
-
-@router.post("/api/liff/rehearsal/start")
-async def liff_rehearsal_start(request: Request):
-    if not _authed(request):
-        return _deny()
-    from . import rehearsal
-    try:
-        b = await request.json()
-        code = (b.get("code") or "").strip()
-        mode = b.get("mode") or "replay"
-    except Exception:
-        return JSONResponse({"error": "bad json"}, status_code=400)
-    if mode not in ("replay", "synth"):
-        return JSONResponse({"error": "bad mode"}, status_code=400)
-    r = rehearsal.start(code, mode)
-    if r.get("error"):
-        return JSONResponse(r, status_code=400)
-    return r
-
-
-@router.post("/api/liff/rehearsal/clear")
-async def liff_rehearsal_clear(request: Request):
-    if not _authed(request):
-        return _deny()
-    from . import rehearsal
-    return {"ok": True, "cleared": rehearsal.clear()}
-
-
 # ============ 💾 バックアップ(v235) ============
 # HTMLに値を差し込む前の始末。owner向けページでもトークンや名前を生で埋めない
 # (v233の指摘: 確認ページのkeyがf-string生埋めだった)。
@@ -3064,15 +3024,16 @@ async def liff_reply_act(request: Request):
         mids = [int(x) for x in mids] if isinstance(mids, list) else None
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    # v237: リハーサル(練習)の受信は、送信記録・文体学習・実績のどれにも入れない。
-    # クライアントは専用シートで止めるが、経路が生きていると事故になるのでサーバーでも塞ぐ
+    # v240: リハーサル機能はUIごと撤去したが、この番人だけは残す。
+    # 撤去前に作られた練習用の受信(status='rehearsal')が残っている環境で、
+    # 万一それが送信記録・文体学習・実績に混ざるのを防ぐため。データ自体は消していない
     try:
         from . import rehearsal as _rh
         if _rh.is_rehearsal(mid):
             return JSONResponse({"error": "これは練習用の受信です(記録しません)"},
                                 status_code=400)
-    except Exception as e:
-        print(f"[rehearsal guard] {e}", flush=True)
+    except Exception:
+        pass   # rehearsal.py を配布から外していても動く
     # v190: actedログ(トリアージ最終仕様#7)。act前スナップショット→差分を記録し、
     # undo(act_id指定)で status/学習/仮イベント の副作用を一括で巻き戻せるようにする
     _msg0 = db.get_message(mid)

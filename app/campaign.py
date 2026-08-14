@@ -632,28 +632,85 @@ def _generate_one_ai(v, mode, template, now, purpose="", plevel=1, strict=False)
         + "\n\nこの相手に送る一言を1つ、JSONで。"
     )
     system = THANKS_SYSTEM if mode == "thanks" else GREETING_SYSTEM
-    r = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={
-            "x-api-key": config.ANTHROPIC_API_KEY,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        json={
-            "model": config.ANTHROPIC_MODEL,
-            "max_tokens": 450,
-            "system": system,
-            "messages": [{"role": "user", "content": user_prompt}],
-        },
-        timeout=30,
-    )
-    r.raise_for_status()
-    out = "".join(b.get("text", "") for b in r.json().get("content", []))
-    out = re.sub(r"```(json)?", "", out).strip()
-    text = json.loads(out).get("text", "").strip()
-    if not text:
-        raise ValueError("empty text")
-    return text
+    # v240(本人報告「アナウンスでAI生成に失敗することが多い」)。配信は人数分を連続で叩くため、
+    # 1回きりの呼び出し+素のjson.loadsでは落ちやすかった。3つ直した:
+    #   ① 429(レート制限)・5xx(過負荷)・タイムアウトを短い待ちで2回まで再試行
+    #      … 連続生成でいちばん当たりやすいのがここ。従来は1発で諦めて定型文へ落ちていた
+    #   ② JSONを頑丈に取り出す(前置き・後語り・途中切れを救出)。drafts.pyと同じ手当て
+    #   ③ max_tokens 450→700。カード・関係性・許容・🪞・実例と注入が増えた分、
+    #      450では閉じ括弧の手前で切れることがあった
+    last = None
+    for attempt in range(3):
+        try:
+            r = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": config.ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": config.ANTHROPIC_MODEL,
+                    "max_tokens": 700,
+                    "system": system,
+                    "messages": [{"role": "user", "content": user_prompt}],
+                },
+                timeout=30,
+            )
+            if r.status_code in (429, 500, 502, 503, 504, 529):
+                last = f"HTTP {r.status_code}"
+                if attempt < 2:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                raise RuntimeError(last)
+            r.raise_for_status()
+            out = "".join(b.get("text", "") for b in r.json().get("content", []))
+            text = str(_json_text(out) or "").strip()
+            if not text:
+                raise ValueError("本文が空")
+            return text
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+            if attempt < 2 and isinstance(e, (requests.Timeout, requests.ConnectionError,
+                                              RuntimeError)):
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            raise
+    raise RuntimeError(last or "生成できませんでした")
+
+
+def _json_text(out: str) -> str:
+    """AI出力から text を頑丈に取り出す(前置き・後語り・途中切れに耐える)。
+
+    drafts.py の _parse_json_out と同じ思想。従来は ``` を消して json.loads を
+    直呼びしていたため、AIが一言添えただけ・末尾が切れただけで全部失敗していた。
+    """
+    out = re.sub(r"```(json)?", "", out or "").strip()
+    s, e = out.find("{"), out.rfind("}")
+    if s >= 0 and e > s:
+        try:
+            v = json.loads(out[s:e + 1]).get("text")
+            if v:
+                return v
+        except Exception:
+            pass
+    # 閉じが欠けている時: "text": "…" だけを取り出す(エスケープ済みの引用符も追う)
+    m = re.search(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"', out)
+    if m:
+        try:
+            return json.loads(f'"{m.group(1)}"')
+        except Exception:
+            return m.group(1).replace("\\n", "\n").replace('\\"', '"')
+    # 最後の砦: max_tokens切れで閉じ引用符ごと欠けた場合。ちぎれた断片を送らせないよう
+    # ある程度の長さがある時だけ拾う(短い欠片は定型文に落としたほうがまし)。
+    # どのみち本人が緑を押す前に目にするので、直せる形で見せるほうが手が止まらない
+    m2 = re.search(r'"text"\s*:\s*"((?:[^"\\]|\\.)+)$', out)
+    if m2:
+        frag = m2.group(1).replace("\\n", "\n").replace('\\"', '"').rstrip()
+        if len(frag) >= 15:
+            print(f"[campaign] 途中で切れた出力を救出({len(frag)}字)", flush=True)
+            return frag
+    raise ValueError("AI出力にJSONが見つからない")
 
 
 def _force_yobina(text, v):
@@ -689,12 +746,17 @@ def generate(mode="greeting", ranks=None, tags=None, template="", now=None, code
     recips = select_recipients(ranks, tags, mode, now, codes)
     ai = bool(config.ANTHROPIC_API_KEY)
     items = []
+    _fails = []      # v240: AI生成に失敗して定型文に落ちた相手
     for v in recips:
         try:
             text = (_generate_one_ai(v, mode, template, now, purpose=purpose, plevel=plevel)
                     if ai else _template_one(v, mode, template))
             row_ai = ai
-        except Exception:
+        except Exception as e:
+            # v240: 理由を残す。従来は黙って定型文に落ちるだけで、なぜ失敗したのかが
+            # ログにも画面にも残らず、本人の「失敗することが多い」を追えなかった
+            print(f"[campaign 生成失敗] {v['code']}: {type(e).__name__}: {e}", flush=True)
+            _fails.append(v["code"])
             text = _template_one(v, mode, template)
             row_ai = False
         # v226: 決定論検品 — つまみの上限を超えて話題が入っていたら1回だけ厳しめに出し直す
@@ -714,5 +776,9 @@ def generate(mode="greeting", ranks=None, tags=None, template="", now=None, code
             "last_visit": v["last_visit"], "why": _why(v, mode),
             "text": text, "ai": row_ai,
         })
+    if _fails:
+        print(f"[campaign] {len(_fails)}/{len(items)}人がAI生成に失敗→定型文: "
+              + "、".join(_fails[:8]), flush=True)
     return {"mode": mode, "season": season_label(now), "ai": ai,
-            "count": len(items), "items": items}
+            "count": len(items), "items": items,
+            "ai_failed": len(_fails)}   # v240: 画面で「何人が定型文になったか」を出せるように

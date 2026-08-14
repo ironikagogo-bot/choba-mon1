@@ -121,6 +121,12 @@ _AUTH_COOKIE = "choba_auth"
 _EXEMPT = ("/login", "/api/login", "/api/logout", "/static/", "/sw.js", "/line/",
            "/manifest.webmanifest", "/api/android/notify", "/api/android/heartbeat",
            "/api/reader/claim", "/api/quickdraft", "/healthz", "/api/stats",
+           # v239(実ログで発覚): 🔬実通しテストが玄関で401になっていた。
+           # ダッシュボードは /api/stats と同じ運用トークンで叩くのに、loopcheckだけ
+           # 免除に入っておらず、endpoint側のトークン検査に到達する前に落ちていた
+           # (mon1の実ログ: stats=200 と loopcheck=401 が同じトークンで並ぶ)。
+           # loopcheck自身は _require_ingest_token で認証するので免除しても穴は開かない
+           "/api/loopcheck/",
            "/liff", "/api/liff/")   # v96: LIFFは自前認証(IDトークン/INGEST_TOKEN)
 _login_hits: dict = {}
 
@@ -246,7 +252,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v237"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v240"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")
