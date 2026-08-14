@@ -42,6 +42,14 @@ if not config.DEMO:
         _news.start_scheduler()
     except Exception:
         pass
+    # v235: バックアップの自動世代(同一ディスク・7世代)。論理事故から戻すための層。
+    # 環境ごと消える事故に効くのは手元へのダウンロード(/api/liff/backup)なので、
+    # ホームの「最終バックアップ N日前」で人に取ってもらう運用と対で成立する。
+    try:
+        from . import backup as _bk
+        _bk.start()
+    except Exception as e:
+        print(f"[backup] 起動できませんでした: {e}", flush=True)
     # v72(9-16): 本番でトークン未設定=stats/quickdrawが無認証で公開になる事故の警告
     if config.STRICT_AUTH and not config.INGEST_TOKEN:
         import sys
@@ -238,7 +246,7 @@ def _demo_ai_guard(request: Request):
     _DEMO_USAGE["ips"][ip] = _DEMO_USAGE["ips"].get(ip, 0) + 1
 
 
-APP_VER = "v228"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
+APP_VER = "v237"   # 梱包のたびに更新。どのサーバーに何が動いているか /healthz で即答するため
 
 
 @app.get("/healthz")

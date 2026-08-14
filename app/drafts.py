@@ -462,6 +462,10 @@ def _generate_inner(message_id: int) -> list[dict]:
         _tol = _lb.tolerance_prompt_block(contact["code"])
         if _tol:
             user_prompt += "\n\n" + _tol
+        # v230: 🪞この人へのわたし(癖=自動ブレーキ/役・口調=○のみ)
+        _my = _lb.myself_prompt_block(contact["code"])
+        if _my:
+            user_prompt += "\n\n" + _my
     except Exception:
         pass
     # v167: じぶんの方針(未設定なら空=注入ゼロで従来とバイト一致)
@@ -499,7 +503,28 @@ def _generate_inner(message_id: int) -> list[dict]:
                         "(2)自虐や笑いで幻想を潰す(例:毛がめっちゃ出るよ？) "
                         "(3)軽く相手を立てて話題を閉じる・変える、のいずれかで受け流す。"
                         "要求の水位を上げさせない=次につながる含みを残さない。冗談の温度は保ち、説教・沈黙・急な敬語化はしない。")
+    # v236(指示書採用③・浅賀ガード): 💘がONでも、恋情語がほぼ本人発なら
+    # 「相手が迫ってくる」という前提が実データと食い違う。線引き長文はその相手に
+    # 対して的外れになる(言っていないことを咎める文になる)ので出さない。
+    # 決定論の数え上げのみ・材料が薄ければ従来どおり。
+    _koi_self, _koi_cnt = False, {}
     if int(contact.get("flag_koi") or 0) and _is_cust:
+        try:
+            from . import dynamics as _dyn2
+            _koi_self, _koi_cnt = _dyn2.koi_self_dominant(contact["code"])
+        except Exception as e:
+            print(f"[koi subject] {e}", flush=True)
+    if int(contact.get("flag_koi") or 0) and _is_cust and _koi_self:
+        mode_prompt += ("\n【線引きモード(控えめ)】この相手には💘の設定が入っているが、"
+                        "過去のやり取りを数えると、恋愛めいた言葉はほとんど本人(送る側)から出ていて"
+                        "相手からはあまり出ていない。したがって相手を突き放す必要も、線引きを説く必要もない。"
+                        "守ることは2つだけ: (1)恋愛の燃料を足さない(「会いたい」「寂しい」「大好き」・"
+                        "ハート系絵文字・将来の匂わせ・二人きりの約束は書かない) "
+                        "(2)相手が書いていない気持ちを先回りして代弁しない。"
+                        "それ以外はふだんの調子で、日常の話題で軽く返す。長文の線引き案は作らない。")
+        from . import koi_guard as _kg
+        mode_prompt += _kg.PROMPT_BLOCK
+    elif int(contact.get("flag_koi") or 0) and _is_cust:
         mode_prompt += ("\n【ガチ恋・線引きモード】相手は本気の恋愛感情を持っている(または傾向がある)。"
                         "目的=気持ちよく受け流して距離を一定に保つ。守ること:"
                         "\n- 恋愛の燃料を足さない: 「会いたい」「寂しい」「大好き」・ハート系絵文字・特別扱い・将来の匂わせ・二人きりの約束は禁止。"

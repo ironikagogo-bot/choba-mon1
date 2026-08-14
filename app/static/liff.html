@@ -417,6 +417,29 @@ body.dark mark.annm{background:rgba(201,164,76,.25);color:#E3C98A}
   font-size:13.5px;border-radius:24px;padding:11px 15px;min-height:44px;cursor:pointer;
   font-family:inherit;box-shadow:0 4px 14px rgba(0,0,0,.18)}
 body.dark .fablist{box-shadow:0 4px 14px rgba(0,0,0,.5)}
+/* ===== v232: 🎛返信の調整 — 学びバッジは金(宿題感を出さない=赤禁止・本人裁定2026-08-13) ===== */
+.tunebadge{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:2px 8px;
+  background:#FBF6E7;color:var(--gold);border:1px solid var(--gold);vertical-align:1px}
+body.dark .tunebadge{background:rgba(201,164,76,.14)}
+.tuneq{border-top:1px solid var(--border);padding:11px 0}
+.tuneq:first-of-type{border-top:none;padding-top:2px}
+.tuneq .who{font-size:12px;font-weight:800;color:var(--navy)}
+body.dark .tuneq .who{color:#9FB4DC}
+.tuneq .who .src{font-size:10.5px;font-weight:700;color:var(--sub);margin-left:6px}
+.tuneknob{display:flex;gap:6px;margin-top:8px}
+.tuneknob .chip{flex:1;text-align:center;justify-content:center;padding:11px 4px;
+  font-size:13.5px;white-space:nowrap}
+.tuneex{margin-top:10px;background:var(--cream);border-radius:10px;padding:10px 12px;
+  font-size:12.5px;line-height:1.7}
+.tuneex .lb{font-size:10.5px;font-weight:800;color:var(--sub);margin-bottom:3px}
+body.dark .tuneex{background:rgba(255,255,255,.06)}
+/* ===== v237: 🎬リハーサル ===== */
+.msgq{background:var(--cream);border-radius:10px;padding:10px 12px;font-size:14px;line-height:1.7}
+body.dark .msgq{background:rgba(255,255,255,.06)}
+#dmsheet .swscrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:98}
+#dmsheet .swpanel{position:fixed;left:0;right:0;bottom:0;background:var(--panel);
+  border-radius:18px 18px 0 0;z-index:99;padding:18px 16px calc(22px + env(safe-area-inset-bottom));
+  box-shadow:0 -10px 30px rgba(0,0,0,.25);max-height:80vh;overflow:auto}
 </style>
 </head>
 <body>
@@ -739,6 +762,15 @@ function route() {
   $("#view").classList.remove("hasbar");
   document.getElementById("histsheet")?.remove();   // v191(#5): 画面遷移後も残留し下部バーを覆っていた
   document.getElementById("swsheet")?.remove();     // v218(C4): 🧹シートも同じ残留経路(エッジスワイプ遷移)
+  document.getElementById("dmsheet")?.remove();    // v237: リハーサルの送信手前シート
+  // v237: リハーサルから抜けたら練習用の受信を残さない(本物の受信箱と混ざらない設計だが、
+  // DBに置きっぱなしにもしない。取り残しはサーバー側でも6時間で掃除する)
+  if (typeof demo === "object" && demo && demo.step === "run"
+      && !(location.hash || "").startsWith("#demo")) {
+    if (demo.timer) { clearTimeout(demo.timer); demo.timer = null; }
+    demo.step = "pick"; demo.landed = null;
+    try { demoWipe(); } catch (e) {}
+  }
   window.scrollTo(0, 0);   // v192その4: 画面遷移は必ず先頭から(前画面のスクロール位置を持ち込まない)
   if (name === "list") return vList();
   if (name === "card" && arg) return vCard(decodeURIComponent(arg));
@@ -754,6 +786,9 @@ function route() {
   if (name === "seibi") return vSeibi(arg ? decodeURIComponent(arg) : "");
   if (name === "seibip") return vSeibi(arg ? decodeURIComponent(arg) : "", "pending");   // v141: この人の確認だけ
   if (name === "policy") return vPolicy();   // v167: じぶんの方針
+  if (name === "tune") return vTune();       // v232: 🎛返信の調整
+  if (name === "backup") return vBackup();   // v235: 💾 データの控え
+  if (name === "demo") return vDemo();       // v237: 🎬 リハーサル
   if (name === "dups") return vDups(arg ? decodeURIComponent(arg) : "");   // v184: 重複カードの統合
   return vHome();
 }
@@ -1192,6 +1227,7 @@ async function vHome() {
 }
 function drawHome(d, stale) {
   if (!d) { $("#view").innerHTML = `<div class="empty">読み込めませんでした。開き直してください。</div>`; return; }
+  if (d.plevel_default !== undefined) PLVL_DEF = d.plevel_default;   // v232: 配信つまみ既定
   // v219: 古いキャッシュの「ありません」断言が一瞬出てから本当の受信数に化ける問題
   // (本人指摘2026-08-13)。60秒より古いキャッシュ描画では断言せず「確認しています」を出す。
   // 新しいキャッシュ(60秒以内)は従来どおり即断言=普段の速さは変わらない
@@ -1268,7 +1304,17 @@ function drawHome(d, stale) {
     <div class="desc">${d.contacts}人 — カードを見る・直す</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#import')">📥<div><b>${W("お客様を追加", "相手を追加")}</b>
     <div class="desc">${W("その人との会話ごとお迎え — やり方は3ステップ", "トーク履歴ごと取り込み — やり方は3ステップ")}</div></div><span class="chev">›</span></button>
+  ${(d.backup_warn || (d.backup_age === null) || (d.backup_age || 0) >= 7) ? `<div class="banner"
+     style="border-color:${d.backup_warn ? "var(--red)" : "var(--gold)"};cursor:pointer" onclick="nav('#backup')">💾<div class="txt">
+     <b>${d.backup_warn ? "データの控えがありません" : d.backup_age === null
+       ? "まだ一度も控えを取っていません" : `控えを取ってから${d.backup_age}日`}</b>
+     — 1タップで今の状態を手元に保存できます</div><span class="chev">›</span></div>` : ""}
   <div class="hsec">⚙️ 帳場くんを育てる</div>
+  <button class="navcard" onclick="nav('#tune')">🎛<div><b>返信の調整${d.tune_n
+      ? ` <span class="tunebadge">あたらしい学び ${d.tune_n}</span>` : ""}</b>
+    <div class="desc">帳場くんが学んだこと・下書きの効き方をここで調整</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#demo')">🎬<div><b>リハーサル</b>
+    <div class="desc">${W("お客様", "相手")}を1人選んで、送る直前までを練習(実際には送りません)</div></div><span class="chev">›</span></button>
   <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
     <div class="desc">返信の基本姿勢を5タップで登録 — ${W("新しいお客様", "新しい相手")}への下書きに効く</div></div><span class="chev">›</span></button>
   <div class="card" style="cursor:pointer" onclick="nav('#reader')"><h3 class="sec">📡 受信係 <span class="chev" style="margin-left:auto">›</span></h3>${moto}
@@ -1335,6 +1381,271 @@ window.policyTap = async (k, v) => {
     _policy = r.policy || next;
     drawPolicy();
   } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); }
+};
+
+// ============ 🎬 リハーサル(v237) ============
+// 本人の実カード・実ペルソナ・実文体を通したまま、来そうな1通だけを差し込んで
+// 送信手前まで通す練習モード。**送信経路には決して繋がない**(サーバー側でも塞いである)。
+// 実体はサーバーの status='rehearsal' 受信。離脱・終了で必ず消す。
+const demo = { step: "pick", cand: [], canSynth: false, mode: "replay", pick: null,
+               landed: null, timer: null };
+async function vDemo() {
+  setHead("🎬 リハーサル", "送信手前まで、本物のカードで", true);
+  if (demo.step === "run") return drawDemo();
+  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+  try {
+    const d = await api("/api/liff/rehearsal/candidates");
+    demo.cand = d.items || []; demo.canSynth = !!d.can_synth;
+  } catch (e) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
+  demo.step = "pick"; drawDemo();
+}
+function drawDemo() {
+  const v = $("#view");
+  if (demo.step === "pick") {
+    v.innerHTML = `
+      <div class="note" style="margin-bottom:10px">${W("お客様", "相手")}を1人選ぶと、その人から
+        <b>来そうな1通</b>が数秒後に届きます。下書きはいつも通りカード・口調から作られ、
+        <b>送る直前まで</b>進めます(実際には送られません)</div>
+      ${demo.cand.length ? `<div class="card"><h3 class="sec">誰で練習しますか</h3>
+        <div class="chips">${demo.cand.map(c =>
+          `<button class="chip ${demo.pick === c.code ? "on" : ""}" onclick="demoPick(${jarg(c.code)})">${esc(disp(c.name))}<span style="color:var(--sub);font-size:11px"> ${esc(c.rank)}</span></button>`).join("")}</div>
+        <label class="f">1通のつくり方</label>
+        <div class="chips">
+          <button class="chip ${demo.mode === "replay" ? "on" : ""}" onclick="demo.mode='replay';drawDemo()">📼 実際に来た1通を再演</button>
+          ${demo.canSynth ? `<button class="chip ${demo.mode === "synth" ? "on" : ""}" onclick="demo.mode='synth';drawDemo()">🎲 来そうな1通を合成</button>` : ""}
+        </div>
+        <div class="note" style="margin:6px 0 0">${demo.mode === "replay"
+          ? "取り込んだトークから、その人が実際に送ってきた1通を選びます(作り物ではありません)"
+          : "カードと最近の会話から「今なら送ってきそうな1通」を作ります(実在の1通ではありません)"}</div>
+        <button class="btn primary" style="margin-top:12px" ${demo.pick ? "" : "disabled"}
+          onclick="demoStart()">▶ はじめる</button></div>`
+        : `<div class="empty">練習に使える${W("お客様", "相手")}がまだいません<div class="note" style="margin-top:6px">トーク履歴を取り込むと使えるようになります</div></div>`}`;
+    return;
+  }
+  // run: 着弾待ち → 受信行 → 下書き → 送信手前シート
+  const r = demo.landed;
+  v.innerHTML = `
+    <div class="grpnote" style="margin:0 0 10px">🎬 これは練習です。ここから送信されることはありません</div>
+    ${!r ? `<div class="empty" style="padding:34px 0"><span class="spin"></span>
+       <div class="note" style="margin-top:10px">${esc(disp(demo.pickName || ""))}からの連絡を待っています…</div></div>`
+    : `<div class="card" ${r.urgent ? `style="border-color:var(--red)"` : ""}>
+        <div style="display:flex;align-items:center;gap:8px">
+          <b style="font-size:15px">${esc(disp(r.name))}</b>
+          ${r.urgent ? `<span class="hot" style="font-size:11.5px;font-weight:800">🔥 ${esc(r.reason || "急ぎ")}</span>` : ""}
+          <span class="note" style="margin:0 0 0 auto">${r.mode === "synth" ? "🎲 合成" : "📼 再演"}</span></div>
+        <div class="msgq" style="margin-top:8px">「${esc(r.text)}」</div>
+        <div id="demoDrafts" style="margin-top:10px"><div class="empty"><span class="spin"></span>
+          <div class="note" style="margin-top:8px">いつも通り、カードと口調から下書きを作っています…</div></div></div>
+       </div>`}
+    <button class="btn ghost" style="margin-top:12px" onclick="demoEnd()">おわる(練習の跡を消す)</button>`;
+}
+window.demoPick = code => {
+  demo.pick = code;
+  const c = (demo.cand || []).find(x => x.code === code);
+  demo.pickName = c ? c.name : code;
+  drawDemo();
+};
+window.demoStart = async () => {
+  if (!demo.pick) return;
+  demo.step = "run"; demo.landed = null; drawDemo();
+  // 「何もしていないのにポコッと届く」感を作るための間。合成は生成時間がそのまま間になる
+  const wait = demo.mode === "synth" ? 300 : 4200;
+  demo.timer = setTimeout(async () => {
+    let r;
+    try {
+      r = await api("/api/liff/rehearsal/start", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: demo.pick, mode: demo.mode }) });
+    } catch (e) { toast("はじめられませんでした(通信)"); demo.step = "pick"; return drawDemo(); }
+    if (r.error) { toast(r.error); demo.step = "pick"; return drawDemo(); }
+    if (!(location.hash || "").startsWith("#demo")) return demoWipe();   // 離脱していたら残さない
+    demo.landed = r; drawDemo();
+    toast(r.urgent ? `🔥 ${disp(r.name)}から急ぎが届きました(練習)` : `📩 ${disp(r.name)}から届きました(練習)`);
+    demoDraft(r);
+  }, wait);
+};
+async function demoDraft(r) {
+  let d;
+  try {
+    d = await api("/api/liff/reply/drafts", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mid: r.mid }) });
+  } catch (e) { d = null; }
+  const box = document.getElementById("demoDrafts");
+  if (!box || !(location.hash || "").startsWith("#demo")) return;
+  const ds = (d && d.drafts) || [];
+  box.innerHTML = (d && d.card_keys ? cardRefChip(d.card_keys) : "")
+    + (ds.length ? ds.map((g, j) => `
+      <div class="draft" style="margin-top:8px"><div class="t">${esc(g.text)}</div>
+        <div class="who">📤 ${esc(disp(r.name))}へ送ります <small>(1対1のトーク)</small></div>
+        <button class="btn green" style="margin:0;border-radius:0 0 10px 10px"
+          onclick="demoSheet(${j})">📤 LINEで送る</button></div>`).join("")
+      : `<div class="note">下書きを作れませんでした(AIの設定を確認してください)</div>`);
+  demo.drafts = ds;
+}
+window.demoSheet = j => {
+  const t = ((demo.drafts || [])[j] || {}).text || "";
+  const r = demo.landed || {};
+  // 送信手前で止める専用シート。sendViaLineは呼ばない(=LINEに渡らない)
+  const el = document.createElement("div"); el.id = "dmsheet";
+  el.innerHTML = `<div class="swscrim" onclick="demoSheetClose()"></div>
+    <div class="swpanel">
+      <div style="font-size:15px;font-weight:800;margin-bottom:2px">ここまでが本番と同じです</div>
+      <div class="note" style="margin:0 0 10px">本番ならこのあとLINEが開いて、${esc(disp(r.name || ""))}に貼り付けて送ります。
+        練習なので<b>ここで止めます</b></div>
+      <div class="msgq">${esc(t)}</div>
+      <button class="btn primary" style="margin-top:12px" onclick="demoSheetClose()">とじる</button>
+    </div>`;
+  document.body.appendChild(el);
+};
+window.demoSheetClose = () => { document.getElementById("dmsheet")?.remove(); };
+async function demoWipe() {
+  try { await api("/api/liff/rehearsal/clear", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: "{}" }); } catch (e) {}
+}
+window.demoEnd = async () => {
+  if (demo.timer) { clearTimeout(demo.timer); demo.timer = null; }
+  demoSheetClose();
+  await demoWipe();
+  Object.assign(demo, { step: "pick", landed: null, drafts: null });
+  bust("home"); toast("🎬 練習の跡を消しました"); nav("#home");
+};
+
+// ============ 💾 データの控え(v235) ============
+// 既知の最重大課題「バックアップゼロ」への画面側。ここは案内と入口だけで、
+// 実体(整合スナップショットの生成・世代・復元)はサーバーのowner key口が持つ。
+// ダウンロードURLはトークンを含むため、画面から出す時だけ組み立てる(保存しない)。
+async function vBackup() {
+  setHead("💾 データの控え", "お客様カードと会話の保存", true);
+  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+  let d;
+  try { d = await api("/api/liff/backup_info"); }
+  catch (e) { $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
+  const age = d.download_age_days;
+  const agel = age === null ? "まだ一度もありません" : age === 0 ? "今日" : `${age}日前`;
+  $("#view").innerHTML = `
+  ${d.persistence === "ephemeral" ? `<div class="banner" style="border-color:var(--red)">⚠️<div class="txt">
+    <b>いまのままだと消えます</b> — サーバーの入れ替えでデータが失われる置き場所です。
+    Renderの設定を見直してください(この控えを取っておけば戻せます)</div></div>` : ""}
+  <div class="card"><h3 class="sec">いまの中身</h3>
+    <div class="note" style="margin:0">${W("お客様", "相手")} ${d.contacts}人・受信 ${d.messages}通・
+      取り込んだトーク ${d.talks}人分(${d.db_mb})</div>
+    <div class="note" style="margin:6px 0 0">手元に取った最後: <b>${agel}</b></div>
+    <a class="btn primary" style="margin-top:12px;display:block;text-align:center;text-decoration:none"
+       href="/api/liff/backup?dl=1&t=${encodeURIComponent(d.ticket || "")}">⬇️ 今の状態を保存する</a>
+    <div class="note" style="margin-top:8px">iPhoneなら「"ファイル"に保存」でiCloudへ。
+      <b>週に1回</b>を目安にどうぞ。サーバーが消えても、このファイルがあれば戻せます</div>
+  </div>
+  <div class="card"><h3 class="sec">自動で残している控え</h3>
+    <div class="note" style="margin:0">サーバーの中に1日1回・${d.keep}日分(${d.gen_n}件あります)。
+      これは操作ミスから戻すためのもので、サーバーごと消える事故には効きません</div>
+  </div>
+  <div class="note" style="text-align:center;margin-top:14px">
+    控えから戻す時は、パソコン等から運用者用のリンクを開いてください
+    (この画面からは戻せません=誤タップで消えないように)</div>`;
+}
+
+// ============ 🎛 返信の調整(v232) ============
+// ホーム⚙️配下のハブ。①あたらしい学び=相手横断の未確認🚦🪞を順に○✕(既定ONですでに
+// 効いている=宿題ではない・本人裁定2026-08-13) ②方針リンク ③配信つまみ既定 ④1行例。
+// ○✕は既存の /api/liff/persona/edit を相手ごとに叩くだけ(indexはok設定で不変=安全)。
+let _tune = null;
+async function vTune() {
+  const here = location.hash || "#home";
+  setHead("🎛 返信の調整", "帳場くんが学んだこと・効き方をここで", true);
+  $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
+  let d;
+  try { d = await api("/api/liff/tune"); }
+  catch (e) { if ((location.hash || "#home") === here) $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
+  // v235(監査指摘): 待っている間に画面を離れていたら描かない(cached()と同じ作法)。
+  // tuneActから非同期に呼ばれるため、ホームを他画面の中身で塗る事故が起きていた
+  if ((location.hash || "#home") !== here) return;
+  _tune = d;
+  drawTune();
+}
+function tuneExLines() {
+  const ex = _tune.example || {};
+  const nm = esc(ex.yobina || W("お客様", "相手"));
+  const tp = esc(ex.topic || "この前の話");
+  return [
+    `${nm}、こんばんは。今週も${W("お店で待ってます", "よかったら連絡ください")}`,
+    `${nm}、${tp}のつづき聞かせてください。今週も待ってます`,
+    `${nm}、${tp}のつづき気になってます！また聞かせてくださいね。今週こそ${W("お店で", "ゆっくり")}`,
+  ];
+}
+function drawTune() {
+  const items = _tune.items || [];
+  // v233: バッジ=総数(30件で切った表示数ではない)。「30個確定→また30個」問題の根治
+  const total = _tune.total !== undefined ? _tune.total : items.length;
+  const pl = _tune.plevel_default;
+  const SRC = { tol: "🚦どこまでOKか", my: "🪞この人へのわたし" };
+  $("#view").innerHTML = `
+  <div class="card"><h3 class="sec">あたらしい学び${total
+      ? ` <span class="tunebadge">${total}</span>` : ""}</h3>
+    <div class="note" style="margin:0 0 8px">すでに下書きに効いています(${W("お客様", "相手")}ごとの安全装置つき)。違うものだけ✕で止めればOK。急ぎではありません</div>
+    <div id="tuneQ">${items.some(x => !x._done) ? items.map((it, i) => it._done ? "" : `
+      <div class="tuneq" id="tq${i}">
+        <div class="who"><span class="plink" data-plink="${encq(it.code)}">${esc(disp(it.code))}</span><span class="src">${SRC[it.kind] || ""}</span></div>
+        <div style="font-size:13.5px;line-height:1.65;margin-top:2px"><b>${esc(it.k)}</b>: ${esc(it.v)}</div>
+        ${it.src ? `<div class="note" style="margin:2px 0 0">${it.src.startsWith("「")
+          ? esc(it.src) : `「${esc(it.src)}」`}</div>` : ""}
+        <div class="chips" style="margin-top:6px">
+          <button class="chip" style="color:var(--green-txt)" onclick="tuneAct(${i},1)">○ この通り</button>
+          <button class="chip" style="color:var(--red-txt)" onclick="tuneAct(${i},0)">✕ 違う${it.kind === "my" ? "(止める)" : ""}</button>
+        </div>
+      </div>`).join("")
+      : `<div class="empty" style="padding:18px 0">✓ ぜんぶ見ました<div class="note" style="margin-top:6px">新しく学ぶと、ここにまた並びます</div></div>`}</div>
+    <!-- v235: itemsの添字(i)は元配列のまま渡す。tq{i}とtuneAct(i)がその添字に依存 -->
+  </div>
+  <button class="navcard" onclick="nav('#demo')">🎬<div><b>リハーサル</b>
+    <div class="desc">${W("お客様", "相手")}を1人選んで、送る直前までを練習(実際には送りません)</div></div><span class="chev">›</span></button>
+  <button class="navcard" onclick="nav('#policy')">🧭<div><b>じぶんの方針</b>
+    <div class="desc">口調・距離感・${W("色恋", "親密トーン")}など、全員への基本ルール</div></div><span class="chev">›</span></button>
+  <div class="card"><h3 class="sec">📣 ${W("配信", "まとめて連絡")}の個別化(既定)</h3>
+    <div class="note" style="margin:0 0 8px">新しく作る${W("配信", "まとめて連絡")}の初期値。作成時にその場でも変えられます</div>
+    <div class="tuneknob">
+      <button class="chip ${pl === 0 ? "on" : ""}" onclick="tunePl(0)">入れない</button>
+      <button class="chip ${pl === 1 ? "on" : ""}" onclick="tunePl(1)">ひとつまみ</button>
+      <button class="chip ${pl === 2 ? "on" : ""}" onclick="tunePl(2)">しっかり</button>
+    </div>
+    ${_tune.example ? `<div class="tuneex"><div class="lb">いまの設定だと、${esc(_tune.example.yobina || "")}への文はこんな感じ(例)</div>
+      <div id="tuneEx">${tuneExLines()[pl]}</div></div>` : ""}
+  </div>`;
+}
+window.tuneAct = async (i, ok) => {
+  const it = (_tune.items || [])[i];
+  if (!it) return;
+  const action = it.kind === "tol" ? (ok ? "tolok" : "tolng") : (ok ? "myok" : "myng");
+  try {
+    const r = await api("/api/liff/persona/edit", { method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: it.code, action, index: it.index }) });
+    if (r.error) return toast(r.error);
+    // 登録成功後にその行だけ静かに消す(v231の思想: リロードもスクロール飛びも無し)
+    it._done = 1;
+    if (_tune.total !== undefined) _tune.total = Math.max(0, _tune.total - 1);
+    const el = document.getElementById("tq" + i);
+    if (el) el.remove();
+    const badge = document.querySelector("#view .sec .tunebadge");
+    if (badge) { if (_tune.total > 0) badge.textContent = _tune.total; else badge.remove(); }
+    const left = (_tune.items || []).filter(x => !x._done).length;
+    // v233: 今の束を使い切っても総数が残っていれば次の束を静かに継ぎ足す
+    // (v232は30件確定でおしまい画面→再入場でまた30件という迷子挙動だった)
+    if (!left) { if (_tune.total > 0) vTune(); else drawTune(); }
+    store.del("card_" + it.code); bust("home");
+    toast(ok ? `○ ${disp(it.code)}の下書きに効かせます` : "✕ 効かせません");
+  } catch (e) { toast("保存できませんでした。もう一度押してください"); }
+};
+window.tunePl = async pl => {
+  try {
+    const r = await api("/api/liff/tune/plevel", { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plevel: pl }) });
+    if (r.error) return toast(r.error);
+    _tune.plevel_default = r.plevel_default;   // 保存成功後に点灯(楽観更新禁止の規約)
+    PLVL_DEF = r.plevel_default;
+    bust("home"); drawTune();
+    toast(["名前だけ差し替えを既定にしました", "直近の話題ひとつまみを既定にしました",
+           "話題しっかりめを既定にしました"][pl]);
+  } catch (e) { toast("保存できませんでした。もう一度押してください"); }
 };
 
 // ============ 顧客一覧 ============
@@ -1418,6 +1729,23 @@ async function vList() {
 
 // ============ 濃い顧客カード ============
 const CONF_DOT = { "高": "●●●", "中": "●●○", "低": "●○○" };
+// v231: 小さな裁定(○✕・✎・👤)後の静かな再描画 — スピナー無し・スクロール位置保持。
+// 旧画面を出したまま裏で取り直し、差し替え後に元の位置へ戻す(先頭へ飛ばない・本人指摘2026-08-13)
+async function vCardKeep(code) {
+  const y = window.scrollY;
+  store.del("card_" + code);
+  try {
+    const d = await api("/api/liff/contact/" + encodeURIComponent(code));
+    store.set("card_" + code, d);
+    // v235(監査指摘): カード画面かだけでなく「同じ人のカードか」まで見る。待っている間に
+    // 別のカードへ飛ぶと、他人の画面に前の人の中身を描いてしまう
+    const _h = location.hash || "";
+    if (!_h.startsWith("#card/")) return;
+    try { if (decodeURIComponent(_h.slice(6)) !== code) return; } catch (e) { return; }
+    drawCard(code, d);
+    window.scrollTo(0, y);
+  } catch (e) { vCard(code); }
+}
 async function vCard(code) {
   if (!store.get("card_" + code)) {
     setHead("読み込み中…", "", true);
@@ -1432,7 +1760,7 @@ function drawCard(code, d) {
   const fmtGap = g => g === 0 ? "今日" : g === 1 ? "昨日" : g + "日前";   // v150: 生数字をやめる
   const fmtMin = m => m < 60 ? `約${m}分` : m < 1440 ? `約${Math.round(m / 60)}時間` : `約${Math.round(m / 1440)}日`;
   // v170→v171: 見出しの表示名は全体設定(登録名/呼び名/本名)に従う。未登録は登録名にフォールバック
-  setHead(`${idxName(d.gname ? d.pname : d.code, d.attrs && d.attrs["呼び名"], d.attrs && d.attrs["本名"])}`, `${(NAMEMODE !== "yobina" && d.attrs && d.attrs["呼び名"]) ? "呼び名:" + d.attrs["呼び名"] + "・" : ""}ランク${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true,
+  setHead(`${idxName(d.gname ? d.pname : d.code, d.attrs && d.attrs["呼び名"], d.attrs && d.attrs["本名"])}`, `${(NAMEMODE !== "yobina" && d.attrs && d.attrs["呼び名"]) ? "呼び名:" + d.attrs["呼び名"] + "・" : ""}${W("ランク", "つながり")}${d.rank}${d.gap_days != null ? "・最終接触 " + fmtGap(d.gap_days) : ""}`, true,
     d.kind !== "private" && !(d.attrs && d.attrs["呼び名"]), `nav('#edit/${encq(code)}')`);
   const sg = d.attrs && d.attrs["店内区分"] || "";
   const staffLab = sg === "女" ? W("👯同僚ホステス", "👯同僚・チーム") : sg === "男" ? W("🤵黒服さん", "🤵上司・先輩") : W("店内", "社内");
@@ -1543,14 +1871,18 @@ function drawCard(code, d) {
       : "旧形式の分析のままです — ペルソナの「🔁 全部分析し直す」を押すと追加されます"}</div></div>` : ""}
   ${(d.persona && d.persona.myself && d.persona.myself.length) ? `<details class="card">
     <summary>🪞 ${W("この人へのわたし", "この人へのわたし")}</summary>
-    <div class="note" style="margin:6px 0 8px">${disp(d.name)}と接している時の、あなた自身の顔(本人の実発言から)</div>
-    ${d.persona.myself.map((m, mi) =>
-      `<div class="kv"><div class="k">${esc(m.k)}<span class="conf">${CONF_DOT[m.conf] || ""}</span></div>
-       <div class="v">${esc(m.v)}${m.src ? `<div class="quote">「${esc(m.src)}」</div>` : ""}
-         <div style="margin-top:4px"><button class="chip" style="padding:5px 10px;min-height:0;font-size:12px"
-           onclick="personaFixMy('${cq}',${mi},${jarg(m.v)})">✎直す</button>
-         <button class="chip" style="padding:5px 10px;min-height:0;font-size:12px;color:var(--red-txt)"
-           onclick="personaDelMy('${cq}',${mi})">🗑消す</button></div></div></div>`).join("")}
+    <div class="note" style="margin:6px 0 8px">${disp(d.name)}と接している時の、あなた自身の顔(本人の実発言から)。
+      <b>最初から下書きに効いています</b> — 違うものだけ✕で止めてください</div>
+    ${d.persona.myself.map((m, mi) => {
+      const off = m.ok === 0;
+      return `<div class="kv" ${off ? 'style="opacity:.5"' : ""}><div class="k">${esc(m.k)}<span class="conf">${CONF_DOT[m.conf] || ""}</span></div>
+       <div class="v">${esc(m.v)} ${off ? `<span style="font-size:11px;font-weight:800;color:var(--sub)">⏸ 止めています</span>`
+           : `<span style="font-size:11px;font-weight:800;color:var(--green-txt);background:rgba(57,181,74,.12);border-radius:6px;padding:1px 6px">${m.k === "気をつけたい癖" ? "🛡 効いています" : "✓ 効いています"}</span>`}
+         ${m.src ? `<div class="quote">「${esc(m.src)}」</div>` : ""}
+         <div class="chips" style="margin-top:5px">${off
+           ? `<button class="chip" style="padding:6px 11px;min-height:0;font-size:12px;color:var(--green-txt)" onclick="personaMy('${cq}',${mi},'myok')">○ 効かせる</button>`
+           : `<button class="chip" style="padding:6px 11px;min-height:0;font-size:12px;color:var(--red-txt)" onclick="personaMy('${cq}',${mi},'myng')">✕ 違う(止める)</button>`}
+         </div></div></div>`; }).join("")}
   </details>` : ""}
   ${(d.persona && d.persona.tolerance && d.persona.tolerance.length) ? `<details class="card"
       ${d.persona.tolerance.some(t => t.ok == null) ? "open" : ""}>
@@ -1649,7 +1981,7 @@ window.enrichScope = async (cq, personOk) => {
     const r = await api("/api/liff/enrich/scope", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, person_ok: !!personOk }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast(personOk ? "👤 個人名も検索します(この人だけ)" : "🏢 会社のみ検索"); vCard(code);
+    toast(personOk ? "👤 個人名も検索します(この人だけ)" : "🏢 会社のみ検索"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.enrichRun = async cq => {
@@ -1658,7 +1990,7 @@ window.enrichRun = async cq => {
     const r = await api("/api/liff/enrich/run", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("🌐 検索を始めました(30秒〜1分)"); vCard(code);
+    toast("🌐 検索を始めました(30秒〜1分)"); vCardKeep(code);
   } catch (e) { toast("開始できませんでした"); }
 };
 window.enrichAct = async (cq, id, ok) => {
@@ -1667,7 +1999,7 @@ window.enrichAct = async (cq, id, ok) => {
     const r = await api("/api/liff/enrich/act", { method: "POST",
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, ok: !!ok }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast(ok ? "✓ カードに入れました" : "✕ 捨てました"); vCard(code);
+    toast(ok ? "✓ カードに入れました" : "✕ 捨てました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 // v133: 重複カードの統合(absorb=今開いているカードが消え、keepへ全データ移動)
@@ -1699,6 +2031,7 @@ window.mergeGo = async (cq, keep) => {
     if (r.error) return toast(r.error);
     store.del("card_" + keep); store.del("card_" + absorb);
     Object.keys(localStorage).filter(k => k.startsWith("cb_contacts")).forEach(k => localStorage.removeItem(k));
+    bust("home");   // v235(C6): 「同じ人かも」の組数・お客様の人数がホームに残る
     toast(`✓ 「${disp(keep)}」に統合しました`);
     nav("#card/" + encodeURIComponent(keep));
   } catch (e) { toast("統合に失敗しました(通信)"); }
@@ -1712,7 +2045,7 @@ function dupSide(s, hot) {
   const last = s.last_ts ? Math.floor((Date.now() / 1000 - s.last_ts) / 86400) : null;
   return `<div style="flex:1;border:1px solid ${hot ? "var(--gold)" : "var(--border)"};border-radius:10px;padding:8px">
     <div style="font-weight:700">${esc(disp(s.name || s.code))}</div>
-    <div style="font-size:11px;color:var(--sub);margin-top:2px">${kindLab} ランク${esc(s.rank)}
+    <div style="font-size:11px;color:var(--sub);margin-top:2px">${kindLab} ${W("ランク", "つながり")}${esc(s.rank)}
       ${s.yobina ? "・呼び名 " + esc(s.yobina) : ""}${s.company ? "・" + esc(s.company) : ""}</div>
     <div style="font-size:11px;color:var(--sub)">受信${s.msgs ?? 0}件${last != null ? "・最終 " + (last === 0 ? "今日" : last + "日前") : "・受信なし"}</div>
   </div>`;
@@ -1829,7 +2162,7 @@ window.tantoSelf = async cq => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields: {}, attrs: { "担当": nv } }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("担当=自分にしました(控えめトーン解除)"); vCard(code);
+    toast("担当=自分にしました(控えめトーン解除)"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaDel = async (cq, i) => {
@@ -1837,7 +2170,7 @@ window.personaDel = async (cq, i) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "del", index: i }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("消しました"); vCard(code);
+    toast("消しました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 // v177(taps-4): カードのプロフィール1項目だけを即時修正(タップ→askEdit→保存待ち→再描画)
@@ -1850,7 +2183,7 @@ window.kvFix = async (cq, k, cur) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fields: {}, attrs: { [k]: v } }) });
     if (r && r.error) throw new Error(r.error);
-    store.del("card_" + code); toast("直しました"); vCard(code);
+    toast("直しました"); vCardKeep(code);
   } catch (e) { toast("保存できませんでした(通信)"); }
 };
 window.personaFix = async (cq, i, cur) => {
@@ -1860,7 +2193,7 @@ window.personaFix = async (cq, i, cur) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "fix", index: i, value: v }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("直しました"); vCard(code);
+    toast("直しました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaFixMy = async (cq, i, cur) => {
@@ -1870,7 +2203,7 @@ window.personaFixMy = async (cq, i, cur) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "myfix", index: i, value: v }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("直しました"); vCard(code);
+    toast("直しました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaDelMy = async (cq, i) => {
@@ -1878,7 +2211,17 @@ window.personaDelMy = async (cq, i) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "mydel", index: i }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("消しました"); vCard(code);
+    toast("消しました"); vCardKeep(code);
+  } catch (e) { toast("失敗しました"); }
+};
+// v230: 🪞の○✕(A+Cハイブリッド・✎自由入力はデータが汚れるため廃止・本人裁定)
+window.personaMy = async (cq, i, action) => {
+  const code = decodeURIComponent(cq);
+  try { const r = await api("/api/liff/persona/edit", { method: "POST",
+    headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action, index: i }) });
+    if (r.error) return toast(r.error);
+    store.del("card_" + code);
+    toast(action === "myok" ? "○ 下書きに効かせます" : "✕ 効かせません"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaTol = async (cq, i, action) => {
@@ -1886,7 +2229,7 @@ window.personaTol = async (cq, i, action) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action, index: i }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast(action === "tolok" ? "採用しました(下書きに効きます)" : "外しました"); vCard(code);
+    toast(action === "tolok" ? "採用しました(下書きに効きます)" : "外しました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaTolFix = async (cq, i, cur) => {
@@ -1896,7 +2239,7 @@ window.personaTolFix = async (cq, i, cur) => {
   try { const r = await api("/api/liff/persona/edit", { method: "POST",
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, action: "tolfix", index: i, value: v }) });
     if (r.error) return toast(r.error);
-    store.del("card_" + code); toast("直して採用しました"); vCard(code);
+    toast("直して採用しました"); vCardKeep(code);
   } catch (e) { toast("失敗しました"); }
 };
 window.personaRun = async cq => {
@@ -2054,7 +2397,7 @@ window.arcOk = async (codeEnc, ok) => {
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, ok: !!ok }) });
     if (!r.ok) throw new Error();
     toast(ok ? "✓ この相手の下書きに温度メモが効くようになりました" : "この相手には使いません");
-    store.del("card_" + code); vCard(code);
+    vCardKeep(code);
   } catch (e) { toast("保存できませんでした。電波の良い所でもう一度押してください"); }
 };
 
@@ -2248,7 +2591,7 @@ async function undoNow(actP) {
       if (r2.error) { toast(r2.error); return false; }
     }
   } catch (e) { return toast("戻せませんでした(通信)"), false; }
-  bust("home"); toast("↩︎ 戻しました"); vInbox();
+  bust("home"); toast("↩︎ 戻しました"); { const _y = window.scrollY; vInbox().then(() => window.scrollTo(0, _y)); }
   return true;
 }
 
@@ -2294,6 +2637,7 @@ window.sweepSheet = () => {
     const set = new Set(mids);
     (rep.items || []).forEach(x => { if ((x.mids || [x.mid]).some(m => set.has(m)) && !repIsHot(x) && !repIsLater(x)) x._done = "skipped"; });
     drawRep();
+    bust("home");   // v235(C6): 片づけた分がホームの数字に残ったままになる
     snack(`🧹 ${c.n}人(${c.m}通) 片づけました`, p);
   });
   sync();
@@ -2304,7 +2648,7 @@ window.repHistUndo = async actId => {   // 区画行の「↩︎戻す」(サー
       headers: { "Content-Type": "application/json" }, body: JSON.stringify({ act_id: actId }) });
     if (r.error) return toast(r.error);
   } catch (e) { return toast("戻せませんでした(通信)"); }
-  bust("home"); toast("↩︎ 戻しました"); vInbox();
+  bust("home"); toast("↩︎ 戻しました"); { const _y = window.scrollY; vInbox().then(() => window.scrollTo(0, _y)); }
 };
 
 // --- 行の1タップ裁定(↷/✕/✓)。楽観移動+黒帯アンドゥ。サーバはv190のact/undoそのまま ---
@@ -2343,6 +2687,7 @@ window.pinToggle = async k => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code: it.contact, on }) });
     if (r && r.error) throw new Error(r.error);
+    bust("home");   // v235(C6): 📌で🔥急ぎの内訳が変わる
     toast(on ? `📌 ${disp(it.name)}はいつも「いま返す」に出します` : "📌 ピン留めを外しました");
   } catch (e) { it.pin = on ? 0 : 1; drawRep(); toast("保存できませんでした"); }
 };
@@ -2492,6 +2837,7 @@ async function fillDrafts(p, gen) {
        <button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin-left:6px"
          onclick="repRegen(${p.mid})">🔁 作り直す</button></div>` : "")
     + cardRefChip(r.card_keys)
+    + (r.koi_note ? `<div class="grpnote" style="margin:0 0 8px">${esc(r.koi_note)}</div>` : "")
     + ((r.drafts || []).length ? `<div class="note" style="margin:0 2px 6px">💡 直したい時は文章をタップ</div>` : "")
     + ((r.drafts || []).map((g, j) => draftHtml(j, g.text)).join("")
     || `<div class="note">下書きを作れませんでした。<button class="chip" style="padding:4px 10px;min-height:0;font-size:12px;margin:0 6px"
@@ -2678,7 +3024,8 @@ async function koiGate(it, text) {
 window.repSend = async j => {
   const d = $("#dr" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
-  if (!text) return;
+  // v235(監査指摘): 雛形モードで本文を空にしたまま配ると、緑を押しても理由なく無反応だった
+  if (!text) return toast("文が空です。文章をタップして書いてから送ってください");
   const edited = text !== orig;
   const it = rep.items[rep.i];
   if (!(await koiGate(it, text))) return;   // v186: 黄旗で「直す」を選んだら送らない
@@ -2827,6 +3174,7 @@ window.repClsRank = async rank => {
 // ============ 📣 配信(目的→内容→相手→1人ずつ・裏で次を生成) ============
 const ann = { step: "purpose", purpose: "", detail: "", seg: "", tone: "cust", q: [], i: 0, sent: 0,
   mode: "ai", plevel: 1 };   // v226: 作り方(ai/tpl)と個別化つまみ
+let PLVL_DEF = 1;   // v232: つまみの既定値(🎛返信の調整で変更・ホーム読込で同期)
 // v192その6: 履歴チップ(前回組み立てた文の再提示)は本人裁定「残さなくてよい」で廃止
 // (v175の壊れ文フィルタごと不要に。保存済みannhistはvAnnで掃除)
 function annFlash(el) { el.scrollIntoView({ block: "nearest" });
@@ -2841,7 +3189,8 @@ async function vAnn() {
     Object.assign(ann, { step: "purpose", q: [], i: 0, sent: 0 });
   // v192その6: 入るたびにまっさら(前回の組み立て内容を持ち越さない。本人裁定)。
   // 配達中断の再開(annq)だけは従来どおり守る
-  if (ann.step !== "run") { ann.detail = ""; ann.step = "purpose"; }
+  if (ann.step !== "run") { ann.detail = ""; ann.step = "purpose";
+    ann.plevel = PLVL_DEF; }   // v232: つまみの初期値=🎛の既定(その場で変更可)
   store.del("annhist");   // 旧履歴チップの保存分も掃除(機能ごと廃止)
   // v177(flow-tools-4): 中断キューをsessionStorage→store(localStorage)へ。「LINEに切替→LIFFが
   // 閉じられる」という一番ありがちな中断パターンでWebView破棄と共にキューが消えていた。
@@ -2927,6 +3276,10 @@ async function drawAnn() {
         const sel = [...$("#annSegs").querySelectorAll(".chip.on")].map(x => x.dataset.seg);
         if (!sel.length) return toast("配る相手のグループを1つ以上タップしてください");
         ann.detail = document.getElementById("annDetail").value.trim();
+        // v235(監査指摘): 雛形モードは本文がそのまま届く。空のまま配ると全員分が
+        // 空の下書きになり、緑を押しても無反応で理由が分からない
+        if (ann.mode === "tpl" && !ann.detail.replace(/\{名前\}/g, "").trim())
+          return toast("雛形の文章を書いてください({名前}のほかに本文が要ります)");
         annPlan(sel);
       };
     }, 60);
@@ -2989,7 +3342,7 @@ async function drawAnnRun() {
   }
   const p = ann.q[ann.i];
   setHead(`📣 ${ann.i + 1}/${n}｜${disp(p.name)}`,
-          `ランク${p.rank}・送信済み${ann.sent}${ann.sent >= 8 ? "(8人超・今夜は打ち止め推奨)" : "/8人目安"}`, true);
+          `${W("ランク", "つながり")}${p.rank}・送信済み${ann.sent}${ann.sent >= 8 ? "(8人超・今夜は打ち止め推奨)" : "/8人目安"}`, true);
   $("#view").innerHTML = `<div class="prog"><i style="width:${ann.i / n * 100}%"></i></div>
     <div id="drafts"><div class="skel"></div></div>
     <div class="actbar"><button onclick="annSkip()">スキップ</button>
@@ -3050,7 +3403,8 @@ function annBtns(p) {
 window.annSend = async j => {
   const d = $("#dr" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
-  if (!text) return;
+  // v235(監査指摘): 雛形モードで本文を空にしたまま配ると、緑を押しても理由なく無反応だった
+  if (!text) return toast("文が空です。文章をタップして書いてから送ってください");
   const p = ann.q[ann.i], edited = text !== orig;
   const res = await sendViaLine(text, p.code, p.sname, swWord("ann"));   // v176: ユニットの現在語をコピー
   if (res === "sent") { fire("/api/liff/ann/sent", { code: p.code, text, edited, orig });
@@ -3102,9 +3456,12 @@ async function vOrei() {
   drawOrei();
 }
 // 候補チップ+選択済み+手入力fallbackの汎用グループ
-function tapGroup(label, cands, selected, gid) {
+// v234: 候補ゼロの時は理由と増やし方を1行出す(無言の空欄はバグに見える・本人報告)
+function tapGroup(label, cands, selected, gid, emptyHint) {
   const cs = cands.filter(c => !selected.includes(c.name) && !selected.includes(c.code));
-  return `<label class="f">${label}(任意)</label>
+  const hint = (!cs.length && !selected.length && emptyHint)
+    ? `<div class="note" style="margin:2px 0 4px">${emptyHint}</div>` : "";
+  return `<label class="f">${label}(任意)</label>${hint}
     <div class="chips" id="${gid}">
       ${selected.map(nm2 => `<button type="button" class="chip on" data-nm="${esc(nm2)}">${esc(nm2)} ✕</button>`).join("")}
       ${cs.slice(0, 10).map(c => `<button type="button" class="chip" data-nm="${esc(c.code)}">${esc(disp(c.name))}</button>`).join("")}
@@ -3112,6 +3469,9 @@ function tapGroup(label, cands, selected, gid) {
     <input class="f" id="${gid}in" placeholder="上に無い名前だけ入力してEnter" style="margin-top:6px;font-size:14px;padding:8px 10px">`;
 }
 let _oreiPre = null;   // prefill(タップ素材)
+// v235(C5): vOreiのフォールバックが `window._oreiPre` を見ているが、トップレベルのletは
+// windowに載らないため常にundefined=v150のフォールバックが死んでいた。橋を掛ける
+Object.defineProperty(window, "_oreiPre", { get: () => _oreiPre, set: v => { _oreiPre = v; } });
 // v177(flow-tools-3): 同席・紹介の候補から主賓本人を除外。主賓を同席にもタップできてしまい、
 // 同一人物へ「主賓客」「同席顧客」の矛盾した2通のお礼下書きが生成される事故を防ぐ
 function _oreiGuests() {
@@ -3172,7 +3532,9 @@ function drawOrei() {
       <div class="chips" style="margin-bottom:6px">${(((_oreiPre||{}).venues||{}).after||[]).map(x =>
         `<button class="chip" onclick="_okeep();document.getElementById('oafter').value=${jarg(x)}">${esc(x)}</button>`).join("")}</div>
       <input class="f" id="oafter" value="${esc(orei.after)}" placeholder="なしなら空欄">
-      ${tapGroup(W("ヘルプに入ってくれた子(タップで選択)", "同席した同僚(タップで選択)"), (_oreiPre && _oreiPre.staff) || [], orei.helpers, "ohelp")}
+      ${tapGroup(W("ヘルプに入ってくれた子(タップで選択)", "同席した同僚(タップで選択)"), (_oreiPre && _oreiPre.staff) || [], orei.helpers, "ohelp",
+        W("まだ候補がいません。下に名前を入力すると次から並びます(仕分けで🏠店内にした子も並びます)",
+          "まだ候補がいません。下に名前を入力すると次から並びます(仕分けで🏠社内・チームにした人も並びます)"))}
       ${tapGroup(W("同席していた他のお客様", "同席していた他の方"), _oreiGuests(), orei.guests, "oguest")}
       ${tapGroup("紹介してくれた方", _oreiGuests(), orei.intros, "ointro")}
       <button class="btn primary" onclick="oreiRecord(this)">記録してお礼を作る</button>
@@ -3269,6 +3631,7 @@ function oreiBtns(j) {
 window.oreiSend = async j => {
   const d = $("#or" + j), ta = d.querySelector("textarea");
   const orig = ta.defaultValue, text = (ta.style.display === "none" ? orig : ta.value).trim();
+  if (!text) return toast("文が空です。文章をタップして書いてから送ってください");   // v235(C7)
   const g = orei.drafts[j];
   const res = await sendViaLine(text, g.name || g.contact, g.sname, swWord("or" + j));   // v176: ユニットの現在語
   if (res === "sent") {
@@ -3407,7 +3770,7 @@ async function vAnni() {
   }, 120);
 }
 
-// ============ 🚨 未整備カードの強制仕分け(v103) ============
+// ============ 🪄 未整備カードの仕分け(v103・v235で🚨→🪄に統一) ============
 const fx = { items: [], i: 0 };
 // v151: 配信の文面をタップで組み立て(初回に文章タイプを強要する唯一の箇所の解体)。
 // 曜日は「金」→「金曜」に育て、読点や助詞は軽く自動補完する
@@ -3474,7 +3837,7 @@ window.fxBulk = async () => {
   } catch (e) { toast("うまくいきませんでした。もう一度おためしください"); }
 };
 async function vFixup() {
-  setHead("🚨 カードの仕分け", "", true);
+  setHead("🪄 お名前の確認", "", true);
   $("#view").innerHTML = `<div class="empty"><span class="spin"></span></div>`;
   let d; try { d = await api("/api/liff/fixup"); } catch (e) {
     $("#view").innerHTML = `<div class="empty">読み込めませんでした</div>`; return; }
@@ -3488,12 +3851,12 @@ function drawFixup() {
     bust("home"); bust("contacts");
     $("#view").innerHTML = `<div class="empty" style="font-size:16px">未確定のカードはありません。</div>
       <button class="btn ghost" onclick="nav('#home')">ホームへ</button>`;
-    setHead("🚨 カードの仕分け", "完了", true); return;
+    setHead("🪄 お名前の確認", "完了", true); return;
   }
   const it = fx.items[fx.i], sg = it.suggest || {};
   // v192その3(案1・本人裁定): 名前はヘッダから降ろしてカード先頭に大きく置く。
   // 「視線は入力欄・名前はヘッダ」の分離で誰の話か探していた問題の修正
-  setHead("🚨 カードの仕分け", `${fx.i + 1}/${n}`, true);
+  setHead("🪄 お名前の確認", `${fx.i + 1}/${n}`, true);
   const kindChip = (v, lab) => `<button class="chip ${sg.kind === v ? "on" : ""}" data-kind="${v}">${lab}</button>`;
   const standChip = (v, lab) => `<button class="chip ${sg.stand === v ? "on" : ""}" data-stand="${v}">${lab}</button>`;
   // v192その3: ⚡おまかせは細い控えボタンで下へ(一番目立つ位置を毎回占領しない)。残り2人以上で表示

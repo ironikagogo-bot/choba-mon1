@@ -13,6 +13,7 @@
 - CHOUBA_LIFF_ID         … LIFFアプリID(例 1234567890-abcdefgh)。SPAのliff.init用
 - CHOUBA_LIFF_CHANNEL_ID … LINE LoginチャネルのチャネルID(IDトークン検証のclient_id)
 """
+import hmac
 import json
 import os
 import re
@@ -21,7 +22,7 @@ import time
 
 import requests
 from fastapi import APIRouter, Request, Response, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from . import config, db
 
@@ -89,15 +90,23 @@ def _deny():
 
 @router.get("/liff/")
 @router.get("/liff")
-def liff_page():
+def liff_page(request: Request):
     path = os.path.join(os.path.dirname(__file__), "static", "liff.html")
     try:
+        st = os.stat(path)
+        etag = f'"{int(st.st_mtime)}-{st.st_size}"'
+        # v229: 「デプロイしたのに画面が変わらない」の根治。WebViewのHTMLキャッシュを
+        # 毎回サーバー確認(no-cache)+ETagで制御 — 変更なしなら304(転送ゼロ)、
+        # 変更ありなら必ず新しい画面が出る
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers={
+                "ETag": etag, "Cache-Control": "no-cache"})
         with open(path, encoding="utf-8") as f:
             html = f.read()
     except Exception:
         return Response("liff.html がありません", status_code=500)
     html = html.replace("__LIFF_ID__", LIFF_ID)
-    return HTMLResponse(html)
+    return HTMLResponse(html, headers={"ETag": etag, "Cache-Control": "no-cache"})
 
 
 # ============ 合言葉レス・オンボーディング (v151) ============
@@ -271,15 +280,43 @@ def liff_home(request: Request):
     # v223(🧹段階投入・裁定3): 5日以上前のopenを持つ相手数。受信箱を開かない人にも
     # ホームで「たまり」を見せる入口(mon1実測: 一括片づけの入口が受信箱内のみ→使用0)
     try:
+        # v235(監査指摘): 母集団を受信箱の🧹(repIsHotを除いたnorm)と揃える。
+        # ズレていると「バナーは出るのに、開くと片づける入口がどこにも無い」になる。
+        # 🧹の保護対象=🔥急ぎ・Sランク・📌ピン(=contacts.flag_hot)
         with db.conn() as c:
             sweep_old = c.execute(
-                "SELECT COUNT(DISTINCT contact) AS n FROM messages "
-                "WHERE status='open' AND ts < ?", (time.time() - 5 * 86400,)).fetchone()["n"]
+                "SELECT COUNT(DISTINCT m.contact) AS n FROM messages m "
+                "LEFT JOIN contacts ct ON ct.code = m.contact "
+                "WHERE m.status='open' AND m.ts < ? "
+                "AND IFNULL(m.category,'') <> 'urgent' "
+                "AND IFNULL(ct.rank,'B') <> 'S' AND IFNULL(ct.flag_hot,0) = 0",
+                (time.time() - 5 * 86400,)).fetchone()["n"]
     except Exception:
         sweep_old = 0
+    # v232: 🎛返信の調整 — あたらしい学び(未確認の🚦・🪞)の件数と配信つまみ既定
+    # v235: ホームは頻繁に叩かれるので件数はキャッシュから読む(監査指摘: 全ペルソナの
+    # JSON再パースをv218で軽くしたホームに戻していた)。書き換え側でbust。
+    try:
+        tune_n = _tune_count()
+    except Exception:
+        tune_n = 0
+    try:
+        plevel_default = max(0, min(2, int(linebot._meta_get("ann_plevel_default") or 1)))
+    except Exception:
+        plevel_default = 1
+    # v235: バックアップの催促(環境ごと消える事故に効くのは手元への持ち出しだけ)
+    try:
+        from . import backup as _bk
+        _bkst = _bk.status()
+        backup_age = _bkst["download_age_days"]
+        backup_warn = _bkst["persistence"] == "ephemeral"
+    except Exception:
+        backup_age, backup_warn = None, False
     return {
+        "backup_age": backup_age, "backup_warn": backup_warn,   # v235
         "sweep_old": sweep_old,
         "fixup": fixup_n,
+        "tune_n": tune_n, "plevel_default": plevel_default,   # v232: 🎛
         "reader": reader,
         "ok": True,
         "deferred_contacts": deferred_contacts,   # v190: あとでの相手数(人)
@@ -1056,7 +1093,7 @@ def liff_card_backfill_confirm(request: Request, key: str = ""):
 <p style="color:#8a5a00">仕分け待ち {stuck}人 はここでは触りません(LIFFの仕分け/⚡おまかせで確定すると自動反映されます)。</p>
 <p style="font-size:13px;color:#666">AI分析を使うためAPI利用料がかかります。進み具合は card_audit で見られます。</p>
 <form method="post" action="/api/liff/card_backfill">
-<input type="hidden" name="key" value="{key}">
+<input type="hidden" name="key" value="{esc(key)}">
 <button type="submit" style="padding:14px 22px;font-size:16px;font-weight:700">実行する</button></form>
 <!-- v216: keyはこのページを開くのに使った値をそのまま返すだけ(Bearer閲覧時に運用トークンを開示しない) -->
 </body></html>"""
@@ -1312,13 +1349,517 @@ async def liff_persona_edit(request: Request):
         value = b.get("value") or ""
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
-    if action not in ("del", "fix", "summary", "tolok", "tolng", "tolfix", "toldel", "myfix", "mydel"):
+    if action not in ("del", "fix", "summary", "tolok", "tolng", "tolfix", "toldel",
+                      "myfix", "mydel", "myok", "myng"):   # v230: 🪞の○✕
         return JSONResponse({"error": "bad action"}, status_code=400)
     p = linebot.edit_persona(code, action, index, value)
     if p is None:
         return JSONResponse({"error": "ペルソナがありません"}, status_code=404)
+    _tune_bust()   # v235: ○✕でホームの学び件数が変わる
     db.track("liff_persona_edit")
     return {"ok": True, "persona": p}
+
+
+# ============ 🎛 返信の調整(v232) ============
+# ホーム⚙️配下のハブ。①あたらしい学び=相手横断の未確認🚦・🪞を順に○✕
+# ②じぶんの方針リンク ③配信の個別化つまみの既定値 ④効き方の1行例。
+# 位置づけ(本人裁定2026-08-13): 確認は宿題ではない — 既定ONですでに効いており、
+# ここは「気が向いたら目を通して✕で止める」場所。文言・色もその前提(金・赤禁止)。
+
+def _tune_undecided(it):
+    """未確認か。v235(監査指摘・重大): analyze_personaは tolerance を "ok": None 付きで
+    作るため、v232の `"ok" in it` (キー存在判定)では🚦が1件も🎛に出ていなかった。
+    クライアント側は t.ok == null を未確認として扱っており、そちらが正。"""
+    return it.get("ok") not in (0, 1)
+
+
+def _tune_count():
+    """あたらしい学びの件数。ホームが毎回叩くのでメタにキャッシュ(v235)。
+    明示bustに加えて120秒で失効させる(再分析など、bustを置き忘れた経路でも
+    表示が永久にズレない。ズレても数字だけで、押せる中身は/api/liff/tuneが正)。"""
+    from . import linebot
+    cached = linebot._meta_get("tune_n_cache")
+    if cached:
+        try:
+            n, ts = cached.split("@")
+            if time.time() - float(ts) < 120:
+                return int(n)
+        except Exception:
+            pass
+    n = len(_tune_items())
+    linebot._meta_set("tune_n_cache", f"{n}@{time.time()}")
+    return n
+
+
+def _tune_bust():
+    """学びの○✕・再分析・一括確定のあとにキャッシュを捨てる。"""
+    from . import linebot
+    try:
+        linebot._meta_set("tune_n_cache", "")
+    except Exception:
+        pass
+
+
+def _tune_items():
+    """未確認(ok未設定)の🚦tolerance・🪞myselfを相手横断で全件列挙。新しい分析から順。
+    v233: capはここでは掛けない(バッジ=総数。30件で切るとv232の「30個確定→また30個」問題)。"""
+    import json as _json
+    from . import linebot
+    linebot.ensure()
+    alive = {x["code"] for x in db.list_contacts()}
+    out = []
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT contact, data FROM linebot_persona ORDER BY ts DESC").fetchall()
+    for r in rows:
+        code = r["contact"]
+        if code not in alive:
+            continue
+        try:
+            p = _json.loads(r["data"])
+        except Exception:
+            continue
+        for kind, arr in (("tol", p.get("tolerance") or []), ("my", p.get("myself") or [])):
+            for i, it in enumerate(arr):
+                if not _tune_undecided(it):   # ○✕確定済みは出さない(未確認だけ)
+                    continue
+                if not ((it.get("k") or "").strip() and (it.get("v") or "").strip()):
+                    continue
+                out.append({"code": code, "kind": kind, "index": i,
+                            "k": it.get("k") or "", "v": it.get("v") or "",
+                            "src": (it.get("src") or "")[:60], "conf": it.get("conf") or ""})
+    return out
+
+
+def _tune_example():
+    """④効き方の1行例の材料(決定論・AI呼び出し無し)。直近やり取りのある顧客から
+    呼び名と鮮度のある話題語を1つ。無ければ topic=None(クライアントが汎用文に落とす)。"""
+    from . import linebot, crm, campaign
+    with db.conn() as c:
+        rows = c.execute(
+            "SELECT m.contact AS code FROM messages m JOIN contacts ct ON ct.code=m.contact "
+            "WHERE IFNULL(ct.kind,'customer')='customer' "
+            "GROUP BY m.contact ORDER BY MAX(m.ts) DESC LIMIT 10").fetchall()
+    for r in rows:
+        code = r["code"]
+        try:
+            keys = campaign._fresh_topic_keys(code)
+        except Exception:
+            keys = set()
+        topic = None
+        if keys:
+            a = crm.get_attrs(code) or {}
+            corpus = "".join(tx for _, _, tx in campaign._recent_corpus(code))
+            for k in sorted(keys):
+                toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", (a.get(k) or ""))
+                        if len(t) >= 2 and t in corpus]
+                if toks:
+                    topic = toks[0][:12]
+                    break
+        if topic:
+            return {"yobina": linebot._yobina(code), "topic": topic}
+    if rows:   # 話題が拾えなくても呼び名だけは実物で
+        return {"yobina": linebot._yobina(rows[0]["code"]), "topic": None}
+    return None
+
+
+@router.get("/api/liff/tune")
+def liff_tune(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        pl = int(linebot._meta_get("ann_plevel_default") or 1)
+    except Exception:
+        pl = 1
+    try:
+        ex = _tune_example()
+    except Exception:
+        ex = None
+    try:
+        allitems = _tune_items()
+    except Exception as e:      # v235: ペルソナ1行の破損で🎛ごと500にしない
+        print(f"[tune] 一覧の組み立て失敗: {e}", flush=True)
+        allitems = []
+    # v233: total=総数(バッジ用)・itemsは30件ずつ。使い切ったらクライアントが再取得して継ぎ足す
+    return {"ok": True, "items": allitems[:30], "total": len(allitems),
+            "plevel_default": max(0, min(2, pl)), "example": ex}
+
+
+# ============ 🎬 リハーサル(v237) ============
+# 設計意図は app/rehearsal.py の冒頭に書いた。ここは口だけ。
+
+
+@router.get("/api/liff/rehearsal/candidates")
+def liff_rehearsal_candidates(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import rehearsal
+    return {"ok": True, "items": rehearsal.candidates(),
+            "can_synth": bool(config.ANTHROPIC_API_KEY)}
+
+
+@router.post("/api/liff/rehearsal/start")
+async def liff_rehearsal_start(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import rehearsal
+    try:
+        b = await request.json()
+        code = (b.get("code") or "").strip()
+        mode = b.get("mode") or "replay"
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    if mode not in ("replay", "synth"):
+        return JSONResponse({"error": "bad mode"}, status_code=400)
+    r = rehearsal.start(code, mode)
+    if r.get("error"):
+        return JSONResponse(r, status_code=400)
+    return r
+
+
+@router.post("/api/liff/rehearsal/clear")
+async def liff_rehearsal_clear(request: Request):
+    if not _authed(request):
+        return _deny()
+    from . import rehearsal
+    return {"ok": True, "cleared": rehearsal.clear()}
+
+
+# ============ 💾 バックアップ(v235) ============
+# HTMLに値を差し込む前の始末。owner向けページでもトークンや名前を生で埋めない
+# (v233の指摘: 確認ページのkeyがf-string生埋めだった)。
+
+
+def esc(s):
+    import html as _html
+    return _html.escape(str(s or ""), quote=True)
+
+
+def _q(s):
+    from urllib.parse import quote as _quote
+    return _quote(str(s or ""), safe="")
+
+
+# 既知の最重大課題「バックアップゼロ」への対応。三層(自動世代/手元ダウンロード/復元)。
+# 詳細な設計意図は app/backup.py の冒頭に書いた。ここはその口。
+
+def _bk_authed(request: Request, key: str) -> bool:
+    if config.INGEST_TOKEN and key == config.INGEST_TOKEN:
+        return True
+    return _authed(request)
+
+
+def _mb(n):
+    return f"{n / 1024 / 1024:.1f} MB" if n else "0 MB"
+
+
+@router.get("/api/liff/backup_info")
+def liff_backup_info(request: Request):
+    """LIFF画面用。数字と、ダウンロード用の短命チケット(5分・1回)を返す。
+
+    ダウンロードは <a href> の素の遷移なので Authorization ヘッダが載らない。
+    LIFF側は運用トークンを持たないため、認証済みのこのAPIでチケットを切って渡す。"""
+    from . import backup as bk
+    if not _authed(request):
+        return _deny()
+    st = bk.status()
+    with db.conn() as c:
+        n_c = c.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        n_m = c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        n_t = c.execute("SELECT COUNT(*) FROM linebot_talks").fetchone()[0]
+    return {"ok": True, "contacts": n_c, "messages": n_m, "talks": n_t,
+            "db_mb": _mb(st["db_bytes"]), "gen_n": st["gen_n"], "keep": bk.GENERATIONS,
+            "download_age_days": st["download_age_days"],
+            "persistence": st["persistence"], "persistence_note": st["persistence_note"],
+            "ticket": _bk_ticket()}
+
+
+def _bk_ticket():
+    """5分・1回きりのダウンロード用チケット。"""
+    import secrets
+    from . import linebot
+    linebot.ensure()
+    t = secrets.token_urlsafe(12)
+    linebot._meta_set("backup_tkt", f"{t}|{time.time() + 300}")
+    return t
+
+
+def _bk_ticket_ok(t):
+    from . import linebot
+    if not t:
+        return False
+    raw = linebot._meta_get("backup_tkt") or ""
+    try:
+        tok, exp = raw.split("|")
+    except Exception:
+        return False
+    if not hmac.compare_digest(tok, t) or float(exp) < time.time():
+        return False
+    linebot._meta_set("backup_tkt", "")   # 1回きり(URLが履歴に残っても再利用できない)
+    return True
+
+
+@router.get("/api/liff/backup")
+def liff_backup(request: Request, key: str = "", dl: int = 0, gen: str = "", t: str = ""):
+    """情報ページ(既定)とダウンロード(dl=1)。読み取りのみなのでGETで完結してよい。"""
+    from . import backup as bk
+    if not (_bk_authed(request, key) or (dl and _bk_ticket_ok(t))):
+        return _deny()
+    if dl:
+        import re as _re
+        d = bk.backup_dir()
+        if gen:
+            # 世代の取り出し。パス片(/ . )を弾いて backups/ の外へ出られないようにする
+            if not _re.fullmatch(r"[A-Za-z0-9_]+\.db", gen):
+                return JSONResponse({"error": "bad gen"}, status_code=400)
+            path = os.path.join(d, gen)
+            if not os.path.exists(path):
+                return JSONResponse({"error": "not found"}, status_code=404)
+            fname = gen
+        else:
+            # 「いま」の整合スナップショットをその場で作って渡す(ファイルcpは壊れうる)
+            stamp = time.strftime("%Y%m%d_%H%M", time.gmtime(time.time() + 9 * 3600))
+            fname = f"chouba_backup_{stamp}.db"
+            path = os.path.join(d, "_download.db")
+            try:
+                bk.snapshot(path)
+            except Exception as e:
+                return JSONResponse({"error": f"スナップショットを作れませんでした: {e}"},
+                                    status_code=500)
+            bk.mark_download()
+        db.track("liff_backup_dl")
+        return FileResponse(path, media_type="application/octet-stream", filename=fname)
+    st = bk.status()
+    with db.conn() as c:
+        n_c = c.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        n_m = c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        n_t = c.execute("SELECT COUNT(*) FROM linebot_talks").fetchone()[0]
+    warn = ""
+    if st["persistence"] == "ephemeral":
+        warn = (f'<p style="background:#F9ECEA;border:1px solid #C0402C;border-radius:8px;'
+                f'padding:10px 12px"><b>⚠️ 置き場所の警告</b><br>{esc(st["persistence_note"])}</p>')
+    elif st["persistence"] == "unknown":
+        warn = (f'<p style="background:#FBF3DC;border:1px solid #E3C98A;border-radius:8px;'
+                f'padding:10px 12px">{esc(st["persistence_note"])}</p>')
+    age = st["download_age_days"]
+    agel = ("まだ一度も取っていません" if age is None
+            else ("今日取りました" if age == 0 else f"{age}日前"))
+    gens = "".join(
+        f'<li>{esc(g["name"])} — {_mb(g["bytes"])} '
+        f'<a href="/api/liff/backup?key={_q(key)}&dl=1&gen={_q(g["name"])}">取り出す</a></li>'
+        for g in st["generations"])
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>バックアップ</title></head>
+<body style="font-family:sans-serif;max-width:520px;margin:24px auto;padding:0 16px;line-height:1.8">
+<h2>💾 バックアップ</h2>
+{warn}
+<p><b>いまの中身</b>: お客様 {n_c}人・受信 {n_m}通・取り込んだトーク {n_t}人分({_mb(st['db_bytes'])})</p>
+<p><b>手元に取った最後</b>: {agel}</p>
+<p style="font-size:13px;color:#666">下のボタンで、いまこの瞬間の状態を1つのファイルに固めて
+ダウンロードします。iPhoneなら「"ファイル"に保存」でiCloudに置いておけば、
+サーバーが消えても戻せます。<b>週に1回</b>を目安にどうぞ。</p>
+<p><a href="/api/liff/backup?key={_q(key)}&dl=1"
+   style="display:inline-block;background:#1B2A4A;color:#fff;text-decoration:none;
+   padding:14px 22px;border-radius:10px;font-weight:700">⬇️ いまの状態をダウンロード</a></p>
+<h3 style="font-size:15px;margin-top:26px">自動で残している世代({st['gen_n']}件)</h3>
+<p style="font-size:13px;color:#666">サーバーの中に1日1回・{bk.GENERATIONS}日分。
+これは操作ミスから戻すための控えで、サーバーごと消える事故には無力です。</p>
+<ul style="font-size:13px">{gens or "<li>まだありません</li>"}</ul>
+<p style="font-size:13px;margin-top:24px"><a href="/api/liff/restore?key={_q(key)}">
+🔁 バックアップから復元する</a>(取り消せない操作です)</p>
+</body></html>"""
+    db.track("liff_backup_page")
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.get("/api/liff/restore")
+def liff_restore_page(request: Request, key: str = ""):
+    """復元の1段目(規約: 破壊的URLのGET直実行禁止・取り消し不可はタップ2段階)。"""
+    from . import backup as bk
+    if not _bk_authed(request, key):
+        return _deny()
+    st = bk.status()
+    with db.conn() as c:
+        n_c = c.execute("SELECT COUNT(*) FROM contacts").fetchone()[0]
+        n_m = c.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>復元</title></head>
+<body style="font-family:sans-serif;max-width:520px;margin:24px auto;padding:0 16px;line-height:1.8">
+<h2>🔁 バックアップから復元</h2>
+<p style="background:#F9ECEA;border:1px solid #C0402C;border-radius:8px;padding:10px 12px">
+<b>いまのデータ(お客様 {n_c}人・受信 {n_m}通)は、選んだファイルの中身に置き換わります。</b><br>
+置き換える直前の状態はサーバー内に <code>pre_restore_…</code> として残すので、
+間違えた時はもう一度この画面から戻せます。</p>
+<form method="post" action="/api/liff/restore" enctype="multipart/form-data">
+<input type="hidden" name="key" value="{esc(key)}">
+<p><input type="file" name="file" accept=".db,application/octet-stream" required></p>
+<p><label><input type="checkbox" name="confirm" value="RESTORE" required>
+いまのデータが置き換わることを理解しました</label></p>
+<button type="submit" style="padding:14px 22px;font-size:16px;font-weight:700;
+  background:#C0402C;color:#fff;border:none;border-radius:10px">復元する</button>
+</form>
+<p style="font-size:13px;color:#666;margin-top:20px">復元後は Render の画面で
+一度サービスを再起動(Restart)してください。動いているプロセスが古い中身を
+覚えている場合があります。</p>
+<p style="font-size:13px">サーバー内の世代から戻す場合は、先に
+<a href="/api/liff/backup?key={_q(key)}">バックアップの画面</a>で世代を取り出し、
+そのファイルをここで選んでください。</p>
+</body></html>"""
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.post("/api/liff/restore")
+async def liff_restore_run(request: Request, file: UploadFile = File(None),
+                           key: str = "", confirm: str = ""):
+    """復元の2段目。検証→復元前退避→置き換え。"""
+    from . import backup as bk
+    try:
+        form = await request.form()
+        key = str(form.get("key") or key or "")
+        confirm = str(form.get("confirm") or confirm or "")
+        file = form.get("file") or file
+    except Exception:
+        pass
+    if not _bk_authed(request, key):
+        return _deny()
+    if confirm != "RESTORE" or file is None or not getattr(file, "filename", ""):
+        return JSONResponse({"error": "確認またはファイルがありません"}, status_code=400)
+    tmp = os.path.join(bk.backup_dir(), "_upload.db")
+    try:
+        with open(tmp, "wb") as f:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+    except Exception as e:
+        return JSONResponse({"error": f"受け取れませんでした: {e}"}, status_code=400)
+    ok, why, info = bk.restore_validate(tmp)
+    if not ok:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        html = (f"<!DOCTYPE html><html lang='ja'><head><meta charset='UTF-8'></head>"
+                f"<body style='font-family:sans-serif;max-width:520px;margin:24px auto;padding:0 16px'>"
+                f"<h2>✕ 復元しませんでした</h2><p>{esc(why)}</p>"
+                f"<p><a href='/api/liff/restore?key={_q(key)}'>戻る</a></p></body></html>")
+        return Response(html, media_type="text/html; charset=utf-8", status_code=400)
+    bak = bk.restore(tmp)
+    try:
+        os.unlink(tmp)
+    except Exception:
+        pass
+    db.track("liff_restore")
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>復元 完了</title></head>
+<body style="font-family:sans-serif;max-width:520px;margin:24px auto;padding:0 16px;line-height:1.8">
+<h2>✓ 復元しました</h2>
+<p>お客様 {info.get('contacts', '-')}人・受信 {info.get('messages', '-')}通・
+取り込んだトーク {info.get('talks', '-')}人分の状態に戻しました。</p>
+{f"<p style='font-size:13px;color:#666'>置き換える前の状態は <code>{esc(os.path.basename(bak))}</code> として残しています。</p>" if bak else ""}
+<p style="background:#FBF3DC;border:1px solid #E3C98A;border-radius:8px;padding:10px 12px">
+<b>Render の画面でサービスを一度 Restart してください。</b>
+動いているプロセスが古い中身を覚えている場合があります。</p>
+</body></html>"""
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.get("/api/liff/tune_ackall")
+def liff_tune_ackall_confirm(request: Request, key: str = ""):
+    """v233: 既存分の学びを一括○にする確認ページ(本人裁定2026-08-13「すでにアップされて
+    いるtxtでは全てOKにしておいて。モニターに100回以上タップは厳しい。新しいtxt読み込み時
+    から選別で十分」)。規約: 破壊的URLのGET直実行禁止→確認を挟む。"""
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    items = _tune_items()
+    n_codes = len({x["code"] for x in items})
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>あたらしい学びの一括確定</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:30px auto;padding:0 16px;line-height:1.8">
+<h2>🎛 あたらしい学びの一括確定</h2>
+<p>未確認の学び <b>{len(items)}件</b>({n_codes}人)を、すべて「○ この通り」として確定します。</p>
+<p style="font-size:13px;color:#666">確定後も、各カードの🚦🪞からいつでも個別に「✕」で止められます。
+これ以降に取り込むtxtの学びは、通常どおり🎛返信の調整に並びます。</p>
+<form method="post" action="/api/liff/tune_ackall">
+<input type="hidden" name="key" value="{esc(key)}">
+<button type="submit" style="padding:14px 22px;font-size:16px;font-weight:700">一括で○にする</button></form>
+</body></html>"""
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.post("/api/liff/tune_ackall")
+async def liff_tune_ackall_run(request: Request):
+    """v233: 未確認の🚦tolerance・🪞myself全件に ok=1 を付ける(完全追加専用ではないが
+    値は書き換えない=okフラグの付与のみ)。"""
+    import json as _json
+    try:
+        form = dict(await request.form())
+    except Exception:
+        form = {}
+    key = str(form.get("key") or "")
+    if not config.INGEST_TOKEN or key != config.INGEST_TOKEN:
+        if not _authed(request):
+            return _deny()
+    from . import linebot
+    linebot.ensure()
+    alive = {x["code"] for x in db.list_contacts()}
+    n_items = 0
+    n_fail = 0
+    codes = set()
+    with db.conn() as c:
+        rows = c.execute("SELECT contact, data FROM linebot_persona").fetchall()
+    for r in rows:
+        code = r["contact"]
+        if code not in alive:
+            continue
+        try:
+            p = _json.loads(r["data"])
+        except Exception:
+            continue
+        changed = False
+        for arr in (p.get("tolerance") or [], p.get("myself") or []):
+            for it in arr:
+                if _tune_undecided(it) and (it.get("k") or "").strip() and (it.get("v") or "").strip():
+                    it["ok"] = 1
+                    n_items += 1
+                    changed = True
+        if changed:
+            try:
+                linebot.save_persona(code, p)
+                codes.add(code)
+            except Exception as e:   # v235: 1件の失敗で以降を止めない(冪等なので再実行可)
+                n_fail += 1
+                print(f"[tune_ackall] 保存失敗 {code}: {e}", flush=True)
+    _tune_bust()
+    db.track("liff_tune_ackall")
+    html = f"""<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>一括確定 完了</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:30px auto;padding:0 16px;line-height:1.8">
+<h2>✓ 一括確定しました</h2>
+<p><b>{n_items}件</b>({len(codes)}人)を「○ この通り」にしました。下書き生成に効きます。</p>
+{f"<p style='color:#C0402C'>{n_fail}人分は保存できませんでした。この画面をもう一度開いて実行すると、残りだけを処理します。</p>" if n_fail else ""}
+<p style="font-size:13px;color:#666">違うものはカードの🚦🪞から個別に「✕」で止められます。</p>
+</body></html>"""
+    return Response(html, media_type="text/html; charset=utf-8")
+
+
+@router.post("/api/liff/tune/plevel")
+async def liff_tune_plevel(request: Request):
+    """v232: 配信の個別化つまみの既定値。楽観更新禁止(規約) — 保存成功後に点灯。"""
+    if not _authed(request):
+        return _deny()
+    from . import linebot
+    try:
+        pl = int((await request.json()).get("plevel", 1))
+    except Exception:
+        return JSONResponse({"error": "bad json"}, status_code=400)
+    pl = max(0, min(2, pl))
+    linebot._meta_set("ann_plevel_default", str(pl))
+    db.track("liff_tune_plevel")
+    return {"ok": True, "plevel_default": pl}
 
 
 # ============ 📡 受信係の接続管理(v102) ============
@@ -1408,6 +1949,22 @@ def liff_orei_prefill(request: Request):
             return code
     staff = [{"code": c["code"], "name": nm(c["code"])} for c in contacts
              if c.get("kind") == "staff" and c.get("linked") != 0][:14]
+    # v234(本人報告「ヘルプの時タップできる人が一切出てこない」): 店内分類が0人だと
+    # チップが無言で空になる。過去のお席で手入力したヘルプ名も候補として再利用する
+    try:
+        seen = {s_["code"] for s_ in staff} | {s_["name"] for s_ in staff}
+        with db.conn() as c:
+            past = [r["contact"] for r in c.execute(
+                "SELECT m.contact, MAX(m.sitting_id) t FROM sitting_members m "
+                "WHERE m.role='help' GROUP BY m.contact ORDER BY t DESC LIMIT 20")]
+        for nm_ in past:
+            if len(staff) >= 14:
+                break
+            if nm_ and nm_ not in seen:
+                staff.append({"code": nm_, "name": nm_})
+                seen.add(nm_)
+    except Exception as e:
+        print(f"[orei prefill helpers] {e}", flush=True)
     custs = [c for c in contacts if (c.get("kind") or "customer") == "customer"
              and c.get("linked") != 0]
     # 最近お席の主賓・よく行く店
@@ -1851,6 +2408,41 @@ def _jobs_ensure():
                   "status TEXT, detail TEXT, ts REAL)")
 
 
+def _jobs_gc():
+    """v236(S8): 取り込みジョブと、それに紐づく原文メタ(最大40万字)の掃除。
+
+    放置された ambiguous/confirm 待ちが増え続け、原文メタごとDBを膨らませていた。
+    完了・失敗は30日、放置(ambiguous/confirm待ち)は90日で切る。90日も待って
+    確定されないものは、もう一度txtを送ってもらうほうが早い。
+    """
+    now = time.time()
+    try:
+        with db.conn() as c:
+            done_cut = now - 30 * 86400
+            stale_cut = now - 90 * 86400
+            old = [r["id"] for r in c.execute(
+                "SELECT id FROM liff_import_jobs WHERE "
+                "(status IN ('done','error','dismissed') AND ts < ?) OR ts < ?",
+                (done_cut, stale_cut))]
+            for jid in old:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (f"liffimp_{jid}",))
+            if old:
+                c.execute("DELETE FROM liff_import_jobs WHERE id IN (%s)"
+                          % ",".join("?" * len(old)), old)
+                print(f"[jobs gc] 古い取り込みジョブ {len(old)}件と原文を削除", flush=True)
+            # 親ジョブごと消えた原文メタの取り残し(過去の削除経路の漏れ)も拾う
+            alive = {str(r["id"]) for r in c.execute("SELECT id FROM liff_import_jobs")}
+            orphan = [r["k"] for r in c.execute(
+                "SELECT k FROM linebot_meta WHERE k LIKE 'liffimp_%'")
+                if r["k"].split("_", 1)[1] not in alive]
+            for k in orphan:
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (k,))
+            if orphan:
+                print(f"[jobs gc] 親のない原文メタ {len(orphan)}件を削除", flush=True)
+    except Exception as e:
+        print(f"[jobs gc] {e}", flush=True)
+
+
 _NAME_RE = re.compile(r"\[LINE\]\s*(.+?)\s*とのトーク")
 
 
@@ -1945,7 +2537,19 @@ def _run_import_job(jid: int, contact: str, text: str):
         lt = linebot.parse_last_talk_ts(text)
         if lt:
             linebot._meta_set(f"lasttalk_{contact}", str(lt))
-        facts, err = linebot.extract_facts(text, contact, self_name)
+        # v236(指示書採用①): 確定済みの非顧客(店内・同業・私用)は、下の§11検疫で
+        # どのみち抽出結果を丸ごと捨てている。にもかかわらず抽出LLM(最大4チャンク)と
+        # 種別判定LLMを先に走らせていた=会話全文が外部APIへ行き、課金も発生していた。
+        # 判定材料(rel_confirmed・kind)は呼び出し前に揃っているので前倒しする。
+        _confirmed = (not was_new) and linebot.rel_confirmed(contact)
+        _kind_now = (db.get_contact(contact) or {}).get("kind") or "customer"
+        _skip_llm = bool(_confirmed and _kind_now != "customer")
+        if _skip_llm:
+            print(f"[skip extract] {contact}: 確定済み非顧客({_kind_now}) → 抽出LLMを呼ばない",
+                  flush=True)
+            facts, err = [], None
+        else:
+            facts, err = linebot.extract_facts(text, contact, self_name)
         # v211: 呼び名は決定論抽出を第一候補に(敬称込み・根拠つき)。LLMの呼び名は降格(重複排除)。
         # AIキーが無い環境でも呼び名だけは取れる=取り込みが空振りしない
         try:
@@ -1962,12 +2566,13 @@ def _run_import_job(jid: int, contact: str, text: str):
             facts = [{"k": "呼び名", "v": _dy["v"], "src": _dy["src"],
                       "conf": _dy["conf"], "alts": _dy.get("alts", [])}] + facts
             err = None if not facts[1:] and err else err
-        try:
-            rel = linebot.classify_relationship(text, contact, self_name)
-            if rel:
-                facts = [rel] + (facts or [])
-        except Exception:
-            pass
+        if not _skip_llm:      # v236: 種別が確定済みの非顧客に種別判定を掛け直さない
+            try:
+                rel = linebot.classify_relationship(text, contact, self_name)
+                if rel:
+                    facts = [rel] + (facts or [])
+            except Exception:
+                pass
         if err and not facts:
             upd("error", err)
             return
@@ -1976,9 +2581,7 @@ def _run_import_job(jid: int, contact: str, text: str):
         # v187(§11): 検疫=種別が本人確定前のカードには🔖種別・立場以外の事実を適用しない。
         # 確定(仕分け3連タップ/⚡おまかせ/✅整備)で客→保留分適用+分析、非客→破棄。
         # 店内スレッドの第三者機微が客カード化する事故を、判定機なし(誤検知ゼロ)で防ぐ
-        _confirmed = (not was_new) and linebot.rel_confirmed(contact)
-        _kind_now = (db.get_contact(contact) or {}).get("kind") or "customer"
-        if _confirmed and _kind_now != "customer":
+        if _skip_llm:
             # 確定済みの非顧客(店内・同業・私用): 顧客抽出は恒久スキップ(§11 AC。再取り込みも)
             ncrit, nauto = 0, 0
             _quar = True   # 後段分析(実例庫・力学・ペルソナ)もスキップ
@@ -2402,8 +3005,21 @@ async def liff_reply_drafts(request: Request):
     from . import crm
     m = db.get_message(mid) or {}
     db.track("liff_draft")
+    # v236(浅賀ガード): 💘ONだが恋情語がほぼ本人発の相手に、中立の一言を返す。
+    # 相手を評さず、設定の見直し先だけ示す(覗き見されても内部語が出ない文にする)
+    _koi_note = ""
+    try:
+        _ct = db.get_contact(m.get("contact") or "") or {}
+        if int(_ct.get("flag_koi") or 0) and (_ct.get("kind") or "customer") == "customer":
+            from . import dynamics as _dyn3
+            _dom, _cnt = _dyn3.koi_self_dominant(m.get("contact") or "")
+            if _dom:
+                _koi_note = "この相手は💘の設定が入っていますが、過去のやり取りでは相手からその手の言葉はあまり出ていません。控えめの下書きにしています(カードで設定を見直せます)"
+    except Exception as e:
+        print(f"[koi note] {e}", flush=True)
     return {"ok": True, "drafts": [{"text": g.get("text", "")} for g in gen if g.get("text")][:3],
             "card_keys": crm.card_used_keys(m.get("contact") or ""),
+            "koi_note": _koi_note,
             "gen_note": drafts.last_err(mid) or (
                 # v191その2(一般A2): 一般モードに「お店の担当さん」を出さない
                 ("いま自動の下書きがお休み中(設定待ち)。下の文は定型です — サポート担当に『帳場くんのAI設定』と伝えてください"
@@ -2448,6 +3064,15 @@ async def liff_reply_act(request: Request):
         mids = [int(x) for x in mids] if isinstance(mids, list) else None
     except Exception:
         return JSONResponse({"error": "bad json"}, status_code=400)
+    # v237: リハーサル(練習)の受信は、送信記録・文体学習・実績のどれにも入れない。
+    # クライアントは専用シートで止めるが、経路が生きていると事故になるのでサーバーでも塞ぐ
+    try:
+        from . import rehearsal as _rh
+        if _rh.is_rehearsal(mid):
+            return JSONResponse({"error": "これは練習用の受信です(記録しません)"},
+                                status_code=400)
+    except Exception as e:
+        print(f"[rehearsal guard] {e}", flush=True)
     # v190: actedログ(トリアージ最終仕様#7)。act前スナップショット→差分を記録し、
     # undo(act_id指定)で status/学習/仮イベント の副作用を一括で巻き戻せるようにする
     _msg0 = db.get_message(mid)

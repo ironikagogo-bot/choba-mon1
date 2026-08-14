@@ -179,7 +179,9 @@ def set_urgent_push(on):
 
 
 def _lp_month_key():
-    return "lp_" + time.strftime("%Y%m")
+    # v236(S7): サーバーのローカル時刻(Render=UTC)で月を数えていたため、月替わりの
+    # リセットが日本時間の1日9時にズレていた。他の日付処理と同じJST基準に揃える
+    return "lp_" + time.strftime("%Y%m", time.gmtime(time.time() + 9 * 3600))
 
 
 def urgent_push_count():
@@ -1048,6 +1050,10 @@ def _extract_chunk(talk, partner, self_name, part, total):
         "- conf=高(複数回/明言)・中(1回だが明確)・低(弱い根拠)\n"
         "- alts=同じ項目の別解釈があれば最大2つ\n"
         "- 重要なものから最大15項目。無い場合のみ空配列\n"
+        # v236(指示書採用②): 禁止カテゴリ。決定論フィルタ(strip_pii)と二重にする
+        "- 次は値として絶対に書かない: 電話番号・口座番号・カード番号・住所の番地・"
+        "メールアドレス・URL/リンク・パスワード。話題として触れる必要がある時も"
+        "「振込の相談があった」のように、数字そのものは書かない\n"
         '出力はJSON配列のみ(説明文なし): '
         '[{"k":"誕生日","v":"8月19日","src":"来週誕生日なんだ","conf":"高","alts":[],"sub":"相手"}]\n'
         f"---\n{talk}"
@@ -1677,20 +1683,23 @@ def persona_async(contact):
                 _meta_set(f"pstat_{contact}", f"error:{err}")
             else:
                 # v118: 再分析しても本人の○✕確定を失わない(同じ観点は確定状態を引き継ぐ)
+                # v235(監査指摘): myself(🪞)が引き継がれず、再分析のたびに✕で止めた項目が
+                # 全部ONに戻っていた。🚦と同じ扱いにする(観点kで突き合わせ)
                 try:
                     old = get_persona(contact) or {}
-                    decided = {t["k"]: t for t in (old.get("tolerance") or [])
-                               if t.get("ok") in (0, 1)}
-                    merged = []
-                    for t in (p.get("tolerance") or []):
-                        if t["k"] in decided:
-                            merged.append(decided[t["k"]])   # 確定済みは旧内容ごと維持
-                        else:
-                            merged.append(t)
-                    for k, t in decided.items():
-                        if not any(x["k"] == k for x in merged):
-                            merged.append(t)
-                    p["tolerance"] = merged
+                    for _key in ("tolerance", "myself"):
+                        decided = {t["k"]: t for t in (old.get(_key) or [])
+                                   if t.get("ok") in (0, 1)}
+                        merged = []
+                        for t in (p.get(_key) or []):
+                            if t.get("k") in decided:
+                                merged.append(decided[t["k"]])   # 確定済みは旧内容ごと維持
+                            else:
+                                merged.append(t)
+                        for k, t in decided.items():
+                            if not any(x.get("k") == k for x in merged):
+                                merged.append(t)
+                        p[_key] = merged
                 except Exception as e:
                     print(f"[persona merge] {e}", flush=True)
                 with db.conn() as c:
@@ -1877,6 +1886,36 @@ def tolerance_prompt_block(contact):
             + "\n".join(lines))
 
 
+def myself_prompt_block(contact):
+    """v230: 🪞「この人へのわたし」の生成注入(A+Cハイブリッド・本人裁定2026-08-13)。
+    v230改(本人裁定2026-08-13「初期設定は効かせておく」): 全項目が既定ONで、
+    ✕にした項目だけ止まる。🚦(○のみ注入)より緩い既定だが、🪞は相手の事実でなく
+    本人の接し方の要約であり、実例優先の劣後指定もあるため誤爆コストが小さい、という判断。"""
+    p = get_persona(contact)
+    if not p:
+        return ""
+    lines_guard, lines_style = [], []
+    for m in (p.get("myself") or []):
+        k, v = m.get("k") or "", m.get("v") or ""
+        if not (k and v):
+            continue
+        if m.get("ok") == 0:       # v230改(本人裁定): 全項目が既定ON・✕にした項目だけ停止
+            continue
+        if k == "気をつけたい癖":
+            lines_guard.append(v)
+        else:
+            lines_style.append(f"- {k}: {v}")
+    out = []
+    if lines_guard:
+        out.append("【自動ブレーキ・本人の損な癖(再生産しない)】この相手にはつい「"
+                   + "／".join(lines_guard) + "」となりがち。下書きではこの癖を既定にしない"
+                   "(即快諾・安請け合い・過剰な謝罪などを当然のように書かない)。")
+    if lines_style:
+        out.append("【この相手へのあなたの接し方(本人確認済み)】\n" + "\n".join(lines_style)
+                   + "\nこの役・温度を保つ。ただし実例(過去の実際の送信文)と矛盾する場合は実例を優先。")
+    return "\n".join(out)
+
+
 def save_persona(contact, data):
     """v116: 編集したペルソナを保存(項目削除・修正の反映)。"""
     ensure()
@@ -1902,13 +1941,18 @@ def edit_persona(contact, action, index, value=""):
     elif action == "summary" and value.strip():
         p["summary"] = value.strip()[:80]
     # v212: 「この人へのわたし」の修正・削除
+    # v230: ○✕確定(myok/myng)。本人裁定=自由入力(✎)はデータが汚れるためUIから撤去、二択のみ
     mys = p.get("myself") or []
-    if action in ("myfix", "mydel") and 0 <= index < len(mys):
+    if action in ("myfix", "mydel", "myok", "myng") and 0 <= index < len(mys):
         if action == "mydel":
             mys.pop(index)
         elif action == "myfix" and value.strip():
             mys[index]["v"] = value.strip()[:160]
             mys[index]["conf"] = "中"
+        elif action == "myok":
+            mys[index]["ok"] = 1
+        elif action == "myng":
+            mys[index]["ok"] = 0
         p["myself"] = mys
     # v118: 許容レベルの○✕確定・修正・削除
     tols = p.get("tolerance") or []
@@ -2170,11 +2214,44 @@ _CURATE_MAX = 18   # v101: 12→18(「物足りない」対応。順位付けは
 _KEEP_LOW = ("進行中の話", "NG話題", "記念日", "関係性メモ", "担当", "お気に入りキャスト")
 
 
+# v236(指示書採用②): PIIの決定論後段フィルタ。
+# 抽出プロンプトにも禁止カテゴリを書くが、プロンプトは守られない時がある。
+# 「カードに書いてはいけない類の値」は、LLMの出力を信じずに機械で落とす。
+# 落とすのは値そのものが機微な場合だけ(「電話で話した」のような言及は残す)。
+_PII_PATTERNS = (
+    ("電話番号", re.compile(r"(?<![0-9])0\d{1,4}[-\s(）)]?\d{1,4}[-\s(）)]?\d{3,4}(?![0-9])")),
+    ("口座番号", re.compile(r"(?:口座|振込|振り込み|銀行|支店).{0,12}?\d{5,}")),
+    ("口座番号", re.compile(r"\d{7}(?![0-9])\s*(?:番|口座)")),
+    ("カード番号", re.compile(r"(?<![0-9])(?:\d[ -]?){13,16}(?![0-9])")),
+    ("リンク", re.compile(r"https?://|(?<![A-Za-z0-9])www\.[A-Za-z0-9-]+\.")),
+    ("メールアドレス", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
+    ("住所", re.compile(r"〒\s*\d{3}-?\d{4}")),
+)
+
+
+def strip_pii(facts):
+    """値にPIIを含む事実を落とす。戻り: (残した事実, 落とした[(k, ラベル)])。"""
+    keep, dropped = [], []
+    for f in (facts or []):
+        v = str(f.get("v") or "")
+        hit = next((lab for lab, rx in _PII_PATTERNS if rx.search(v)), None)
+        if hit:
+            dropped.append((f.get("k") or "", hit))
+            continue
+        keep.append(f)
+    if dropped:
+        # 中身は出さない(ログにPIIを移さない)。キー名と種別だけ残す
+        print(f"[pii] 除外 {len(dropped)}件: "
+              + "、".join(f"{k or '?'}({lab})" for k, lab in dropped[:6]), flush=True)
+    return keep, dropped
+
+
 def curate_facts(facts):
     """抽出結果の厳選。超重要(CRITICAL/種別)は無条件で残す。
     - conf=低 は原則破棄。ただし接客価値の高いキー(_KEEP_LOW)は残す(v101)
     - キーを正規キーへ統合(「その他」廃止: FACT_KEYSへ寄せ、寄らなければ関係性メモへ)
     - 接客価値×確信度で上位18件に厳選"""
+    facts, _ = strip_pii(facts)      # v236: PIIは厳選より前に落とす(超重要キーでも例外にしない)
     crit, rest = [], []
     for f in (facts or []):
         k = f.get("k") or ""

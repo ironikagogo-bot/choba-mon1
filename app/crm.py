@@ -761,7 +761,9 @@ def rename_contact(old: str, new: str) -> dict:
                           ("linebot_facts", "contact"), ("linebot_talks", "contact"),
                           ("linebot_persona", "contact"), ("news_items", "contact"),
                           ("enrich_suggestions", "contact"),
-                          ("acted_log", "contact")):   # v191その2(#10): 裁定履歴・undoの名義追随
+                          ("acted_log", "contact"),   # v191その2(#10): 裁定履歴・undoの名義追随
+                          ("self_examples", "contact")):   # v236(S6): 実例庫。未追随だと改名で
+                              # 本人の言い回しが切り離され、下書きが実例なしの一般文に落ちていた
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (new, old))
             except Exception:
@@ -829,7 +831,9 @@ def merge_contact(keep: str, absorb: str) -> dict:
         for tbl, col in (("messages", "contact"), ("sent_replies", "contact"),
                           ("events", "contact"), ("contact_aliases", "contact"),
                           ("sittings", "main_contact"), ("sitting_members", "contact"),
-                          ("acted_log", "contact")):   # v191その2(#10): 裁定履歴・undoの名義追随
+                          ("acted_log", "contact"),   # v191その2(#10): 裁定履歴・undoの名義追随
+                          ("self_examples", "contact")):   # v236(S6): 実例庫。未追随だと改名で
+                              # 本人の言い回しが切り離され、下書きが実例なしの一般文に落ちていた
             try:
                 c.execute(f"UPDATE {tbl} SET {col}=? WHERE {col}=?", (keep, absorb))
             except Exception:
@@ -871,6 +875,20 @@ def merge_contact(keep: str, absorb: str) -> dict:
             c.execute("DELETE FROM linebot_persona WHERE contact=?", (absorb,))
         except Exception:
             pass
+        # v236(S6): 最終トーク時刻メタの追随。移さないと統合後に「ご無沙汰」を誤判定し、
+        # つい先週やり取りした相手に掘り起こし配信を送ってしまう
+        try:
+            _ka, _kk = f"lasttalk_{absorb}", f"lasttalk_{keep}"
+            rows = {r["k"]: r["v"] for r in c.execute(
+                "SELECT k, v FROM linebot_meta WHERE k IN (?, ?)", (_ka, _kk))}
+            if _ka in rows:
+                newer = max(float(rows.get(_ka) or 0), float(rows.get(_kk) or 0))
+                if newer:
+                    c.execute("INSERT INTO linebot_meta(k,v) VALUES(?,?) "
+                              "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (_kk, str(newer)))
+                c.execute("DELETE FROM linebot_meta WHERE k=?", (_ka,))
+        except Exception as e:
+            print(f"[merge lasttalk] {e}", flush=True)
         # ランクは高い方・対応フラグはORで引き継ぐ
         try:
             _ro = {"S": 0, "A": 1, "B": 2}

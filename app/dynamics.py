@@ -122,10 +122,41 @@ def _sessions(bursts):
     return out
 
 
+# v236(指示書採用③・浅賀ガード): 恋情語の「主語別」カウント(決定論)。
+# 発端: flag_koi=ONの相手に対し、恋情語が誰の口から出ているかを見ずに
+# いなし・線引きレーンへ入れていた。実ログでは、恋情語のほぼ全部が本人発で
+# 相手はほとんど言っていない例があった(本人の追いかけ)。この場合の
+# 「線引き長文」は相手に対して的外れで、関係も文面も壊す。
+# 語は増やしすぎない(誤検出のコストが高い)。数えるだけで、判定はしない。
+_KOI_WORDS = ("好き", "大好き", "愛して", "会いたい", "寂しい", "さみしい",
+              "恋しい", "ずっと一緒", "付き合", "結婚", "独り占め", "やきもち", "嫉妬")
+
+
+def koi_subject_counts(events):
+    """恋情語の出現数を発話者別に数える。戻り: {"self": n, "them": n}。
+
+    数えるのは「その語を含む発言の数」であって語の総数ではない(1通に何度書いても1)。
+    引用・伝聞の除外まではしない=荒い指標。判断に使う側で幅を持たせること。"""
+    n_self = n_them = 0
+    for e in (events or []):
+        if e.get("kind") == "unsent":
+            continue
+        t = e.get("text") or ""
+        if any(w in t for w in _KOI_WORDS):
+            if e.get("is_self"):
+                n_self += 1
+            else:
+                n_them += 1
+    return {"self": n_self, "them": n_them}
+
+
 def compute_metrics(events, meta, global_profile=None) -> dict:
     """充足しない指標はキー自体を入れない(誤った確信>無情報 の害を避ける)。"""
     ev = [e for e in events if e["kind"] != "unsent"]
     out = {"n": len(ev), "meta": meta}
+    _kc = koi_subject_counts(ev)          # v236: 恋情語の主語別(シャドー指標・UIには出さない)
+    if _kc["self"] or _kc["them"]:
+        out["koi_words"] = _kc
     if len(ev) < 30 or meta["span_days"] < 14 or meta["accept_ratio"] < 0.6 or meta["n_senders"] > 2:
         return out
     n_self = sum(1 for e in ev if e["is_self"])
@@ -509,6 +540,26 @@ def analyze_and_save(contact: str, text: str, self_name: str, with_arc: bool = T
 
 def _fresh(as_of) -> bool:
     return bool(as_of) and (time.time() - as_of) < FRESH_DAYS * 86400
+
+
+def koi_self_dominant(contact: str):
+    """v236(浅賀ガード): 恋情語がほぼ本人発か。戻り: (True/False, {self, them})。
+
+    真なら「相手が本気で迫ってきている」という前提が実データと合っていない。
+    そこへ線引き長文を出すのは的外れ(相手は言っていないことを咎められる)。
+    閾値は保守的に置く: 相手発が全体の2割以下 かつ 本人発が10通以上。
+    材料が薄い相手では必ずFalse=従来どおり(誤った確信 > 無情報 を避ける家訓)。
+    """
+    try:
+        cp = db.get_profile(contact) or {}
+        kc = ((cp.get("dynamics") or {}).get("metrics") or {}).get("koi_words") or {}
+        n_self, n_them = int(kc.get("self") or 0), int(kc.get("them") or 0)
+    except Exception:
+        return False, {}
+    total = n_self + n_them
+    if n_self < 10 or total == 0:
+        return False, {"self": n_self, "them": n_them}
+    return (n_them / total) <= 0.2, {"self": n_self, "them": n_them}
 
 
 def blocks_for_draft(contact: str) -> str:

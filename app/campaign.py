@@ -462,10 +462,10 @@ def _recent_corpus(code, days=30):
     cutoff = time.time() - days * 86400
     with db.conn() as c:
         recv = [("相手", r["ts"], r["text"]) for r in c.execute(
-            "SELECT ts, text FROM messages WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 6",
+            "SELECT ts, text FROM messages WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 40",
             (code, cutoff))]
         sent = [("自分", r["ts"], r["text"]) for r in c.execute(
-            "SELECT ts, text FROM sent_replies WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 6",
+            "SELECT ts, text FROM sent_replies WHERE contact=? AND ts>? ORDER BY ts DESC LIMIT 40",
             (code, cutoff))]
     rows = sorted(recv + sent, key=lambda x: x[1] or 0)
     return [(w, t, _re3.sub(r"【\??[^】]{0,30}】", "", (x or "")).strip()) for w, t, x in rows]
@@ -482,11 +482,31 @@ def _recent_exchange_block(code):
             "(急に古い話を出すと監視されている印象になる)。流れが無ければ挨拶と季節だけでよい。")
 
 
+def _freshness_corpus(code, days=30):
+    """v235(監査指摘・重大): 鮮度照合に使う会話。
+
+    messages/sent_repliesは「受信係が動いてから」のものしか無く、**txt取り込みだけの相手には
+    1行も存在しない**(取り込みはlinebot_talksに入る)。v226はそこを見ずに
+    「直近30日に出ていない話題は落とす」を適用したため、モニターの大半の相手で
+    カードの事実が全部落ち、配信が天気とニュースだけになっていた。
+    取り込みtxtの末尾(=会話の新しい側)を鮮度の材料に加える。"""
+    corpus = "".join(tx for _, _, tx in _recent_corpus(code, days))
+    if corpus:
+        return corpus
+    try:
+        with db.conn() as c:
+            r = c.execute("SELECT text FROM linebot_talks WHERE contact=?", (code,)).fetchone()
+        return ((r["text"] or "")[-6000:]) if r else ""
+    except Exception as e:
+        print(f"[freshness] {e}", flush=True)
+        return ""
+
+
 def _fresh_topic_keys(code, days=30):
     """v226(A案): カードの話題キーのうち、直近days日の会話に実際に登場したものだけ(決定論)。"""
     from . import crm as _crm
     a = _crm.get_attrs(code) or {}
-    corpus = "".join(tx for _, _, tx in _recent_corpus(code, days))
+    corpus = _freshness_corpus(code, days)
     if not corpus:
         return set()
     out = set()
@@ -494,7 +514,8 @@ def _fresh_topic_keys(code, days=30):
         val = (a.get(k) or "").strip()
         if not val:
             continue
-        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val) if len(t) >= 2]
+        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val)
+                if len(t) >= 2 and not t.isdigit()]   # v235: 「1990/10/5」の断片が本文の「10月」に当たる誤爆
         if any(t in corpus for t in toks):
             out.add(k)
     return out
@@ -509,7 +530,8 @@ def _topic_hits(text, code):
         val = (a.get(k) or "").strip()
         if not val:
             continue
-        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val) if len(t) >= 2]
+        toks = [t for t in re.split(r"[\s、。・,/()（）「」]+", val)
+                if len(t) >= 2 and not t.isdigit()]   # v235: 「1990/10/5」の断片が本文の「10月」に当たる誤爆
         if any(t in (text or "") for t in toks):
             hits += 1
     return hits
@@ -591,6 +613,7 @@ def _generate_one_ai(v, mode, template, now, purpose="", plevel=1, strict=False)
         from . import linebot as _lb
         _rel = _lb.relationship_prompt_block(v["code"])
         _tol = _lb.tolerance_prompt_block(v["code"])
+        _tol += ("\n\n" + _lb.myself_prompt_block(v["code"])) if _lb.myself_prompt_block(v["code"]) else ""   # v230
     except Exception:
         pass
     try:
@@ -644,9 +667,16 @@ def _force_yobina(text, v):
     if code in h or h in code or code in yob or yob in code:
         return text
     out = text
-    for suf in ("さん", "様", "さま", "ちゃん", "くん"):
+    # v235(監査実測): 敬称の取りこぼしで「山本先生」→「ヒロさん先生」の二重敬称が出ていた。
+    # _HON_RE と同じ範囲まで広げる
+    for suf in ("さん", "様", "さま", "ちゃん", "くん", "君", "先生", "ママ"):
         out = out.replace(code + suf, h)
-    return out.replace(code, h)
+    # v235(監査実測): 敬称なしの裸置換は語境界が無く、短い登録名が普通語の一部に当たる
+    #   「あいにくの雨」→「アイリさんにくの雨」/「なおさら」→「ナオミさんさら」
+    # 取りこぼし(呼び捨て言及)より誤爆のほうが高くつくので、短い名前では裸置換をしない
+    if len(code) >= 3:
+        out = out.replace(code, h)
+    return out
 
 
 def generate(mode="greeting", ranks=None, tags=None, template="", now=None, codes=None,
